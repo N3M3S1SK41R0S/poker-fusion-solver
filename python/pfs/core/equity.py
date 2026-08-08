@@ -128,7 +128,11 @@ def evaluate7(cards: npt.NDArray[np.integer]) -> npt.NDArray[np.uint32]:
     v = 12 - (cards >> 2)          # (N,7) valeurs, A=12
     s = cards & 3                  # (N,7) couleurs
 
-    vc = (v[:, :, None] == np.arange(13)).sum(axis=1)   # (N,13) comptes
+    # One-hot (N,7,13) des valeurs : c'est le plus gros tableau de la
+    # fonction — il servait deux fois (comptes, puis masque de couleur) et
+    # était reconstruit à l'identique. Calculé une seule fois.
+    onehot = v[:, :, None] == np.arange(13)             # (N,7,13)
+    vc = onehot.sum(axis=1)                             # (N,13) comptes
     sc = (s[:, :, None] == np.arange(4)).sum(axis=1)    # (N,4)
 
     present = vc > 0
@@ -140,7 +144,7 @@ def evaluate7(cards: npt.NDArray[np.integer]) -> npt.NDArray[np.uint32]:
     in_flush = s == flush_suit[:, None]                       # (N,7)
     # one-hot AND, réduit sur l'axe cartes — pas d'écriture indexée (les
     # indices dupliqués d'un |= fantaisie perdraient des bits)
-    fpresent = ((v[:, :, None] == np.arange(13)) & in_flush[:, :, None]).any(axis=1)
+    fpresent = (onehot & in_flush[:, :, None]).any(axis=1)
     fmask = (fpresent @ (1 << np.arange(13, dtype=np.int64))).astype(np.int64)
 
     sf_top = _STRAIGHT[fmask]                                 # (N,)
@@ -370,18 +374,23 @@ def equity_vs_range(
     return _preflop_mc(hero, combos, w, dead, n_sims, seed)
 
 
-def _showdown(hero7: npt.NDArray, vill7: npt.NDArray,
-              w: F64, exact: bool, extra_var: float = 0.0) -> EquityResult:
-    hc = evaluate7(hero7).astype(np.int64)
-    vc = evaluate7(vill7).astype(np.int64)
+def _compare(hc: npt.NDArray, vc: npt.NDArray, w: F64,
+             exact: bool) -> EquityResult:
+    """Confronte deux vecteurs de forces déjà évaluées, pondérés par ``w``."""
     total = float(w.sum())
     win = float(w[hc > vc].sum()) / total
     tie = float(w[hc == vc].sum()) / total
     lose = 1.0 - win - tie
     eq = win + 0.5 * tie
-    n = hero7.shape[0]
+    n = int(hc.shape[0])
     se = 0.0 if exact else float(np.sqrt(max(eq * (1 - eq), 1e-12) / n))
     return EquityResult(eq, win, tie, lose, exact, n, se)
+
+
+def _showdown(hero7: npt.NDArray, vill7: npt.NDArray,
+              w: F64, exact: bool, extra_var: float = 0.0) -> EquityResult:
+    return _compare(evaluate7(hero7).astype(np.int64),
+                    evaluate7(vill7).astype(np.int64), w, exact)
 
 
 def _exact(hero: list[int], combos: I64, w: F64,
@@ -405,12 +414,23 @@ def _exact(hero: list[int], combos: I64, w: F64,
     R, C = runouts[r_idx], combos[c_idx]           # (M,need), (M,2)
     if need:
         clash = (R[:, :, None] == C[:, None, :]).any(axis=(1, 2))
-        R, C, c_idx = R[~clash], C[~clash], c_idx[~clash]
+        keep = ~clash
+        R, C, c_idx, r_idx = R[keep], C[keep], c_idx[keep], r_idx[keep]
     M = R.shape[0]
     b = np.array(board, dtype=np.int64)
-    hero7 = np.hstack([np.tile(hero, (M, 1)), np.tile(b, (M, 1)), R])
+
+    # La main du héros ne dépend QUE du runout (ses 2 cartes et le board sont
+    # fixes) : on l'évalue une fois par runout — 990 évaluations au flop au
+    # lieu de 169 290 — puis on ré-indexe. Le résultat est identique au bit
+    # près ; seul le travail redondant disparaît.
+    hero_per_runout = np.hstack([
+        np.tile(hero, (n_r, 1)), np.tile(b, (n_r, 1)), runouts,
+    ])
+    hc = evaluate7(hero_per_runout).astype(np.int64)[r_idx]
+
     vill7 = np.hstack([C, np.tile(b, (M, 1)), R])
-    return _showdown(hero7, vill7, w[c_idx], exact=True)
+    vc = evaluate7(vill7).astype(np.int64)
+    return _compare(hc, vc, w[c_idx], exact=True)
 
 
 def _preflop_mc(hero: list[int], combos: I64, w: F64, dead: set[int],

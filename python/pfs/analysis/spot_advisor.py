@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 from pfs.core.bluffcatch import minimum_defence_frequency, required_equity
 from pfs.core.equity import equity_vs_range
@@ -171,14 +172,29 @@ def _hand_label(cards: list[int]) -> str:
     return group_name(g)
 
 
+@lru_cache(maxsize=64)
 def _villain_range(spec: str):
+    """Range adverse, mémoïsée : en session d'entraînement, on enchaîne les
+    mains avec la même range supposée — inutile de la re-parser à chaque fois.
+    """
     return parse_range(_DEFAULT_VILLAIN.get(spec, spec))
+
+
+@lru_cache(maxsize=256)
+def _nash_solution(eff_bb_deci: int):
+    """Équilibre jam/fold mémoïsé par dixième de bb.
+
+    En session d'entraînement on repasse sans cesse sur les mêmes tapis
+    (10, 12, 15 bb…) : le solve n'est fait qu'une fois par valeur.
+    """
+    return solve_hu_pushfold(eff_bb_deci / 10.0, sb=0.5, bb=1.0,
+                             equity=_equity_matrix())
 
 
 def _advise_preflop_short(spot: Spot, hero: list[int], eff_bb: float) -> Advice:
     """Tapis court heads-up : l'équilibre de Nash jam/fold tranche."""
     g = int(COMBO_TO_GROUP[combo_index(hero[0], hero[1])])
-    sol = solve_hu_pushfold(eff_bb, sb=0.5, bb=1.0, equity=_equity_matrix())
+    sol = _nash_solution(round(eff_bb * 10))
     ev = float(sol.ev_jam_par_groupe[g])
     jam_freq = float(sol.jam_range[g])
     action = "JAM (tapis)" if ev >= 0 else "FOLD"
