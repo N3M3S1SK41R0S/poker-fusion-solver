@@ -1,27 +1,34 @@
 //! Sonde de faisabilité Phase 1 — le go/no-go du Plan Directeur §2.2.
 //!
-//! Question posée : peut-on capturer une fenêtre Winamax **occultée** avec
-//! l'API Windows Graphics Capture (crate `windows-capture` 2.0), avec un
-//! coût de lecture par frame p95 < 1 ms ?
+//! Question posée : peut-on capturer une fenêtre de client poker (même
+//! **occultée**) avec l'API Windows Graphics Capture (crate
+//! `windows-capture` 2.0), avec un coût de lecture par région d'intérêt
+//! p95 < 1 ms ?
 //!
-//! Ce binaire capture la fenêtre dont le titre contient la sous-chaîne
-//! donnée, mesure sur N frames :
-//!   - `copy_us`  : temps de mappage GPU→CPU + parcours du buffer (µs) —
-//!     c'est le coût que la perception ajoute à chaque frame ;
-//!   - `inter_us` : intervalle entre frames consécutives (µs) — borné par
-//!     le rythme de rafraîchissement WGC (~60 Hz par défaut) ;
-//!   - `mean_px`  : moyenne des octets échantillonnés — une fenêtre occultée
-//!     dont la capture échouerait donnerait un buffer noir (mean ≈ 0) ;
-//!     c'est la preuve que WGC lit bien le contenu, pas l'écran.
+//! Mesures par frame, sur N frames :
+//!   - `copy_us`  : mappage GPU→CPU du buffer COMPLET + parcours (µs) —
+//!     borne haute, rapportée à titre informatif ;
+//!   - `crop_us`  : readback d'une ROI 200×100 via `buffer_crop` — le
+//!     coût RÉEL du scraper (cartes, stacks, boutons) ; c'est le critère ;
+//!   - `inter_us` : intervalle entre frames (µs) — WGC n'émet que sur
+//!     mise à jour de la fenêtre ;
+//!   - `mean_px`  : moyenne des octets échantillonnés — un client qui se
+//!     protégerait par WDA_EXCLUDEFROMCAPTURE rendrait du noir (≈ 0).
 //!
-//! Sortie : une ligne JSON sur stdout (consommée par le harnais de test).
+//! Sortie : une ligne JSON sur stdout. Codes de sortie : 0 ok, 2 fenêtre
+//! introuvable, 3 échec de capture, 4 timeout (fenêtre trouvée mais
+//! aucune/pas assez de frames — fenêtre statique ou capture bloquée).
 //!
-//! Usage : probe [sous-chaîne du titre] [nb frames]
-//!         probe --list        (énumère les fenêtres capturables)
+//! Usage :
+//!   probe [sous-chaîne du titre] [nb frames] [--snap chemin.png] [--timeout s]
+//!   probe --auto [nb frames] …     (détecte un client poker connu)
+//!   probe --list                   (énumère les fenêtres capturables)
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use windows_capture::capture::{Context, GraphicsCaptureApiHandler};
+use windows_capture::encoder::ImageFormat;
 use windows_capture::frame::Frame;
 use windows_capture::graphics_capture_api::InternalCaptureControl;
 use windows_capture::settings::{
@@ -30,7 +37,30 @@ use windows_capture::settings::{
 };
 use windows_capture::window::Window;
 
-/// Percentile par interpolation linéaire sur un tableau trié.
+/// Rooms reconnues par --auto (sous-chaînes de titre, insensible à la casse).
+/// La couche capture est agnostique de la room : seule la DÉTECTION est
+/// spécifique ; la lecture du contenu (pfs-vision) aura ses gabarits par room.
+const ROOMS: &[&str] = &[
+    "pmu",
+    "winamax",
+    "pokerstars",
+    "partypoker",
+    "party poker",
+    "unibet",
+    "betclic",
+    "888poker",
+    "ggpoker",
+    "ipoker",
+    "pokerclient",
+    "no limit hold",
+    "pot limit omaha",
+];
+
+/// Fenêtres à ne JAMAIS prendre pour un client (notre propre outillage).
+const EXCLUDE: &[&str] = &["fusion", "pfs-", "probe"];
+
+static FINISHED: AtomicBool = AtomicBool::new(false);
+
 fn percentile(sorted: &[f64], p: f64) -> f64 {
     if sorted.is_empty() {
         return f64::NAN;
@@ -55,29 +85,37 @@ fn stats(mut v: Vec<f64>) -> (f64, f64, f64, f64) {
     )
 }
 
+struct ProbeFlags {
+    target: usize,
+    snap: Option<String>,
+}
+
 struct Probe {
     copy_us: Vec<f64>,
     crop_us: Vec<f64>,
     inter_us: Vec<f64>,
     px_means: Vec<f64>,
     last_arrival: Option<Instant>,
-    target: usize,
+    flags: ProbeFlags,
+    snapped: bool,
     width: u32,
     height: u32,
 }
 
 impl GraphicsCaptureApiHandler for Probe {
-    type Flags = usize;
+    type Flags = ProbeFlags;
     type Error = Box<dyn std::error::Error + Send + Sync>;
 
     fn new(ctx: Context<Self::Flags>) -> Result<Self, Self::Error> {
+        let n = ctx.flags.target;
         Ok(Self {
-            copy_us: Vec::with_capacity(ctx.flags),
-            crop_us: Vec::with_capacity(ctx.flags),
-            inter_us: Vec::with_capacity(ctx.flags),
-            px_means: Vec::with_capacity(ctx.flags),
+            copy_us: Vec::with_capacity(n),
+            crop_us: Vec::with_capacity(n),
+            inter_us: Vec::with_capacity(n),
+            px_means: Vec::with_capacity(n),
             last_arrival: None,
-            target: ctx.flags,
+            flags: ctx.flags,
+            snapped: false,
             width: 0,
             height: 0,
         })
@@ -95,10 +133,16 @@ impl GraphicsCaptureApiHandler for Probe {
         }
         self.last_arrival = Some(now);
 
-        // Le coût réel de la perception : mapper la texture et LIRE les octets.
-        // Échantillonnage 1/1024 pour forcer des lectures répandues sur tout
-        // le buffer sans payer un memcpy complet (le scraper réel ne lira que
-        // des régions d'intérêt).
+        // preuve visuelle : première frame → PNG
+        if !self.snapped {
+            if let Some(path) = self.flags.snap.clone() {
+                frame.save_as_image(&path, ImageFormat::Png)?;
+                eprintln!("snapshot : {path}");
+            }
+            self.snapped = true;
+        }
+
+        // borne haute : buffer complet, lectures échantillonnées 1/1024
         let t0 = Instant::now();
         let mut buffer = frame.buffer()?;
         let raw = buffer.as_raw_buffer();
@@ -116,9 +160,7 @@ impl GraphicsCaptureApiHandler for Probe {
         self.width = frame.width();
         self.height = frame.height();
 
-        // Le coût RÉEL du scraper : readback d'une région d'intérêt
-        // (cartes, stack, bouton ≈ 200×100 px), pas du buffer complet.
-        // buffer_crop fait un CopySubresourceRegion GPU → staging réduit.
+        // le coût réel du scraper : ROI 200×100 au centre
         let (w, h) = (self.width, self.height);
         if w > 300 && h > 200 {
             let (x, y) = (w / 2 - 100, h / 2 - 50);
@@ -128,7 +170,7 @@ impl GraphicsCaptureApiHandler for Probe {
             self.crop_us.push(t1.elapsed().as_secs_f64() * 1e6);
         }
 
-        if self.copy_us.len() >= self.target {
+        if self.copy_us.len() >= self.flags.target {
             let (c50, c95, c99, cmax) = stats(self.copy_us.clone());
             let (r50, r95, r99, rmax) = stats(self.crop_us.clone());
             let (i50, i95, i99, imax) = stats(self.inter_us.clone());
@@ -146,6 +188,7 @@ impl GraphicsCaptureApiHandler for Probe {
                 self.height,
                 r95 < 1000.0,
             );
+            FINISHED.store(true, Ordering::SeqCst);
             capture_control.stop();
         }
         Ok(())
@@ -155,6 +198,22 @@ impl GraphicsCaptureApiHandler for Probe {
         eprintln!("fenêtre fermée avant la fin de la mesure");
         Ok(())
     }
+}
+
+/// Cherche une fenêtre de client poker connue (hors notre outillage).
+fn find_room_window() -> Option<(Window, String)> {
+    let windows = Window::enumerate().ok()?;
+    for w in windows {
+        let Ok(title) = w.title() else { continue };
+        let lower = title.to_lowercase();
+        if EXCLUDE.iter().any(|e| lower.contains(e)) {
+            continue;
+        }
+        if ROOMS.iter().any(|r| lower.contains(r)) {
+            return Some((w, title));
+        }
+    }
+    None
 }
 
 fn main() {
@@ -179,23 +238,81 @@ fn main() {
         return;
     }
 
-    let needle = args.get(1).cloned().unwrap_or_else(|| "Winamax".to_string());
-    let frames: usize = args
-        .get(2)
-        .and_then(|s| s.parse().ok())
+    // options nommées
+    let opt = |name: &str| -> Option<String> {
+        args.iter()
+            .position(|a| a == name)
+            .and_then(|i| args.get(i + 1).cloned())
+    };
+    let snap = opt("--snap");
+    let timeout_s: u64 = opt("--timeout").and_then(|s| s.parse().ok()).unwrap_or(30);
+    let auto = args.iter().any(|a| a == "--auto");
+
+    // positionnels (hors options et leurs valeurs)
+    let mut positional: Vec<String> = Vec::new();
+    let mut skip = false;
+    for a in args.iter().skip(1) {
+        if skip {
+            skip = false;
+            continue;
+        }
+        if a == "--snap" || a == "--timeout" {
+            skip = true;
+            continue;
+        }
+        if a.starts_with("--") {
+            continue;
+        }
+        positional.push(a.clone());
+    }
+    let frames: usize = positional
+        .iter()
+        .filter_map(|s| s.parse().ok())
+        .next()
         .unwrap_or(300);
 
-    let window = match Window::from_contains_name(&needle) {
-        Ok(w) => w,
-        Err(e) => {
-            eprintln!("aucune fenêtre dont le titre contient « {needle} » : {e}");
-            eprintln!("fenêtres disponibles : probe --list");
-            std::process::exit(2);
+    let window = if auto {
+        match find_room_window() {
+            Some((w, title)) => {
+                eprintln!("room détectée : {title}");
+                w
+            }
+            None => {
+                eprintln!("aucun client poker connu à l'écran (rooms : {ROOMS:?})");
+                std::process::exit(2);
+            }
+        }
+    } else {
+        let needle = positional
+            .iter()
+            .find(|s| s.parse::<usize>().is_err())
+            .cloned()
+            .unwrap_or_else(|| "Winamax".to_string());
+        match Window::from_contains_name(&needle) {
+            Ok(w) => w,
+            Err(e) => {
+                eprintln!("aucune fenêtre dont le titre contient « {needle} » : {e}");
+                eprintln!("fenêtres disponibles : probe --list");
+                std::process::exit(2);
+            }
         }
     };
     if let Ok(title) = window.title() {
-        eprintln!("capture de : {title} ({frames} frames)");
+        eprintln!("capture de : {title} ({frames} frames, timeout {timeout_s}s)");
     }
+
+    // garde-fou : une fenêtre statique (lobby figé) ou une capture bloquée
+    // (WDA_EXCLUDEFROMCAPTURE) ne produirait jamais assez de frames.
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(timeout_s));
+        if !FINISHED.load(Ordering::SeqCst) {
+            eprintln!(
+                "timeout {timeout_s}s — pas assez de frames (fenêtre statique, \
+                 minimisée, ou capture bloquée par le client)"
+            );
+            std::process::exit(4);
+        }
+    });
 
     let settings = Settings::new(
         window,
@@ -205,7 +322,10 @@ fn main() {
         MinimumUpdateIntervalSettings::Default,
         DirtyRegionSettings::Default,
         ColorFormat::Bgra8,
-        frames,
+        ProbeFlags {
+            target: frames,
+            snap,
+        },
     );
 
     if let Err(e) = Probe::start(settings) {
