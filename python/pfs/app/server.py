@@ -872,6 +872,17 @@ def _make_handler(token: str) -> type[BaseHTTPRequestHandler]:
         def do_POST(self) -> None:  # noqa: N802
             u = urlparse(self.path)
             q = parse_qs(u.query)
+            # Consommer le corps AVANT toute réponse. En keep-alive HTTP/1.1,
+            # répondre une erreur (403/404) en laissant le corps non lu dans
+            # le tampon fait envoyer un RST par la pile Windows : le client
+            # reçoit alors une ConnectionAborted au lieu du code d'erreur.
+            # Drainer d'abord rend la réponse déterministe.
+            try:
+                n = int(self.headers.get("Content-Length", "0") or "0")
+            except ValueError:
+                n = 0
+            raw = self.rfile.read(n) if n > 0 else b""
+
             if not self._authorised(q):
                 self._json(403, {"error": "jeton invalide"})
                 return
@@ -884,8 +895,7 @@ def _make_handler(token: str) -> type[BaseHTTPRequestHandler]:
                 self._json(404, {"error": f"route inconnue : {route}"})
                 return
             try:
-                n = int(self.headers.get("Content-Length", "0"))
-                payload = json.loads(self.rfile.read(n) or b"{}")
+                payload = json.loads(raw or b"{}")
                 self._json(200, fn(payload))
             except Exception as exc:  # remonter l'erreur, ne jamais l'avaler
                 self._json(400, {"error": f"{type(exc).__name__}: {exc}"})
