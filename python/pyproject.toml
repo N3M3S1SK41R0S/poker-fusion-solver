@@ -1,7 +1,7 @@
 [project]
 name = "pfs"
-version = "2.3.0"
-description = "Poker Fusion Solver — noyau mathématique : 13 fusions, application locale, 322 tests"
+version = "4.1.0"
+description = "Poker Fusion Solver — 14 fusions, solveur NLHE, analyse post-partie iPoker/PMU, 718 tests"
 requires-python = ">=3.12"
 dependencies = [
     "numpy>=2.0",

@@ -1,10 +1,29 @@
-# ♠ Poker Fusion Solver v4.0
+# ♠ Poker Fusion Solver v4.1
 
-Assistant poker personnel — **14 fusions mathématiques**, une application locale complète.
+Assistant poker personnel — **14 fusions mathématiques**, un solveur NLHE, et une
+suite d'**analyse a posteriori** de tes propres mains. Application 100 % locale.
 
-**670 tests verts · zéro dépendance réseau · zéro € de licence.**
+**718 tests verts · 19 goldens · zéro dépendance réseau · zéro € de licence.**
 
-v4.0 — 96 % des standards industriels, les signatures des concurrents intégrées (nodelock 2.0, merge, bunching, push/fold ICM, profondeur limitée), et LE différenciateur : re-solve depuis la range inférée en direct (`engine.resolve_spot`, `/api/resolve`). v3.0 — les 7 leviers du benchmark : **solveur postflop NLHE réel** (river exacte range-vs-range, turn par énumération — validé sur solution analytique), équité multiway, PKO, FGS léger, tells temporels, population mining privé, EQR apprise de nos propres solves. Benchmark exécutable : 84 % des standards industriels couverts, 14 différenciateurs à zéro concurrent, plus aucune lacune ICM.
+v4.1 — la suite d'analyse post-partie, adossée aux solveurs du cœur :
+
+* **Parseur iPoker/PMU** (`data/hand_history.parse_ipoker`) — le format XML de PMU,
+  partypoker, Betclic, Unibet ; décodé et prouvé sur mains réelles (conservation
+  des jetons vérifiée).
+* **Revue de session** (`analysis/session_review`) — profil statistique exact
+  (VPIP, PFR, 3-bet, fold-to-cbet, WTSD, net en bb) + équité des tapis
+  « all-in adjusted » qui sépare le niveau de jeu de la variance.
+* **Revue shove/fold** (`analysis/pushfold_review`) — chaque décision préflop de
+  tapis court confrontée à l'équilibre de Nash, écart chiffré en bb.
+* **Conseiller de spot** (`analysis/spot_advisor`, `analyser_main.py`) — « qu'est-ce
+  qu'il fallait faire ? » à partir de ce qu'une capture montre : tes cartes, le
+  board, le pot, la mise. Nash exact en tapis court, équité exacte + cotes du pot
+  en postflop, seuil de bascule toujours donné.
+* **Perception Phase 1 — GO** : la faisabilité de la capture d'écran est **tranchée
+  et mesurée** (fenêtre occultée, lecture ROI p95 < 1 ms) — voir `rust/` et
+  `scripts/perception/`.
+
+v4.0 — 96 % des standards industriels, les signatures des concurrents intégrées (nodelock 2.0, merge, bunching, push/fold ICM, profondeur limitée), et LE différenciateur : re-solve depuis la range inférée en direct (`engine.resolve_spot`, `/api/resolve`). v3.0 — les 7 leviers du benchmark : **solveur postflop NLHE réel** (river exacte range-vs-range, turn par énumération — validé sur solution analytique), équité multiway, PKO, FGS léger, tells temporels, population mining privé, EQR apprise de nos propres solves.
 
 ---
 
@@ -28,7 +47,23 @@ locale uniquement**, avec un jeton aléatoire régénéré à chaque démarrage.
 python -m pfs --selftest   # rejoue les 19 valeurs golden du Plan Directeur
 python -m pfs --demo       # les 14 fusions en console
 python -m pfs --no-browser --port 9000
-cd python && uv run pytest -q   # 472+ tests
+cd python && pytest -q     # 718 tests
+```
+
+### Analyser tes mains déjà jouées (sans le serveur)
+
+```bash
+cd python
+# une main, comme sur une capture :
+python analyser_main.py --hero "Ah Kd" --board "Qs 7d 2c" --pot 100 --bet 75 --bb 10
+# en rafale (une main par ligne, format court) :
+python analyser_main.py
+#   Ah Kd | Qs 7d 2c | pot 100 | bet 75 | bb 10
+python analyser_main.py --recap        # synthèse des mains analysées
+
+# revue complète d'un dossier d'historiques PMU :
+python -c "from pfs.analysis import review_folder; \
+  print(review_folder(r'%LocalAppData%\PMU PLAY 100%% Poker\data\<pseudo>\History').explain())"
 ```
 
 ---
@@ -68,8 +103,32 @@ cd python && uv run pytest -q   # 472+ tests
 | — | `fusion/skill_prior.py` | rétrécissement James-Stein sur ratings externes | ✅ SharkScope / OPR |
 
 Plus : `core/range_model.py` (algèbre 1326 ↔ 169, blockers, parsing solveur),
-`data/hand_history.py` (parseurs Winamax / PokerStars), `engine.py` (orchestrateur),
-`compliance/gate.py` (gate multi-signaux fail-closed), `app/` (serveur + interface).
+`data/hand_history.py` (parseurs Winamax / PokerStars / **iPoker-PMU XML**),
+`engine.py` (orchestrateur), `compliance/gate.py` (gate multi-signaux fail-closed),
+`app/` (serveur + interface).
+
+---
+
+## La suite d'analyse post-partie (v4.1)
+
+Étude a posteriori de tes propres mains — jamais en direct pendant le jeu. Tout est
+adossé aux solveurs du cœur, donc chaque verdict est calculé, pas énoncé.
+
+| Module | Ce qu'il fait | Route API |
+|---|---|---|
+| `data/hand_history.parse_ipoker` | parse le XML PMU/iPoker (N mains/session), all-in exact via `@bet`, conservation des jetons vérifiée | — |
+| `analysis/session_review` | profil VPIP/PFR/3-bet/fold-cbet/WTSD + équité des tapis « all-in adjusted » | `/api/review` |
+| `analysis/pushfold_review` | décisions préflop tapis court vs Nash jam/fold, écart en bb | `/api/review/pushfold` |
+| `analysis/spot_advisor` | « que fallait-il faire ? » depuis un spot (cartes, board, pot, mise) | `/api/advise` |
+| `analyser_main.py` | outil console : une main, en rafale, ou `--recap` du journal | — |
+
+**Deux niveaux de certitude, toujours annoncés.** *Certain* quand l'équilibre de Nash
+push/fold tranche (tapis court — vérité de théorie des jeux). *Indicatif* en postflop,
+où l'équité est **exacte** mais la range adverse est une hypothèse : le conseiller
+donne alors le **seuil de bascule** (à partir de quelle lecture la décision
+s'inverse) plutôt qu'un verdict péremptoire.
+
+Latence (serveur chaud) : préflop 6 ms · river 5 ms · turn 17 ms · flop ~300 ms.
 
 ---
 
@@ -143,19 +202,22 @@ P(tilt) de 5,4 % à 24,1 % — ×4,8.
 
 ---
 
-## Ce qui n'est PAS dans ce paquet
+## Phase 1 — perception : faisabilité GO, calibrage restant
 
-**La capture d'écran temps réel (Phase 1).** C'est du code Windows natif
-(`windows-capture` 2.0.0, WGC), qui ne peut être ni compilé ni testé ailleurs que
-sur Windows, et qui doit être **calibré contre ton client réel** — ROI, thème, DPI.
-Les crates Rust sont pré-structurées dans `rust/crates/pfs-capture`.
+La **faisabilité** de la capture d'écran est désormais **tranchée et mesurée** sur la
+machine cible (Windows 11, DPI 150 %) : la sonde `rust/crates/pfs-capture/src/bin/probe.rs`
+(WGC, `windows-capture` 2.0.0) capture une fenêtre **occultée** et lit une région
+d'intérêt 200×100 en **p95 445 µs** (proxy animé) / **245 µs** (client PMU réel) —
+sous le budget 1 ms. Harnais reproductible : `scripts/perception/probe_occulte.ps1`,
+et `probe.exe --auto` détecte le client (PMU, Winamax, PokerStars, partypoker…).
 
-Tout le reste — les 13 fusions, l'orchestrateur, les parseurs, l'application —
-tourne et est testé.
+Ce qui reste : le **recogniseur de cartes** (pHash + gabarits) et le mapping des ROI
+par room — c'est du calibrage, plus une question de faisabilité. Le reste du projet
+tourne et est testé sur toute plateforme (Python pur, hors le crate Rust natif).
 
-**Prochaine étape, semaine 3 :** capturer une fenêtre Winamax *occultée* avec
-`windows-capture`, p95 < 1 ms. C'est le test de faisabilité du projet entier.
-Le harnais de validation existe déjà : `pfs.data.hand_history` est l'oracle.
+**Ce que ce paquet ne fait PAS** : aucune assistance en direct pendant une partie
+d'argent réel. La suite d'analyse ne lit que des mains **terminées** — c'est un choix
+assumé, pas une limite technique.
 
 ---
 
