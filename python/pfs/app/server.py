@@ -729,6 +729,37 @@ class API:
         }
 
 
+    # ── Revue shove/fold : décisions préflop face au Nash jam/fold ───────
+    @staticmethod
+    def review_pushfold(p: dict) -> dict:
+        """Confronte les tapis préflop déjà joués à l'équilibre push/fold.
+
+        Payload : {"path": "<dossier d'historiques>"}. Chaque décision SB
+        heads-up est jugée par le solveur Nash, l'écart chiffré en bb.
+        """
+        from pfs.analysis import review_pushfold_folder
+
+        path = str(p.get("path", "")).strip()
+        if not path:
+            raise ValueError("champ 'path' requis (dossier d'historiques).")
+        rev = review_pushfold_folder(path)
+        return {
+            "judged": len(rev.spots),
+            "mistakes": rev.n_mistakes,
+            "loose_jams": len(rev.loose_jams),
+            "tight_folds": len(rev.tight_folds),
+            "skipped_multiway": rev.n_skipped_multiway,
+            "skipped_deep": rev.n_skipped_deep,
+            "total_cost_bb": round(rev.total_cost_bb, 2),
+            "worst": [
+                {"hand": s.hand, "eff_bb": s.eff_bb, "decision": s.decision,
+                 "verdict": s.verdict, "cost_bb": round(s.cost_bb, 2)}
+                for s in rev.worst(10) if s.verdict != "ok"
+            ],
+            "explain": rev.explain(),
+        }
+
+
 ROUTES: dict[str, Callable[[dict], dict]] = {
     "range": API.range_get,
     "range/compare": API.range_compare,
@@ -751,6 +782,7 @@ ROUTES: dict[str, Callable[[dict], dict]] = {
     "postflop": API.postflop,
     "resolve": API.resolve,
     "review": API.review,
+    "review/pushfold": API.review_pushfold,
 }
 
 

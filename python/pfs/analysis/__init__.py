@@ -7,12 +7,18 @@ solveur — l'étude a posteriori de ses propres décisions, seul levier de
 progression qui ne touche pas à l'équité des parties en cours.
 """
 
+from pfs.analysis.pushfold_review import (
+    PushFoldReview,
+    ShoveSpot,
+    review_pushfold_folder,
+    review_pushfold_hands,
+)
 from pfs.analysis.session_review import (
     AllInSpot,
     HeroProfile,
     SessionReport,
-    review_hands,
     review_folder,
+    review_hands,
 )
 
 __all__ = [
@@ -21,4 +27,8 @@ __all__ = [
     "SessionReport",
     "review_hands",
     "review_folder",
+    "PushFoldReview",
+    "ShoveSpot",
+    "review_pushfold_hands",
+    "review_pushfold_folder",
 ]
