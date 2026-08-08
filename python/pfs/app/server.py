@@ -760,6 +760,36 @@ class API:
         }
 
 
+    # ── Conseil sur un spot déjà joué (« qu'aurais-je dû faire ? ») ──────
+    @staticmethod
+    def advise(p: dict) -> dict:
+        """Verdict sur une main terminée, décrite comme sur une capture.
+
+        Payload : {"hero": "Ah Kd", "board": "Qs 7d 2c", "pot": 100,
+                   "bet": 75, "stack": 300, "big_blind": 10,
+                   "position": "BTN", "villain": "moyenne", "players": 2}
+        """
+        from pfs.analysis import Spot, advise as _advise
+
+        a = _advise(Spot(
+            hero=str(p.get("hero", "")),
+            board=str(p.get("board", "") or ""),
+            pot=float(p.get("pot", 0) or 0),
+            bet=float(p.get("bet", 0) or 0),
+            stack=float(p.get("stack", 0) or 0),
+            big_blind=float(p.get("big_blind", 1) or 1),
+            position=str(p.get("position", "BTN")),
+            villain=str(p.get("villain", "moyenne")),
+            players=int(p.get("players", 2) or 2),
+        ))
+        return {
+            "hand": a.hand, "action": a.action, "confidence": a.confidence,
+            "regime": a.regime, "equity": a.equity, "required": a.required,
+            "mdf": a.mdf, "ev_bb": a.ev_bb, "reasons": a.reasons,
+            "assumptions": a.assumptions, "explain": a.explain(),
+        }
+
+
 ROUTES: dict[str, Callable[[dict], dict]] = {
     "range": API.range_get,
     "range/compare": API.range_compare,
@@ -783,6 +813,7 @@ ROUTES: dict[str, Callable[[dict], dict]] = {
     "resolve": API.resolve,
     "review": API.review,
     "review/pushfold": API.review_pushfold,
+    "advise": API.advise,
 }
 
 

@@ -13,6 +13,7 @@ from pfs.analysis.pushfold_review import (
     review_pushfold_folder,
     review_pushfold_hands,
 )
+from pfs.analysis.spot_advisor import Advice, Spot, advise, parse_cards
 from pfs.analysis.session_review import (
     AllInSpot,
     HeroProfile,
@@ -31,4 +32,8 @@ __all__ = [
     "ShoveSpot",
     "review_pushfold_hands",
     "review_pushfold_folder",
+    "Spot",
+    "Advice",
+    "advise",
+    "parse_cards",
 ]
