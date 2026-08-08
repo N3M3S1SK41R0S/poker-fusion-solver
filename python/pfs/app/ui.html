@@ -1,0 +1,1053 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>♠ Poker Fusion Solver</title>
+<link rel="icon" href="/favicon.ico">
+<style>
+:root{
+ --bg:#07070c;--panel:#11111b;--panel2:#171724;--line:#242437;--txt:#e7e7f0;
+ --dim:#9a9ab4;--dim2:#6b6b85;--p:#a855f7;--i:#6366f1;--b:#3b82f6;--g:#22c55e;
+ --y:#eab308;--o:#f97316;--r:#ef4444;--c:#06b6d4;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:radial-gradient(ellipse at 12% -5%,#1b0b2f 0%,#0a0a12 45%,#06060a 100%);
+ color:var(--txt);font:13.5px/1.55 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif;
+ min-height:100vh;padding-bottom:50px}
+.wrap{max-width:1280px;margin:0 auto;padding:0 18px}
+code,.mono{font-family:ui-monospace,"SF Mono",Consolas,monospace}
+nav{position:sticky;top:0;z-index:50;backdrop-filter:blur(18px);background:rgba(6,6,12,.85);
+ border-bottom:1px solid var(--line)}
+nav .wrap{display:flex;align-items:center;gap:18px;padding:10px 18px;overflow-x:auto}
+.brand{font-weight:900;letter-spacing:.12em;font-size:12px;color:#d8b4fe;white-space:nowrap}
+.tabs{display:flex;gap:3px}
+.tab{padding:6px 13px;border-radius:8px;font-size:12.5px;font-weight:500;color:var(--dim);
+ background:none;border:none;cursor:pointer;white-space:nowrap;transition:.15s;font-family:inherit}
+.tab:hover{color:#fff;background:#ffffff0d}
+.tab.on{background:linear-gradient(135deg,#7c3aed,#6366f1);color:#fff}
+h1{font-size:26px;font-weight:900;margin:22px 0 4px;
+ background:linear-gradient(135deg,#c084fc,#818cf8 50%,#38bdf8);-webkit-background-clip:text;
+ background-clip:text;-webkit-text-fill-color:transparent}
+h2{font-size:16px;font-weight:800;margin:20px 0 8px;color:#c4b5fd}
+p.lead{color:var(--dim);margin-bottom:12px;max-width:900px}
+section{display:none;animation:f .25s}
+section.on{display:block}
+@keyframes f{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:12px}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start}
+.col{flex:1;min-width:290px}
+label{display:block;font-size:11px;color:var(--dim2);text-transform:uppercase;
+ letter-spacing:.05em;margin-bottom:3px}
+input,select,textarea,button{font-family:inherit;font-size:13px;background:#0d0d16;
+ color:var(--txt);border:1px solid var(--line);border-radius:7px;padding:6px 9px;width:100%}
+textarea{min-height:150px;font-family:ui-monospace,monospace;font-size:11.5px;resize:vertical}
+input:focus,select:focus,textarea:focus{outline:none;border-color:#7c3aed}
+button{cursor:pointer;background:linear-gradient(135deg,#7c3aed,#6366f1);border:none;
+ font-weight:600;transition:.15s}
+button:hover{filter:brightness(1.15)}
+button.ghost{background:#1a1a28;border:1px solid var(--line);font-weight:500}
+button.sm{padding:4px 10px;font-size:12px;width:auto}
+.field{margin-bottom:9px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{text-align:left;padding:7px 8px;color:var(--dim2);font-weight:600;font-size:10.5px;
+ text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--line)}
+td{padding:6px 8px;border-bottom:1px solid #1b1b2a}
+tr:hover td{background:#ffffff05}
+.num{font-variant-numeric:tabular-nums;font-family:ui-monospace,monospace}
+.pill{display:inline-block;padding:2px 8px;border-radius:99px;font-size:10.5px;font-weight:700}
+.pill.g{background:#22c55e22;color:#86efac;border:1px solid #22c55e55}
+.pill.r{background:#ef444422;color:#fca5a5;border:1px solid #ef444455}
+.pill.y{background:#eab30822;color:#fde047;border:1px solid #eab30855}
+.pill.p{background:#a855f722;color:#d8b4fe;border:1px solid #a855f755}
+.pill.d{background:#ffffff0d;color:var(--dim);border:1px solid var(--line)}
+.kpi{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
+.kpi .v{font-size:20px;font-weight:900;font-variant-numeric:tabular-nums}
+.kpi .l{font-size:10.5px;color:var(--dim2);margin-top:2px;text-transform:uppercase;letter-spacing:.05em}
+#grid{display:inline-block;user-select:none}
+.gr{display:flex}
+.gc{width:36px;height:36px;display:flex;align-items:center;justify-content:center;
+ font-size:9.5px;font-family:ui-monospace,monospace;border:1px solid #1b1b2a;cursor:pointer;
+ transition:transform .08s}
+.gc:hover{transform:scale(1.18);z-index:5;border-color:#fbbf24;position:relative}
+.gh{width:36px;height:18px;display:flex;align-items:center;justify-content:center;
+ font-size:9.5px;color:var(--dim2);font-family:ui-monospace,monospace}
+.bar{height:6px;border-radius:99px;background:#1e1e2e;overflow:hidden;margin-top:4px}
+.bar>i{display:block;height:100%;border-radius:99px}
+pre{background:#0a0a12;border:1px solid var(--line);border-radius:9px;padding:11px;
+ font-size:11.5px;overflow-x:auto;color:var(--dim);white-space:pre-wrap;line-height:1.5}
+.warn{background:linear-gradient(135deg,#ef44441a,transparent);border:1px solid #ef444455;
+ border-radius:10px;padding:11px 13px;margin:10px 0;font-size:12.5px}
+.ok{background:linear-gradient(135deg,#22c55e14,transparent);border:1px solid #22c55e44;
+ border-radius:10px;padding:11px 13px;margin:10px 0;font-size:12.5px}
+.muted{color:var(--dim2);font-size:11.5px}
+canvas{max-width:100%}
+footer{text-align:center;color:var(--dim2);font-size:11px;padding:26px 0 0;
+ border-top:1px solid #14141f;margin-top:30px}
+</style>
+</head>
+<body>
+<nav><div class="wrap">
+  <div class="brand">♠ POKER FUSION</div>
+  <div class="tabs" id="tabs"></div>
+  <div style="flex:1"></div>
+  <span class="muted mono" id="status" title="état de la dernière requête">✓</span>
+</div></nav>
+
+<div class="wrap">
+
+<!-- ══════════ STUDY ══════════ -->
+<section id="s-study" class="on">
+  <h1>Study — ranges, entropie, distance de Fisher</h1>
+  <p class="lead">Clique une case pour ajuster sa fréquence. Le pinceau règle la valeur posée.
+  Le mode <b>Compare</b> superpose la solution GTO et calcule ton score.</p>
+  <div class="row">
+    <div style="flex:0 0 auto">
+      <div class="card" style="padding:12px">
+        <div class="row" style="gap:8px;margin-bottom:10px">
+          <select id="pos" style="width:auto">
+            <option>UTG</option><option>MP</option><option>CO</option>
+            <option selected>BTN</option><option>SB</option>
+          </select>
+          <select id="mode" style="width:auto">
+            <option value="build">🎨 Builder</option>
+            <option value="gto">📋 GTO</option>
+            <option value="compare">🎯 Compare</option>
+            <option value="rules">📐 Règles</option>
+          </select>
+          <select id="brush" style="width:auto">
+            <option value="1">100 %</option><option value="0.75">75 %</option>
+            <option value="0.5">50 %</option><option value="0.25">25 %</option>
+            <option value="0">0 %</option>
+          </select>
+          <button class="ghost sm" onclick="loadGTO()">Charger GTO</button>
+          <button class="ghost sm" onclick="clearGrid()">Vider</button>
+        </div>
+        <div id="grid"></div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="grid2">
+        <div class="kpi"><div class="v" id="k-combos">—</div><div class="l">combos / 1326</div></div>
+        <div class="kpi"><div class="v" id="k-frac">—</div><div class="l">% des mains</div></div>
+        <div class="kpi"><div class="v" style="color:#d8b4fe" id="k-ent">—</div><div class="l">H(range) bits</div></div>
+        <div class="kpi"><div class="v" id="k-shape">—</div><div class="l">forme</div></div>
+      </div>
+      <div class="card" id="cmp" style="display:none">
+        <h2 style="margin-top:0">Score vs GTO</h2>
+        <div class="grid2">
+          <div class="kpi"><div class="v" id="k-acc">—</div><div class="l">précision</div></div>
+          <div class="kpi"><div class="v" style="color:#38bdf8" id="k-fisher">—</div><div class="l">distance Fisher-Rao</div></div>
+        </div>
+        <p class="muted" style="margin-top:8px">Rouge = ton écart au GTO. La distance de
+        Fisher-Rao est invariante par reparamétrisation : comparable entre positions.</p>
+      </div>
+      <div class="card" id="rulesbox" style="display:none">
+        <h2 style="margin-top:0">Information Bottleneck — la range en règles</h2>
+        <div class="row" style="gap:8px;margin-bottom:8px">
+          <div style="flex:0 0 90px"><label>règles</label>
+            <input type="number" id="nrules" value="0" min="0" max="20" onchange="debounce('rules',refresh,220)"></div>
+          <div style="flex:1"><label>&nbsp;</label><span class="muted">0 = coude automatique</span></div>
+        </div>
+        <div id="rules"></div>
+      </div>
+      <div class="card">
+        <h2 style="margin-top:0">Équité — moteur exact / Monte-Carlo</h2>
+        <div class="grid2">
+          <div class="field"><label>ta main (ex. Ah Kd)</label>
+            <input type="text" id="eq-hero" value="Ah Kd" oninput="dEQ()"></div>
+          <div class="field"><label>board (0, 3, 4 ou 5 cartes)</label>
+            <input type="text" id="eq-board" value="Ks 7d 2c" oninput="dEQ()"></div>
+        </div>
+        <div class="field"><label>range adverse (syntaxe solveur, ex. QQ+, AKs)</label>
+          <input type="text" id="eq-range" value="22+, A2s+, KTs+, QTs+, JTs, T9s, 98s, ATo+, KQo" oninput="dEQ()"></div>
+        <div class="field"><label>2ᵉ vilain (multiway, optionnel — ex. 55+, A9s+)</label>
+          <input type="text" id="eq-range2" value="" oninput="dEQ()"></div>
+        <div id="eq-out" class="muted" style="margin-top:6px">Entre une main pour calculer.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ FUSION ══════════ -->
+<section id="s-fusion">
+  <h1>Fusion — de combien s'écarter du GTO</h1>
+  <p class="lead">Le cœur du système (F13). λ n'est pas un curseur : il se dérive de la
+  confiance statistique (F1), se tempère par l'état mental (F2), et se borne par la
+  garantie de <i>safe exploitation</i> de Ganzfried &amp; Sandholm (2015).</p>
+  <div class="row">
+    <div class="col">
+      <div class="card">
+        <div class="grid2">
+          <div class="field"><label>statistique</label>
+            <select id="f-stat" onchange="dFusion()">
+              <option value="fold_to_cbet">fold to c-bet</option>
+              <option value="vpip">VPIP</option><option value="pfr">PFR</option>
+              <option value="three_bet">3-bet</option>
+              <option value="fold_to_three_bet">fold to 3-bet</option>
+            </select></div>
+          <div class="field"><label>observé (%)</label>
+            <input type="number" id="f-obs" value="75" step="1" oninput="dFusion()"></div>
+          <div class="field"><label>échantillon (mains)</label>
+            <input type="number" id="f-n" value="200" step="10" oninput="dFusion()"></div>
+          <div class="field"><label>cadeau réalisé (bb/100, vide = ∞)</label>
+            <input type="number" id="f-gift" value="" step="0.5" oninput="dFusion()"></div>
+          <div class="field"><label>GTO c-bet (%)</label>
+            <input type="number" id="f-gto" value="62" oninput="dFusion()"></div>
+          <div class="field"><label>meilleure réponse (%)</label>
+            <input type="number" id="f-br" value="88" oninput="dFusion()"></div>
+        </div>
+        <label style="margin-top:6px">état mental estimé (F2)</label>
+        <div class="grid3">
+          <div><label style="text-transform:none;color:var(--dim)">solid</label>
+            <input type="number" id="f-solid" value="50" oninput="dFusion()"></div>
+          <div><label style="text-transform:none;color:var(--dim)">loose</label>
+            <input type="number" id="f-loose" value="30" oninput="dFusion()"></div>
+          <div><label style="text-transform:none;color:var(--dim)">tilt</label>
+            <input type="number" id="f-tilt" value="20" oninput="dFusion()"></div>
+        </div>
+      </div>
+    </div>
+    <div class="col"><div id="fusion-out"><div class="card muted">Calcul en cours…</div></div></div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Prior externe — SharkScope / OPR</h2>
+    <p class="muted" style="margin-bottom:10px">Ces sites donnent des <b>résultats</b>
+    (ROI, volume), pas des <b>fréquences</b>. Aucun ROI ne dit à quelle fréquence un
+    joueur folde face à un c-bet — ils ne peuvent donc pas alimenter F13 directement.
+    Ce qu'ils peuvent faire : déformer le <b>prior d'archétype</b> de F3 et la
+    <b>propension à s'adapter</b> ρ de F13.<br>
+    <b>Saisie manuelle uniquement — l'application n'interroge aucun site.</b></p>
+    <div class="row">
+      <div style="flex:1;min-width:120px"><label>format</label>
+        <select id="sk-fmt" onchange="dSkill()">
+          <option value="mtt_large">MTT large field</option>
+          <option value="mtt_small">MTT small field</option>
+          <option value="sng">SNG</option><option value="spin">Spin</option>
+        </select></div>
+      <div style="flex:1;min-width:110px"><label>tournois joués</label>
+        <input type="number" id="sk-n" value="200" step="50" oninput="dSkill()"></div>
+      <div style="flex:1;min-width:110px"><label>ROI affiché (%)</label>
+        <input type="number" id="sk-roi" value="40" step="1" oninput="dSkill()"></div>
+      <div style="flex:1;min-width:110px"><label>force du prior</label>
+        <input type="number" id="sk-str" value="1" step="0.25" min="0" max="1" oninput="dSkill()"></div>
+    </div>
+    <div id="skill-out" style="margin-top:10px"></div>
+  </div>
+</section>
+
+<!-- ══════════ TRAIN ══════════ -->
+<section id="s-train">
+  <h1>Train — répétition espacée SM-2</h1>
+  <p class="lead">Les combos mal joués reviennent immédiatement, les maîtrisés sont espacés
+  exponentiellement. C'est ce qui permet de couvrir 5 000 décisions sans les réviser toutes.</p>
+  <div class="row">
+    <div class="col">
+      <div class="card">
+        <div class="row" style="gap:8px">
+          <select id="d-diff" style="width:auto">
+            <option value="easy">Facile — binaire</option>
+            <option value="medium" selected>Moyen — au quart</option>
+            <option value="hard">Difficile — exact</option>
+          </select>
+          <label style="display:flex;align-items:center;gap:6px;width:auto;text-transform:none;
+            color:var(--dim);margin:0">
+            <input type="checkbox" id="d-close" style="width:auto"> spots mixtes seulement</label>
+          <button class="sm" onclick="drillStart()">Démarrer</button>
+        </div>
+      </div>
+      <div class="card" id="drill-q" style="display:none;text-align:center;padding:22px">
+        <div class="muted" id="d-meta"></div>
+        <div style="font-size:44px;font-weight:900;margin:10px 0;font-family:ui-monospace,monospace"
+             id="d-group">—</div>
+        <div class="muted" id="d-pos"></div>
+        <div style="margin:16px 0;display:flex;gap:6px;justify-content:center;flex-wrap:wrap"
+             id="d-buttons"></div>
+        <div id="d-feedback"></div>
+      </div>
+    </div>
+    <div class="col"><div id="drill-report"><div class="card">
+      <h2 style="margin-top:0">Comment ça marche</h2>
+      <p class="muted">Chaque groupe de mains est une carte de révision. Les combos
+      mal joués reviennent immédiatement, les maîtrisés sont espacés
+      exponentiellement (SM-2, l'algorithme d'Anki). Après une douzaine de réponses,
+      les leaks apparaissent ici, triés par <b>coût en bb</b> — pas par fréquence
+      d'erreur : se tromper souvent sur un spot rare coûte moins qu'une erreur
+      occasionnelle sur AA.</p></div></div></div>
+  </div>
+</section>
+
+<!-- ══════════ SIZING ══════════ -->
+<section id="s-sizing">
+  <h1>Sizing — l'information a un prix</h1>
+  <p class="lead">F4 : <code>b* = argmax_b [EV(b) + λ·I(b)]</code>. λ est le prix d'un bit
+  d'information sur cet adversaire, en bb — il croît avec l'horizon restant et l'incertitude.</p>
+  <div class="row">
+    <div class="col"><div class="card">
+      <div class="grid2">
+        <div class="field"><label>pot (bb)</label>
+          <input type="number" id="z-pot" value="45" oninput="dSizing()"></div>
+        <div class="field"><label>λ (bb/bit)</label>
+          <input type="number" id="z-lam" value="1.5" step="0.25" oninput="dSizing()"></div>
+        <div class="field"><label>force de la range villain (α)</label>
+          <input type="number" id="z-a" value="2" step="0.5" oninput="dSizing()"></div>
+        <div class="field"><label>faiblesse (β)</label>
+          <input type="number" id="z-b" value="3" step="0.5" oninput="dSizing()"></div>
+        <div class="field"><label>écart MDF (+ = call station)</label>
+          <input type="number" id="z-slack" value="0" step="0.05" oninput="dSizing()"></div>
+      </div>
+    </div></div>
+    <div class="col"><div id="sizing-out"><div class="card muted">Calcul en cours…</div></div></div>
+  </div>
+  <div class="card">
+    <h2 style="margin-top:0">Bluff-catch (F10) — la confiance, pas juste les pot odds</h2>
+    <div class="row">
+      <div style="flex:1;min-width:110px"><label>pot</label>
+        <input type="number" id="bc-pot" value="100" oninput="dBC()"></div>
+      <div style="flex:1;min-width:110px"><label>mise adverse</label>
+        <input type="number" id="bc-bet" value="75" oninput="dBC()"></div>
+      <div style="flex:1;min-width:110px"><label>fréq. de bluff (%)</label>
+        <input type="number" id="bc-f" value="34" oninput="dBC()"></div>
+      <div style="flex:1;min-width:110px"><label>± écart-type (pts)</label>
+        <input type="number" id="bc-s" value="9" oninput="dBC()"></div>
+    </div>
+    <div id="bc-out" style="margin-top:10px"></div>
+  </div>
+</section>
+
+<!-- ══════════ ANALYZE ══════════ -->
+<section id="s-analyze">
+  <h1>Analyze — import de hand-history</h1>
+  <p class="lead">Colle un fichier Winamax ou PokerStars. Les pseudos sont hachés localement
+  (BLAKE2b + sel) : ils ne sont jamais stockés en clair.</p>
+  <div class="row">
+    <div class="col"><div class="card">
+      <label>hand-history brut</label>
+      <textarea id="hh" placeholder="Winamax Poker - CashGame - HandId: #..."></textarea>
+      <div class="row" style="margin-top:8px;gap:8px">
+        <button class="sm" onclick="analyseHH()">Analyser</button>
+        <button class="ghost sm" onclick="loadSample()">Exemple</button>
+      </div>
+    </div></div>
+    <div class="col"><div id="hh-out"><div class="card">
+      <h2 style="margin-top:0">Ce qui est extrait</h2>
+      <p class="muted">Sièges, stacks, cartes, board, séquence d'actions par street,
+      pot. Puis les statistiques dérivées — VPIP, PFR, 3-bet, fold-to-cbet, WTSD —
+      avec leur <b>intervalle de crédibilité</b>. Une statistique n'est comptée que
+      s'il y a eu <b>occasion</b> de l'observer : injecter un « fold-to-cbet = non »
+      sans c-bet en face biaiserait l'estimation.<br><br>
+      Clique <b>Exemple</b> pour voir le résultat sur une main type.</p></div></div></div>
+  </div>
+</section>
+
+<!-- ══════════ SOLVER ══════════ -->
+<section id="s-solver">
+  <h1>Solveur — NLHE réel (river/turn) + banc d'essai Kuhn</h1>
+  <p class="lead">Le solveur postflop résout la river <b>exactement</b> (1326 combos, zéro
+  abstraction) et le turn par énumération des rivières — CFR range-contre-range, la même
+  architecture que les solveurs commerciaux.</p>
+
+  <div class="card">
+    <h2 style="margin-top:0">River / turn — range contre range</h2>
+    <div class="grid2">
+      <div class="field"><label>board (4 = turn, 5 = river)</label>
+        <input type="text" id="pf-board" value="2s 2d 7h 8h Kc"></div>
+      <div class="field"><label>pot / tapis effectif</label>
+        <input type="text" id="pf-money" value="100 / 300"></div>
+      <div class="field"><label>range OOP</label>
+        <input type="text" id="pf-oop" value="22+, ATs+, KQs, AJo+"></div>
+      <div class="field"><label>range IP</label>
+        <input type="text" id="pf-ip" value="77+, A9s+, KTs+, AQo+"></div>
+      <div class="field"><label>tailles de mise (fractions du pot)</label>
+        <input type="text" id="pf-sizes" value="0.5, 1.25"></div>
+      <div class="field"><label>itérations</label>
+        <input type="number" id="pf-it" value="400" step="100" min="50" max="2000"></div>
+    </div>
+    <button class="sm" onclick="pfRun()">Résoudre le spot</button>
+    <span class="muted" id="pf-status" style="margin-left:10px"></span>
+  </div>
+  <div id="pf-out"></div>
+
+  <h2>Banc d'essai Kuhn — l'oracle −1/18</h2>
+  <p class="lead">Kuhn poker valide l'implémentation sans ambiguïté : sa valeur d'équilibre
+  vaut exactement −1/18. L'exploitabilité est calculée en information imparfaite.</p>
+  <div class="card">
+    <div class="row" style="gap:10px;align-items:flex-end">
+      <div style="flex:0 0 150px"><label>itérations</label>
+        <input type="number" id="sv-it" value="600" step="100"></div>
+      <div style="flex:0 0 190px"><label>schedule</label>
+        <select id="sv-hs"><option value="1">HS-DCFR (2024)</option>
+          <option value="0">DCFR nu</option></select></div>
+      <button class="sm" style="flex:0 0 130px" onclick="solveRun()">Résoudre</button>
+    </div>
+  </div>
+  <div id="solve-out"><div class="card">
+    <h2 style="margin-top:0">Ce que mesure l'exploitabilité</h2>
+    <p class="muted">C'est ce que tu perds face à un adversaire qui te contre-exploite
+    parfaitement. Elle vaut 0 à l'équilibre de Nash exact — toute autre métrique
+    (vitesse, mémoire) n'a de sens qu'à exploitabilité comparable.<br><br>
+    Le calcul est fait en <b>information imparfaite</b> : le joueur qui calcule la
+    meilleure réponse choisit une action par ensemble d'information, pas par état.
+    Le laisser maximiser état par état reviendrait à lui donner les cartes adverses,
+    et l'exploitabilité mesurée ne descendrait jamais sous 0,277.</p></div></div>
+</section>
+
+<!-- ══════════ BANKROLL ══════════ -->
+<section id="s-bankroll">
+  <h1>Bankroll &amp; ICM — Kelly, ruine, ergodicité, bulle</h1>
+  <p class="lead">L'EV est une moyenne d'ensemble ; ton bankroll suit une seule trajectoire.
+  Certains spots à EV positive sont à refuser (Peters, 2019).</p>
+  <div class="row">
+    <div class="col"><div class="card">
+      <div class="grid2">
+        <div class="field"><label>winrate (bb/100)</label>
+          <input type="number" id="br-mu" value="5" step="0.5" oninput="dBR()"></div>
+        <div class="field"><label>écart-type (bb/100)</label>
+          <input type="number" id="br-sd" value="100" step="5" oninput="dBR()"></div>
+        <div class="field"><label>bankroll (bb)</label>
+          <input type="number" id="br-bb" value="3000" step="100" oninput="dBR()"></div>
+        <div class="field"><label>mains jouées</label>
+          <input type="number" id="br-n" value="50000" step="5000" oninput="dBR()"></div>
+        <div class="field"><label>shot : buy-in (bb)</label>
+          <input type="number" id="br-shot" value="200" step="50" oninput="dBR()"></div>
+        <div class="field"><label>winrate au shot</label>
+          <input type="number" id="br-swr" value="2.5" step="0.5" oninput="dBR()"></div>
+      </div>
+    </div></div>
+    <div class="col"><div id="br-out"><div class="card muted">Calcul en cours…</div></div></div>
+  </div>
+
+  <h2 style="margin-top:18px">ICM — F14 (Malmuth-Harville)</h2>
+  <p class="lead">En tournoi, un jeton perdu vaut plus qu'un jeton gagné. Le bubble factor
+  quantifie ce ratio ; l'équité requise pour payer devient α<sub>ICM</sub> = BF·b/(P+b+BF·b).</p>
+  <div class="row">
+    <div class="col"><div class="card">
+      <div class="field"><label>stacks (jetons, séparés par des virgules — héros et vilain inclus)</label>
+        <input type="text" id="icm-stacks" value="5000, 3000, 1500, 500" oninput="dICM()"></div>
+      <div class="field"><label>payouts (structure des prix, ex. 50, 30, 20)</label>
+        <input type="text" id="icm-pay" value="50, 30, 20" oninput="dICM()"></div>
+      <div class="grid2">
+        <div class="field"><label>héros (index, 0 = premier stack)</label>
+          <input type="number" id="icm-hero" value="1" min="0" step="1" oninput="dICM()"></div>
+        <div class="field"><label>vilain (index)</label>
+          <input type="number" id="icm-vil" value="0" min="0" step="1" oninput="dICM()"></div>
+        <div class="field"><label>pot avant le bet (jetons)</label>
+          <input type="number" id="icm-pot" value="400" min="0" step="100" oninput="dICM()"></div>
+        <div class="field"><label>bet à payer (jetons)</label>
+          <input type="number" id="icm-bet" value="2800" min="1" step="100" oninput="dICM()"></div>
+        <div class="field"><label>ton équité (%) — optionnel</label>
+          <input type="number" id="icm-eq" value="45" min="0" max="100" step="1" oninput="dICM()"></div>
+      </div>
+      <div class="field"><label>primes PKO (une par joueur, vide = pas de PKO)</label>
+        <input type="text" id="icm-bounties" value="" placeholder="ex. 20, 20, 20, 20" oninput="dICM()"></div>
+      <div class="grid2">
+        <div class="field"><label>FGS : mains futures (0 = ICM statique)</label>
+          <input type="number" id="icm-fgs" value="0" min="0" max="20" step="1" oninput="dICM()"></div>
+        <div class="field"><label>bouton (index)</label>
+          <input type="number" id="icm-btn" value="0" min="0" step="1" oninput="dICM()"></div>
+        <div class="field"><label>SB / BB (jetons)</label>
+          <input type="text" id="icm-blinds" value="100 / 200" oninput="dICM()"></div>
+        <div class="field"><label>ante (jetons)</label>
+          <input type="number" id="icm-ante" value="0" min="0" step="5" oninput="dICM()"></div>
+      </div>
+    </div></div>
+    <div class="col"><div id="icm-out"><div class="card muted">Calcul en cours…</div></div></div>
+  </div>
+</section>
+
+<!-- ══════════ HMM ══════════ -->
+<section id="s-hmm">
+  <h1>État mental — HMM 3 états</h1>
+  <p class="lead">Clique les actions observées : le filtre forward met à jour P(solid/loose/tilt)
+  en ligne. Une seule action improbable fait bondir P(tilt) d'un facteur ×4,8 — bien avant
+  qu'aucune statistique brute ne bouge.</p>
+  <div class="card">
+    <div class="row" style="gap:6px" id="hmm-buttons"></div>
+    <div class="row" style="gap:6px;margin-top:8px">
+      <button class="ghost sm" onclick="hmmObs=[];hmmRun()">Réinitialiser</button>
+      <span class="muted mono" id="hmm-seq"></span>
+    </div>
+  </div>
+  <div id="hmm-out"><div class="card muted">Calcul en cours…</div></div>
+</section>
+
+<footer>
+  Poker Fusion Solver v4.0 — 14 fusions + tous les standards · solveur river/turn réel · 127.0.0.1 uniquement · aucune sortie réseau
+</footer>
+</div>
+
+<script>
+const TOKEN="__TOKEN__";
+const RANKS="AKQJT98765432".split("");
+let W=new Array(169).fill(0), GTO=new Array(169).fill(0), RECON=null, ERRS=null;
+let hmmObs=[], drillT0=0;
+
+const TABS=[["s-study","Study"],["s-fusion","Fusion"],["s-train","Train"],
+            ["s-sizing","Sizing"],["s-analyze","Analyze"],["s-solver","Solveur"],
+            ["s-bankroll","Bankroll"],["s-hmm","État mental"]];
+const tabsEl=document.getElementById("tabs");
+TABS.forEach(([id,label],i)=>{
+  const b=document.createElement("button");
+  b.className="tab"+(i===0?" on":""); b.textContent=label;
+  b.onclick=()=>{document.querySelectorAll(".tab").forEach(t=>t.classList.remove("on"));
+    document.querySelectorAll("section").forEach(s=>s.classList.remove("on"));
+    b.classList.add("on"); document.getElementById(id).classList.add("on");
+    if(id==="s-fusion"){fusionRun();skillRun();} if(id==="s-sizing"){sizingRun();bcRun();}
+    if(id==="s-bankroll"){brRun();icmRun();} if(id==="s-hmm")hmmRun();};
+  tabsEl.appendChild(b);
+});
+
+// Anti-rebond : sans lui, chaque frappe dans un champ déclenche une requête.
+const _timers={};
+function debounce(key,fn,ms=220){
+  clearTimeout(_timers[key]); _timers[key]=setTimeout(fn,ms);
+}
+const dFusion =()=>debounce("fusion",fusionRun);
+const dSizing =()=>debounce("sizing",sizingRun);
+const dBC     =()=>debounce("bc",bcRun);
+const dBR     =()=>debounce("br",brRun);
+const dSkill  =()=>debounce("skill",skillRun);
+const dICM    =()=>debounce("icm",icmRun);
+const dEQ     =()=>debounce("eq",eqRun,400);
+
+async function api(route,body={}){
+  document.getElementById("status").textContent="⟳";
+  try{
+    const r=await fetch(`/api/${route}?t=${encodeURIComponent(TOKEN)}`,
+      {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const j=await r.json();
+    document.getElementById("status").textContent=j.error?"⚠ erreur":"✓";
+    if(j.error)console.warn(route,j.error);
+    return j;
+  }catch(e){document.getElementById("status").textContent="✕ hors ligne";return{error:String(e)};}
+}
+
+// ── grille ────────────────────────────────────────────────────────────
+function gname(r,c){ if(r===c)return RANKS[r]+RANKS[c];
+  return r<c?RANKS[r]+RANKS[c]+"s":RANKS[c]+RANKS[r]+"o"; }
+function col(w,mode,err){
+  if(mode==="compare"){const g=Math.max(0,1-err*2);
+    return `rgb(${Math.round(239-(239-34)*g)},${Math.round(68+(197-68)*g)},${Math.round(68+(94-68)*g)})`;}
+  const r=Math.round(231*w+22*(1-w)),g=Math.round(76*w+22*(1-w)),b=Math.round(60*w+34*(1-w));
+  return `rgb(${r},${g},${b})`;
+}
+function buildGrid(){
+  const el=document.getElementById("grid"); el.innerHTML="";
+  const head=document.createElement("div"); head.className="gr";
+  head.appendChild(Object.assign(document.createElement("div"),{className:"gh"}));
+  RANKS.forEach(r=>{const d=document.createElement("div");d.className="gh";d.textContent=r;head.appendChild(d);});
+  el.appendChild(head);
+  for(let r=0;r<13;r++){
+    const row=document.createElement("div"); row.className="gr";
+    const h=document.createElement("div");h.className="gh";h.textContent=RANKS[r];row.appendChild(h);
+    for(let c=0;c<13;c++){
+      const i=r*13+c, d=document.createElement("div");
+      d.className="gc"; d.id="g"+i; d.textContent=gname(r,c);
+      d.onclick=()=>{const m=document.getElementById("mode").value;
+        if(m==="gto"||m==="rules")return;
+        W[i]=parseFloat(document.getElementById("brush").value); refresh();};
+      row.appendChild(d);
+    }
+    el.appendChild(row);
+  }
+}
+function paint(){
+  const mode=document.getElementById("mode").value;
+  const src = mode==="gto"?GTO : (mode==="rules"&&RECON?RECON:W);
+  for(let i=0;i<169;i++){
+    const e=document.getElementById("g"+i);
+    const w=src[i]||0;
+    e.style.background=col(w,mode,ERRS?ERRS[i]:0);
+    e.style.color = w>0.45?"#fff":"#8b8ba6";
+    e.title=`${e.textContent} : ${(w*100).toFixed(0)} %`+(mode==="compare"?` (GTO ${(GTO[i]*100).toFixed(0)} %)`:"");
+  }
+}
+async function refresh(){
+  const pos=document.getElementById("pos").value, mode=document.getElementById("mode").value;
+  const g=await api("range",{position:pos}); if(g.error)return; GTO=g.groups;
+  const shown = (mode==="gto"||mode==="rules")?GTO:W;
+  const cur=await api("range/compare",{a:shown,position:pos});
+  const combos=shown.reduce((s,w,i)=>{const n=gname(Math.floor(i/13),i%13);
+    return s+w*(n.length===2?6:(n.endsWith("s")?4:12));},0);
+  document.getElementById("k-combos").textContent=combos.toFixed(0);
+  document.getElementById("k-frac").textContent=(combos/13.26).toFixed(1)+" %";
+  document.getElementById("k-ent").textContent=((mode==="gto"||mode==="rules")?cur.entropy_gto:cur.entropy_you).toFixed(2);
+  document.getElementById("k-shape").textContent=g.shape;
+  ERRS = mode==="compare"?cur.errors:null;
+  document.getElementById("cmp").style.display = mode==="compare"?"":"none";
+  if(mode==="compare"){
+    document.getElementById("k-acc").textContent=(cur.accuracy*100).toFixed(1)+" %";
+    document.getElementById("k-acc").style.color=cur.accuracy>.9?"#86efac":cur.accuracy>.8?"#fde047":"#fca5a5";
+    document.getElementById("k-fisher").textContent=cur.fisher.toFixed(3);
+  }
+  const rb=document.getElementById("rulesbox");
+  rb.style.display = mode==="rules"?"":"none";
+  if(mode==="rules"){
+    const n=parseInt(document.getElementById("nrules").value)||0;
+    const R=await api("range/rules",{position:pos,n_rules:n});
+    RECON=R.reconstructed;
+    document.getElementById("rules").innerHTML=`
+      <div class="grid3" style="margin-bottom:10px">
+        <div class="kpi"><div class="v" style="color:#86efac">${(R.fidelity*100).toFixed(1)}%</div><div class="l">fidélité I(T;A)</div></div>
+        <div class="kpi"><div class="v">${R.rules.length}</div><div class="l">règles (coude ${R.elbow})</div></div>
+        <div class="kpi"><div class="v">${(R.mae*100).toFixed(1)}</div><div class="l">erreur moy. (pts)</div></div>
+      </div>
+      <table><tbody>${R.rules.map((r,i)=>`<tr>
+        <td class="num" style="width:22px;color:var(--dim2)">${i+1}</td>
+        <td><b>SI</b> ${r.predicate}</td>
+        <td class="num" style="text-align:right;color:#d8b4fe">${(r.frequency*100).toFixed(0)} %</td>
+        <td class="num muted" style="text-align:right">${r.n_groups} gr.</td></tr>`).join("")}
+        <tr><td></td><td class="muted">SINON</td>
+        <td class="num" style="text-align:right;color:var(--dim)">${(R.default*100).toFixed(0)} %</td><td></td></tr>
+      </tbody></table>
+      <p class="muted" style="margin-top:8px">Plan d'information : ${R.plane.map(p=>
+        `${p.n}→${(p.fidelity*100).toFixed(0)}%`).join("  ")}</p>`;
+  } else RECON=null;
+  paint();
+}
+async function loadGTO(){const g=await api("range",{position:document.getElementById("pos").value});
+  W=g.groups.slice(); refresh();}
+function clearGrid(){W=new Array(169).fill(0); refresh();}
+document.getElementById("pos").onchange=refresh;
+document.getElementById("mode").onchange=refresh;
+
+// ── fusion ────────────────────────────────────────────────────────────
+async function fusionRun(){
+  const v=id=>parseFloat(document.getElementById(id).value)||0;
+  const tot=v("f-solid")+v("f-loose")+v("f-tilt")||1;
+  const r=await api("fusion",{stat:document.getElementById("f-stat").value,
+    observed:v("f-obs")/100,n:Math.max(1,v("f-n")),
+    gift:document.getElementById("f-gift").value,
+    gto_bet:v("f-gto")/100,br_bet:v("f-br")/100,
+    p_solid:v("f-solid")/tot,p_loose:v("f-loose")/tot,p_tilt:v("f-tilt")/tot});
+  if(r.error){document.getElementById("fusion-out").innerHTML=`<div class="warn">${r.error}</div>`;return;}
+  const dec = r.significant?"g":"y";
+  document.getElementById("fusion-out").innerHTML=`
+    <div class="card">
+      <div class="grid3">
+        <div class="kpi"><div class="v" style="color:#d8b4fe">${(r.bet*100).toFixed(1)}%</div><div class="l">★ fréquence fusionnée</div></div>
+        <div class="kpi"><div class="v">${r.lambda.toFixed(3)}</div><div class="l">λ exploitation</div></div>
+        <div class="kpi"><div class="v">${r.z.toFixed(2)}</div><div class="l">z-score</div></div>
+      </div>
+      <div style="margin:12px 0 4px" class="muted">Solveur pur ${(r.gto_bet*100).toFixed(0)} %
+        · Exploitatif naïf ${(r.br_bet*100).toFixed(0)} % · <b style="color:#d8b4fe">Fusion ${(r.bet*100).toFixed(1)} %</b></div>
+      <div class="bar"><i style="width:${((r.bet-Math.min(r.gto_bet,r.br_bet))/Math.abs(r.br_bet-r.gto_bet)*100).toFixed(1)}%;
+        background:linear-gradient(90deg,#3b82f6,#a855f7)"></i></div>
+      <table style="margin-top:12px"><tbody>
+        <tr><td>θ̂ estimé</td><td class="num" style="text-align:right">${(r.theta*100).toFixed(1)} % ± ${(r.std*100).toFixed(1)}</td></tr>
+        <tr><td>IC 95 %</td><td class="num" style="text-align:right">[${(r.ci[0]*100).toFixed(1)} ; ${(r.ci[1]*100).toFixed(1)}]</td></tr>
+        <tr><td>baseline GTO</td><td class="num" style="text-align:right">${(r.baseline*100).toFixed(1)} %</td></tr>
+        <tr><td>λ brut / risque d'adaptation ρ</td><td class="num" style="text-align:right">${r.lambda_raw.toFixed(3)} / ${r.rho.toFixed(3)}</td></tr>
+        <tr><td>gain d'EV vs GTO</td><td class="num" style="text-align:right;color:#86efac">+${r.ev_gain.toFixed(3)} bb</td></tr>
+        <tr><td>exploitabilité encourue</td><td class="num" style="text-align:right">${r.exploitability.toFixed(2)} bb/100 ${r.capped?'<span class="pill y">plafonnée</span>':''}</td></tr>
+        ${r.hands_needed>0?`<tr><td>mains manquantes</td><td class="num" style="text-align:right">${r.hands_needed}</td></tr>`:""}
+      </tbody></table>
+      <div class="${r.significant?"ok":"warn"}" style="margin-bottom:0">
+        <span class="pill ${dec}">${r.significant?"EXPLOITER":"RESTER GTO"}</span> ${r.rationale}</div>
+    </div>`;
+}
+
+async function skillRun(){
+  const v=id=>parseFloat(document.getElementById(id).value);
+  const r=await api("skill",{format:document.getElementById("sk-fmt").value,
+    n:Math.max(0,v("sk-n")),roi:v("sk-roi")/100,strength:v("sk-str")});
+  if(r.error)return;
+  const cls=r.significant?"g":"y";
+  document.getElementById("skill-out").innerHTML=`
+    <div class="grid3">
+      <div class="kpi"><div class="v" style="color:${r.shrunk_roi>0?"#86efac":"#fca5a5"}">
+        ${(r.shrunk_roi*100).toFixed(1)}%</div><div class="l">ROI rétréci (brut → réel)</div></div>
+      <div class="kpi"><div class="v">${(r.shrinkage*100).toFixed(0)}%</div>
+        <div class="l">du signal effacé (bruit)</div></div>
+      <div class="kpi"><div class="v" style="color:#d8b4fe">${r.rho.toFixed(3)}</div>
+        <div class="l">ρ propension à s'adapter</div></div>
+    </div>
+    <table style="margin-top:10px"><tbody>
+      <tr><td>IC 95 % du ROI</td><td class="num" style="text-align:right">
+        [${(r.ci[0]*100).toFixed(1)} ; ${(r.ci[1]*100).toFixed(1)}] %</td></tr>
+      ${r.needed?`<tr><td>tournois nécessaires pour prouver ce ROI</td>
+        <td class="num" style="text-align:right">${r.needed.toLocaleString("fr-FR")}</td></tr>`:""}
+      <tr><td>prior d'archétype induit (F3)</td><td class="num" style="text-align:right">
+        ${Object.entries(r.archetypes).slice(0,3).map(([k,v])=>`${k} ${(v*100).toFixed(0)}%`).join(" · ")}</td></tr>
+    </tbody></table>
+    <div class="${r.significant?"ok":"warn"}" style="margin-bottom:0">
+      <span class="pill ${cls}">${r.significant?"EXPLOITABLE COMME PRIOR":"TROP BRUITÉ"}</span>
+      ${r.verdict}</div>`;
+}
+
+// ── sizing ────────────────────────────────────────────────────────────
+async function sizingRun(){
+  const v=id=>parseFloat(document.getElementById(id).value);
+  const r=await api("sizing",{pot:v("z-pot"),lam:v("z-lam"),
+    range_strength:v("z-a"),range_weakness:v("z-b"),slack:v("z-slack")});
+  if(r.error)return;
+  const mx=Math.max(...r.candidates.map(c=>c.obj));
+  document.getElementById("sizing-out").innerHTML=`<div class="card">
+    <table><thead><tr><th>mise</th><th>/pot</th><th>P(fold)</th><th>EV</th><th>IG</th><th>EV+λI</th></tr></thead>
+    <tbody>${r.candidates.map(c=>`<tr${c.obj===mx?' style="background:#a855f71a"':''}>
+      <td class="num">${c.bet.toFixed(1)}</td><td class="num">${c.frac.toFixed(2)}</td>
+      <td class="num">${(c.p_fold*100).toFixed(0)}%</td>
+      <td class="num">${c.ev.toFixed(2)}</td>
+      <td class="num" style="color:#d8b4fe">${c.ig.toFixed(3)}</td>
+      <td class="num"><b>${c.obj.toFixed(2)}</b>${c.obj===mx?' ★':''}</td></tr>`).join("")}</tbody></table>
+    <p class="muted" style="margin-top:9px">EV-optimal ${r.best_ev.toFixed(2)} pot ·
+      IG-optimal ${r.best_info.toFixed(2)} pot · <b style="color:#d8b4fe">fusion ${r.best_fused.toFixed(2)} pot</b>
+      · H(range) ${r.entropy.toFixed(2)} bits · λ ${r.lam.toFixed(2)} bb/bit</p></div>`;
+}
+async function bcRun(){
+  const v=id=>parseFloat(document.getElementById(id).value);
+  const r=await api("bluffcatch",{pot:v("bc-pot"),bet:v("bc-bet"),
+    bluff_freq:v("bc-f")/100,bluff_std:v("bc-s")/100});
+  if(r.error)return;
+  const cls=r.reco.startsWith("CALL")?"g":r.reco.startsWith("FOLD")?"r":"y";
+  document.getElementById("bc-out").innerHTML=`<div class="grid3">
+    <div class="kpi"><div class="v">${(r.alpha*100).toFixed(1)}%</div><div class="l">équité requise</div></div>
+    <div class="kpi"><div class="v">${(r.mdf*100).toFixed(1)}%</div><div class="l">MDF</div></div>
+    <div class="kpi"><div class="v" style="color:${r.p_plus_ev>.6?"#86efac":r.p_plus_ev<.4?"#fca5a5":"#fde047"}">
+      ${(r.p_plus_ev*100).toFixed(1)}%</div><div class="l">P(call est +EV)</div></div>
+    </div><div class="${cls==="g"?"ok":"warn"}" style="margin-bottom:0">
+    <span class="pill ${cls}">${r.reco.split(" ")[0]}</span> marge ${(r.margin*100).toFixed(1)} pts
+    · EV(call) ${r.ev_call.toFixed(2)} bb — ${r.reco}</div>`;
+}
+
+// ── train ─────────────────────────────────────────────────────────────
+async function drillStart(){
+  const q=await api("drill/start",{difficulty:document.getElementById("d-diff").value,
+    only_close:document.getElementById("d-close").checked});
+  document.getElementById("drill-q").style.display="";
+  showQ(q);
+}
+function showQ(q){
+  if(q.error)return;
+  document.getElementById("d-group").textContent=q.group;
+  document.getElementById("d-pos").textContent=`${q.position} · ${q.combos} combos`
+    +(q.is_mixed?" · spot mixte":"");
+  document.getElementById("d-meta").textContent=
+    `${q.n_answers} réponses · ${q.due} à réviser · vu ${q.seen}×`;
+  document.getElementById("d-feedback").innerHTML="";
+  const opts = q.difficulty==="easy"?[0,1]
+    : q.difficulty==="medium"?[0,.25,.5,.75,1]
+    : [0,.1,.2,.3,.4,.5,.6,.7,.8,.9,1];
+  document.getElementById("d-buttons").innerHTML=opts.map(o=>
+    `<button class="ghost sm" onclick="drillAnswer(${o})">${(o*100).toFixed(0)} %</button>`).join("");
+  drillT0=performance.now();
+}
+async function drillAnswer(v){
+  const secs=(performance.now()-drillT0)/1000;
+  const r=await api("drill/answer",{given:v,seconds:secs});
+  if(r.error){document.getElementById("d-feedback").innerHTML=
+    `<div class="warn" style="margin-bottom:0">${r.error}</div>`;return;}
+  const good=r.grade>=3;
+  document.getElementById("d-feedback").innerHTML=
+    `<div class="${good?"ok":"warn"}" style="margin-bottom:0">
+      <span class="pill ${good?"g":"r"}">${r.grade_name}</span>
+      correct : <b>${(r.correct*100).toFixed(0)} %</b> · ton écart ${(r.deviation*100).toFixed(0)} pts
+      · ${r.ev_loss.toFixed(1)} bb · précision globale ${(r.score.accuracy*100).toFixed(1)} %</div>`;
+  setTimeout(()=>{showQ(r.next); drillReport();}, good?550:1600);
+}
+async function drillReport(){
+  const r=await api("drill/report",{});
+  if(r.error||!r.score||!r.score.n)return;
+  document.getElementById("drill-report").innerHTML=`<div class="card">
+    <h2 style="margin-top:0">Performance</h2>
+    <div class="grid3">
+      <div class="kpi"><div class="v" style="color:${r.score.accuracy>.9?"#86efac":"#fde047"}">
+        ${(r.score.accuracy*100).toFixed(1)}%</div><div class="l">précision</div></div>
+      <div class="kpi"><div class="v">${r.score.n}</div><div class="l">réponses</div></div>
+      <div class="kpi"><div class="v">${r.score.ev_loss_bb.toFixed(0)}</div><div class="l">bb perdus</div></div>
+    </div>
+    ${r.leaks.length?`<h2>Leaks détectés</h2><table><tbody>${r.leaks.slice(0,5).map(l=>`
+      <tr><td><b>${l.label}</b><div class="muted">${l.reco}</div></td>
+      <td class="num" style="text-align:right;white-space:nowrap">
+        <span class="pill ${l.direction==="trop large"?"r":"y"}">${l.direction}</span><br>
+        ${(l.magnitude*100).toFixed(1)} pts · ${l.ev_loss.toFixed(0)} bb</td></tr>`).join("")}
+      </tbody></table>`:""}
+    ${r.cognitive&&r.cognitive.n>=12?`<h2>État cognitif — mesuré</h2>
+      <p class="muted">${r.cognitive.advice}</p>`:""}
+  </div>`;
+}
+
+// ── analyze ───────────────────────────────────────────────────────────
+function loadSample(){
+  document.getElementById("hh").value=SAMPLE_HH; analyseHH();
+}
+async function analyseHH(){
+  const r=await api("analyse",{text:document.getElementById("hh").value});
+  const out=document.getElementById("hh-out");
+  if(r.error){out.innerHTML=`<div class="warn">${r.error}</div>`;return;}
+  out.innerHTML=`<div class="card">
+    <div class="grid3">
+      <div class="kpi"><div class="v">${r.n_hands}</div><div class="l">mains</div></div>
+      <div class="kpi"><div class="v">${r.real_money}</div><div class="l">argent réel</div></div>
+      <div class="kpi"><div class="v">${r.tournaments}</div><div class="l">tournois</div></div>
+    </div>
+    <p class="muted" style="margin:9px 0">${r.rooms.join(", ")} · ${r.sample}</p>
+    ${r.players.map(p=>`<div style="margin-top:10px">
+      <b class="mono">${p.player}</b>
+      <table><tbody>${Object.entries(p.stats).map(([k,s])=>`<tr>
+        <td>${k}</td>
+        <td class="num" style="text-align:right">${(s.mean*100).toFixed(1)}% ± ${(s.std*100).toFixed(1)}</td>
+        <td class="num muted" style="text-align:right">IC [${(s.ci[0]*100).toFixed(0)};${(s.ci[1]*100).toFixed(0)}]</td>
+        <td class="num muted" style="text-align:right">n=${s.n}</td>
+        <td style="text-align:right">${s.exploitable?'<span class="pill r">exploitable</span>':'<span class="pill d">—</span>'}</td>
+      </tr>`).join("")}</tbody></table></div>`).join("")}
+  </div>`;
+}
+
+// ── solveur ───────────────────────────────────────────────────────────
+async function solveRun(){
+  document.getElementById("solve-out").innerHTML=`<div class="card muted">Résolution…</div>`;
+  const r=await api("solve",{iterations:parseInt(document.getElementById("sv-it").value),
+    schedule:document.getElementById("sv-hs").value==="1"});
+  if(r.error){document.getElementById("solve-out").innerHTML=`<div class="warn">${r.error}</div>`;return;}
+  const err=Math.abs(r.game_value-r.nash_value);
+  document.getElementById("solve-out").innerHTML=`<div class="card">
+    <div class="grid3">
+      <div class="kpi"><div class="v" style="color:#86efac">${r.exploitability.toExponential(2)}</div><div class="l">exploitabilité</div></div>
+      <div class="kpi"><div class="v">${r.game_value.toFixed(6)}</div><div class="l">valeur (Nash ${r.nash_value.toFixed(6)})</div></div>
+      <div class="kpi"><div class="v">${err.toExponential(1)}</div><div class="l">écart au Nash exact</div></div>
+    </div>
+    <h2>Convergence</h2>
+    <table><tbody>${r.history.map(h=>`<tr><td class="num">t = ${h.t}</td>
+      <td><div class="bar"><i style="width:${Math.min(100,h.expl*3000)}%;background:#a855f7"></i></div></td>
+      <td class="num" style="text-align:right">${h.expl.toExponential(2)}</td></tr>`).join("")}</tbody></table>
+    <h2>Stratégie d'équilibre</h2>
+    <table><thead><tr><th>infoset</th><th>passe</th><th>mise</th></tr></thead><tbody>
+    ${Object.entries(r.strategy).map(([k,v])=>`<tr><td class="mono">${k}</td>
+      <td class="num">${((v.p||0)*100).toFixed(1)}%</td>
+      <td class="num">${((v.b||0)*100).toFixed(1)}%</td></tr>`).join("")}</tbody></table></div>`;
+}
+
+// ── bankroll ──────────────────────────────────────────────────────────
+async function brRun(){
+  const v=id=>parseFloat(document.getElementById(id).value);
+  const r=await api("bankroll",{winrate:v("br-mu"),stddev:v("br-sd"),bankroll:v("br-bb"),
+    hands:v("br-n"),shot_buyin:v("br-shot"),shot_winrate:v("br-swr")});
+  if(r.error)return;
+  const rc=r.ror<0.01?"#86efac":r.ror<0.05?"#fde047":"#fca5a5";
+  document.getElementById("br-out").innerHTML=`<div class="card">
+    <div class="grid3">
+      <div class="kpi"><div class="v" style="color:${rc}">${(r.ror*100).toFixed(2)}%</div><div class="l">risque de ruine</div></div>
+      <div class="kpi"><div class="v">${r.buyins.toFixed(0)}</div><div class="l">buy-ins actuels</div></div>
+      <div class="kpi"><div class="v">${r.bankroll_1pct?(r.bankroll_1pct/100).toFixed(0):"∞"}</div><div class="l">buy-ins pour RoR 1 %</div></div>
+    </div>
+    <table style="margin-top:10px"><tbody>
+      <tr><td>IC 95 % du winrate sur ${(v("br-n")/1000).toFixed(0)}k mains</td>
+        <td class="num" style="text-align:right">[${r.ci_low.toFixed(1)} ; ${r.ci_high.toFixed(1)}] bb/100</td></tr>
+      <tr><td>mains pour prouver ce winrate</td>
+        <td class="num" style="text-align:right">${r.hands_significant?r.hands_significant.toLocaleString("fr-FR"):"—"}</td></tr>
+      <tr><td>drawdown p95</td>
+        <td class="num" style="text-align:right">${(r.drawdown_p95/100).toFixed(1)} buy-ins</td></tr>
+      <tr><td>fraction demi-Kelly</td><td class="num" style="text-align:right">${r.kelly_half.toFixed(5)}</td></tr>
+    </tbody></table>
+    ${r.ci_contains_zero?`<div class="warn" style="margin-bottom:0">L'intervalle de confiance
+      contient zéro : cet échantillon ne prouve pas que tu es gagnant.</div>`:""}
+    ${r.shot?`<div class="${r.shot.ok?"ok":"warn"}" style="margin-bottom:0">
+      <span class="pill ${r.shot.ok?"g":"r"}">${r.shot.ok?"SHOT OK":"SHOT REFUSÉ"}</span>
+      RoR au shot ${(r.shot.ror_shot*100).toFixed(1)} % (${r.shot.buyins_at_shot.toFixed(0)} buy-ins) ·
+      croissance ${r.shot.growth_current.toFixed(5)} → ${r.shot.growth_shot.toFixed(5)}</div>`:""}
+  </div>`;
+}
+
+// ── solveur postflop réel ─────────────────────────────────────────────
+async function pfRun(){
+  const st=document.getElementById("pf-status"), out=document.getElementById("pf-out");
+  const money=document.getElementById("pf-money").value.split("/").map(s=>parseFloat(s.trim()));
+  const sizes=document.getElementById("pf-sizes").value.split(",").map(s=>parseFloat(s.trim())).filter(x=>x>0);
+  const board=document.getElementById("pf-board").value.trim();
+  const isTurn=board.split(/\s+/).filter(Boolean).length===4;
+  st.textContent=isTurn?"résolution du turn (énumération des rivières — peut prendre 1-2 min)…":"résolution…";
+  const r=await api("postflop",{board,
+    oop_range:document.getElementById("pf-oop").value,
+    ip_range:document.getElementById("pf-ip").value,
+    pot:money[0]||100, stack:money[1]||300, bet_fracs:sizes.length?sizes:[0.75],
+    iterations:+document.getElementById("pf-it").value||400});
+  st.textContent="";
+  if(r.error){out.innerHTML=`<div class="card warn">${r.error}</div>`;return;}
+  const expl=r.exploitability*100;
+  out.innerHTML=`<div class="card">
+    <div class="kpis">
+      <div class="kpi"><div class="v">${r.ev_oop.toFixed(1)}</div><div class="l">EV OOP (jetons)</div></div>
+      <div class="kpi"><div class="v">${r.ev_ip.toFixed(1)}</div><div class="l">EV IP (jetons)</div></div>
+      <div class="kpi"><div class="v" style="color:${expl<1?"#86efac":expl<3?"#fbbf24":"#fca5a5"}">${expl.toFixed(2)} %</div><div class="l">exploitabilité (% pot)</div></div>
+      <div class="kpi"><div class="v">${r.n_nodes}</div><div class="l">nœuds (${r.street})</div></div>
+    </div>
+    <p class="muted" style="margin:8px 0 4px">Somme des EV = ${(r.ev_oop+r.ev_ip).toFixed(2)} = pot (invariant de somme constante).
+    Stratégie racine (OOP) :</p>
+    ${r.root_actions.map(a=>`<div style="margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;font-size:12.5px">
+        <span>${a.label}</span><span class="num">${(a.frequency*100).toFixed(1)} %</span></div>
+      <div class="bar"><i style="width:${(a.frequency*100).toFixed(1)}%;background:${a.label==="check"?"#38bdf8":a.label==="fold"?"#64748b":"#a78bfa"}"></i></div>
+      <div class="muted" style="font-size:11px;margin-top:2px">${Object.entries(a.per_combo).slice(0,8).map(([k,v])=>`${k} ${(v*100).toFixed(0)}%`).join(" · ")}</div>
+    </div>`).join("")}
+  </div>`;
+}
+
+// ── équité ────────────────────────────────────────────────────────────
+async function eqRun(){
+  const hero=document.getElementById("eq-hero").value.trim();
+  const rng=document.getElementById("eq-range").value.trim();
+  const out=document.getElementById("eq-out");
+  if(!hero||!rng){out.textContent="Entre une main et une range.";return;}
+  const body={hero,board:document.getElementById("eq-board").value,range:rng,n_sims:60000};
+  const r2=document.getElementById("eq-range2").value.trim();
+  if(r2)body.range2=r2;
+  const r=await api("equity",body);
+  if(r.error){out.innerHTML=`<span style="color:#fca5a5">${r.error}</span>`;return;}
+  const pct=(r.equity*100).toFixed(1);
+  out.innerHTML=`
+    <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+      <span>${r.n_villains>1?`part du pot (${r.n_villains+1}-way) `:"équité "}<b class="num" style="color:#86efac">${pct} %</b>
+        ${r.exact?'<span class="pill g">exact</span>':`<span class="pill y">MC ±${(r.std_error*100).toFixed(2)}</span>`}</span>
+      <span class="muted num">${r.n_scenarios.toLocaleString("fr-FR")} scénarios</span></div>
+    <div class="bar" style="height:10px"><i style="width:${pct}%;background:linear-gradient(90deg,#22c55e,#86efac)"></i></div>
+    <div class="muted" style="margin-top:5px;font-size:12px">
+      W ${(r.win*100).toFixed(1)} % · T ${(r.tie*100).toFixed(1)} % · L ${(r.lose*100).toFixed(1)} %</div>`;
+}
+
+// ── ICM F14 ───────────────────────────────────────────────────────────
+function icmParse(id){return document.getElementById(id).value.split(",")
+  .map(s=>parseFloat(s.trim())).filter(x=>isFinite(x)&&x>=0);}
+async function icmRun(){
+  const stacks=icmParse("icm-stacks"), pay=icmParse("icm-pay");
+  const out=document.getElementById("icm-out");
+  if(stacks.length<2||!pay.length){
+    out.innerHTML=`<div class="card muted">Entre au moins 2 stacks et 1 payout.</div>`;return;}
+  const hero=+document.getElementById("icm-hero").value,
+        vil=+document.getElementById("icm-vil").value;
+  const body={stacks,payouts:pay};
+  if(hero>=0&&vil>=0&&hero<stacks.length&&vil<stacks.length&&hero!==vil){
+    body.hero=hero; body.villain=vil;
+    body.pot=+document.getElementById("icm-pot").value||0;
+    body.bet=+document.getElementById("icm-bet").value||null;
+    const eq=document.getElementById("icm-eq").value;
+    if(eq!=="")body.hero_equity=(+eq)/100;
+  }
+  const bounties=icmParse("icm-bounties");
+  if(bounties.length===stacks.length&&bounties.some(b=>b>0))body.bounties=bounties;
+  const nfgs=+document.getElementById("icm-fgs").value||0;
+  if(nfgs>0){
+    const bl=document.getElementById("icm-blinds").value.split("/").map(s=>parseFloat(s.trim()));
+    body.fgs_hands=nfgs; body.button=+document.getElementById("icm-btn").value||0;
+    body.sb=bl[0]||0; body.bb=bl[1]||bl[0]||1;
+    body.ante=+document.getElementById("icm-ante").value||0;
+  }
+  const r=await api("icm",body);
+  if(r.error){out.innerHTML=`<div class="card warn">${r.error}</div>`;return;}
+  const total=pay.reduce((a,b)=>a+b,0);
+  let html=`<div class="card"><h2>$EV Malmuth-Harville</h2>
+    <table><thead><tr><th>joueur</th><th style="text-align:right">jetons</th>
+      <th style="text-align:right">part chipEV</th><th style="text-align:right">$EV ICM</th>
+      <th style="text-align:right">écart</th></tr></thead><tbody>
+    ${stacks.map((s,i)=>{const d=r.equities[i]-r.chip_share[i];
+      return `<tr${i===hero?' style="background:rgba(59,130,246,.08)"':''}>
+      <td>${i===hero?"héros":i===vil?"vilain":"j"+i}</td>
+      <td class="num" style="text-align:right">${s.toLocaleString("fr-FR")}</td>
+      <td class="num" style="text-align:right">${r.chip_share[i].toFixed(2)}</td>
+      <td class="num" style="text-align:right">${r.equities[i].toFixed(2)}</td>
+      <td class="num" style="text-align:right;color:${d<-.005?"#fca5a5":d>.005?"#86efac":"var(--dim)"}">${d>=0?"+":""}${d.toFixed(2)}</td></tr>`}).join("")}
+    </tbody></table>
+    <p class="muted" style="margin-top:8px">Somme = ${total.toFixed(0)} (le pool). Le chip-leader vaut
+    moins que sa part de jetons, les petits stacks plus — c'est la non-linéarité ICM.</p></div>`;
+  if(r.spot){
+    const s=r.spot, bf=s.bubble_factor;
+    html+=`<div class="card"><h2>Spot héros vs vilain</h2>
+      <div class="kpis">
+        <div class="kpi"><div class="v">${bf===null?"∞":bf.toFixed(2)}</div><div class="l">bubble factor</div></div>
+        <div class="kpi"><div class="v">${(s.risk_premium*100).toFixed(1)} pts</div><div class="l">prime de risque</div></div>
+        <div class="kpi"><div class="v">${(s.alpha_cash*100).toFixed(1)} %</div><div class="l">équité requise (cash)</div></div>
+        <div class="kpi"><div class="v" style="color:${s.alpha_icm>s.alpha_cash+.02?"#fca5a5":"inherit"}">${(s.alpha_icm*100).toFixed(1)} %</div><div class="l">équité requise (ICM)</div></div>
+      </div>
+      <div class="${s.verdict.startsWith("CALL")?"ok":s.verdict.startsWith("FOLD")?"warn":"muted"}" style="margin-top:10px;margin-bottom:0">${s.verdict}</div></div>`;
+  }
+  if(r.pko){
+    const k=r.pko;
+    html+=`<div class="card"><h2>PKO — la prime change le prix</h2>
+      <div class="kpis">
+        <div class="kpi"><div class="v" style="color:#fbbf24">${k.bounty_value.toFixed(2)}</div><div class="l">valeur de capture (½ cash + ½ × P(1er))</div></div>
+        <div class="kpi"><div class="v">${(k.required_no_bounty*100).toFixed(1)} %</div><div class="l">requis sans prime</div></div>
+        <div class="kpi"><div class="v" style="color:#86efac">${(k.required_with_bounty*100).toFixed(1)} %</div><div class="l">requis avec prime</div></div>
+        <div class="kpi"><div class="v" style="color:#86efac">−${(k.discount_pts*100).toFixed(1)} pts</div><div class="l">rabais d'équité</div></div>
+      </div>
+      ${k.villain_eliminated?"":`<p class="muted" style="margin:8px 0 0">Le call ne couvre pas le vilain : la prime n’est pas en jeu sur cette décision.</p>`}
+      <div class="${k.verdict.startsWith("CALL")?"ok":k.verdict.startsWith("FOLD")?"warn":"muted"}" style="margin-top:10px;margin-bottom:0">${k.verdict}</div></div>`;
+  }
+  if(r.fgs){
+    const f=r.fgs;
+    html+=`<div class="card"><h2>FGS léger — l'ordre des blindes pèse</h2>
+      <table><thead><tr><th>joueur</th><th style="text-align:right">$EV statique</th>
+        <th style="text-align:right">$EV FGS (moy.)</th><th style="text-align:right">Δ dernière main</th></tr></thead><tbody>
+      ${f.static.map((st,i)=>{const d=f.deltas_last[i];
+        return `<tr><td>j${i}</td>
+        <td class="num" style="text-align:right">${st.toFixed(2)}</td>
+        <td class="num" style="text-align:right">${f.mean[i].toFixed(2)}</td>
+        <td class="num" style="text-align:right;color:${d<-.05?"#fca5a5":d>.05?"#86efac":"var(--dim)"}">${d>=0?"+":""}${d.toFixed(2)}</td></tr>`}).join("")}
+      </tbody></table>
+      <p class="muted" style="margin:8px 0 0">Modèle du walk (érosion au premier ordre) : qui poste avant d'encaisser
+      saigne du $EV que l'ICM statique ne voit pas.</p></div>`;
+  }
+  out.innerHTML=html;
+}
+
+// ── hmm ───────────────────────────────────────────────────────────────
+const OBS=[["fold","FOLD",0],["passif",  "PASSIVE",1],["agressif std","STANDARD",2],
+           ["agressif large","LOOSE",3],["improbable","WILD",4]];
+document.getElementById("hmm-buttons").innerHTML=OBS.map(([lab,,i])=>
+  `<button class="ghost sm" onclick="hmmObs.push(${i});hmmRun()">${lab}</button>`).join("");
+async function hmmRun(){
+  const r=await api("hmm",{observations:hmmObs});
+  if(r.error)return;
+  document.getElementById("hmm-seq").textContent=hmmObs.length?
+    hmmObs.map(i=>OBS[i][1][0]).join(" "):"aucune observation";
+  const cols=["#22c55e","#eab308","#ef4444"];
+  document.getElementById("hmm-out").innerHTML=`<div class="card">
+    ${r.labels.map((l,i)=>`<div style="margin-bottom:9px">
+      <div style="display:flex;justify-content:space-between;font-size:12.5px">
+        <span>${l}</span><span class="num" style="color:${cols[i]}">${(r.probs[i]*100).toFixed(1)} %</span></div>
+      <div class="bar"><i style="width:${(r.probs[i]*100).toFixed(1)}%;background:${cols[i]}"></i></div>
+    </div>`).join("")}
+    <p class="muted" style="margin-top:10px">État le plus probable : <b>${r.most_likely}</b>
+      · entropie ${r.entropy.toFixed(2)} bits ${r.confident?'<span class="pill g">croyance nette</span>':'<span class="pill y">incertain</span>'}</p>
+    <h2>Pouvoir diagnostique d'une action</h2>
+    <table><tbody>${Object.entries(r.surges).map(([k,v])=>`<tr><td>${k}</td>
+      <td class="num" style="text-align:right;color:${v>3?"#fca5a5":"var(--dim)"}">×${v.toFixed(2)} sur P(tilt)</td></tr>`).join("")}</tbody></table>
+  </div>`;
+}
+
+const SAMPLE_HH=`Winamax Poker - CashGame - HandId: #12345-678-1234567890 - Holdem no limit (0.50€)/(1€) - 2026/08/06 20:14:11 UTC
+Table: 'Bordeaux 05' 6-max (real money) Seat #3 is the button
+Seat 1: Alice (100€)
+Seat 2: Bob (85.50€)
+Seat 3: Carol (120€)
+Seat 4: Dave (97€)
+*** ANTE/BLINDS ***
+Dave posts small blind 0.50€
+Alice posts big blind 1€
+Dealt to Dave [Ah Kd]
+*** PRE-FLOP ***
+Bob raises 2€ to 3€
+Carol folds
+Dave calls 2.50€
+Alice folds
+*** FLOP *** [Ks 7d 2c]
+Dave checks
+Bob bets 4€
+Dave folds
+Bob collected 7€ from pot
+*** SUMMARY ***
+Total pot 7€`;
+
+// Raccourcis clavier — 1..8 pour les onglets, Échap pour revenir à Study.
+document.addEventListener("keydown",e=>{
+  if(e.target.tagName==="INPUT"||e.target.tagName==="TEXTAREA"||e.target.tagName==="SELECT")return;
+  if(e.key>="1"&&e.key<="8"){const i=+e.key-1;const t=document.querySelectorAll(".tab")[i];if(t)t.click();}
+  if(e.key==="Escape")document.querySelectorAll(".tab")[0].click();
+});
+
+buildGrid(); refresh();
+</script>
+</body>
+</html>
