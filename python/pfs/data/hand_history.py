@@ -18,11 +18,13 @@ cours ». Le HH ne peut donc pas piloter une décision *dans* la main.
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
 from hashlib import blake2b
 from pathlib import Path
 from typing import Iterator, Sequence
+from xml.etree import ElementTree as ET
 
 __all__ = [
     "Room",
@@ -33,6 +35,7 @@ __all__ = [
     "ParsedHand",
     "parse_winamax",
     "parse_pokerstars",
+    "parse_ipoker",
     "detect_room",
     "parse_text",
     "parse_file",
@@ -202,7 +205,18 @@ class ParsedHand:
         return False
 
     def went_to_showdown(self, player: str) -> bool:
-        return any(s.player == player and s.cards for s in self.seats)
+        """Le joueur a-t-il vu l'abattage : n'a pas fold et ≥2 survivants.
+
+        Défini par les FOLDS, pas par la présence de cartes : en XML iPoker
+        les cartes du héros sont toujours enregistrées (même sur un fold),
+        donc « avoir des cartes » ≠ « être allé au showdown ». Cette
+        définition est correcte pour toutes les rooms.
+        """
+        folded = {a.player for a in self.actions if a.action is ActionType.FOLD}
+        if player in folded:
+            return False
+        survivors = {s.player for s in self.seats if s.player not in folded}
+        return len(survivors) >= 2
 
     def stat_observations(self, player: str) -> dict[str, bool]:
         """Toutes les statistiques observables sur cette main, pour ce joueur.
@@ -570,36 +584,323 @@ def parse_pokerstars(text: str, salt: str = "") -> ParsedHand:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# IPOKER (PMU, partypoker, Betclic, Unibet… — le réseau iPoker/Playtech)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Format XML, RADICALEMENT différent du texte Winamax/PokerStars : un fichier
+# <session> contient N <game>, chaque <game> = UNE main. Codes décodés
+# empiriquement sur le corpus HH réel (PMU PLAY / PMU) — voir le tableau :
+#
+#   action type :  0 fold · 1 SB · 2 BB · 15 ante · 3 call · 4 check
+#                  5/7/23 agressif (bet si 1re mise de la rue, sinon raise)
+#   round no    :  0 blindes+antes · 1 préflop · 2 flop · 3 turn · 4 river
+#   carte       :  <couleur><rang> — « HA »→Ah, « S10 »→Ts, « D4 »→4d ;
+#                  « X » = carte cachée (adversaire non abattu)
+#   player@chips = TAPIS DE DÉPART de la main (invariant vérifié :
+#                  start(N+1) = start(N) − mises(N)) → l'all-in se déduit
+#                  structurellement (contribution cumulée == tapis), sans
+#                  se fier au code d'action.
+
+_IPOKER_SUITS = {"H": "h", "S": "s", "D": "d", "C": "c"}
+_IPOKER_ROUND_STREET = {
+    "0": Street.PREFLOP, "1": Street.PREFLOP, "2": Street.FLOP,
+    "3": Street.TURN, "4": Street.RIVER,
+}
+# Sémantique de <action sum=...>, décodée empiriquement et vérifiée contre
+# l'attribut de contrôle player@bet (total misé par joueur, exact) :
+#   • post (blinde/ante) et call : sum = INCRÉMENT (jetons ajoutés) ;
+#   • bet / raise               : sum = CUMUL « raise to » DE LA RUE
+#     (préflop = round 0 blindes + round 1 relances réunis) — l'incrément
+#     réel vaut donc sum − (déjà misé cette rue).
+# L'ante (type 15) est de l'argent mort : compté au total, PAS dans la
+# baseline « raise to » (« relancer à 40 » = blinde+relance, ante à part).
+_IPOKER_FOLD = "0"
+_IPOKER_CHECK = "4"
+_IPOKER_ANTE = "15"
+_IPOKER_BLINDS = {"1", "2"}
+_IPOKER_CALL_CODES = {"3", "7"}
+_IPOKER_RAISE_CODES = {"5", "23"}
+
+
+def _ipoker_card(tok: str) -> str | None:
+    """Convertit un jeton carte iPoker au format interne (rang + couleur).
+
+    Parameters
+    ----------
+    tok : str
+        Jeton brut, couleur en tête : « HA », « S10 », « D4 », « CJ ».
+
+    Returns
+    -------
+    str | None
+        Carte « Ah », « Ts », « 4d », « Jc »… ; ``None`` pour une carte
+        cachée (« X », « XX ») ou un jeton illisible.
+    """
+    tok = tok.strip()
+    if len(tok) < 2 or tok[0] not in _IPOKER_SUITS:
+        return None
+    suit = _IPOKER_SUITS[tok[0]]
+    rank = tok[1:].upper()
+    if rank == "10":
+        rank = "T"
+    if rank not in {"2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"}:
+        return None
+    return f"{rank}{suit}"
+
+
+def _ipoker_amount(txt: str | None) -> float:
+    """Montant iPoker : espaces = séparateurs de milliers (« 1 355 »)."""
+    if not txt:
+        return 0.0
+    return float(txt.replace(" ", "").replace(" ", "").replace(",", "."))
+
+
+def _parse_ipoker_game(
+    session_general: ET.Element | None, game: ET.Element, salt: str
+) -> ParsedHand:
+    """Parse UN ``<game>`` iPoker (une main) en ``ParsedHand``.
+
+    L'all-in n'est pas lu dans le code d'action (aucun code fiable ne l'isole
+    des raises ordinaires) mais déduit : une action dont la contribution
+    cumulée atteint le tapis de départ du joueur est un all-in.
+    """
+    sg = session_general
+    nickname = sg.findtext("nickname") if sg is not None else None
+    mode = (sg.findtext("mode") if sg is not None else "") or ""
+    is_tourney = bool(
+        (sg is not None and sg.findtext("tournamentcode"))
+        or (sg is not None and sg.findtext("tournamentname"))
+    )
+
+    g_gen = game.find("general")
+    sb = _ipoker_amount(g_gen.findtext("smallblind") if g_gen is not None else None)
+    bb = _ipoker_amount(g_gen.findtext("bigblind") if g_gen is not None else None)
+
+    hero_key = player_key(nickname, salt) if nickname else None
+    hand = ParsedHand(
+        room=Room.IPOKER,
+        hand_id=game.get("gamecode", ""),
+        is_real_money=(mode.lower() == "real"),
+        is_tournament=is_tourney,
+        big_blind=bb,
+        ante=0.0,
+        table=(sg.findtext("tablename") if sg is not None else "") or "",
+        button_seat=0,
+        hero=hero_key,
+        raw=ET.tostring(game, encoding="unicode"),
+    )
+
+    # sièges + tapis de départ + total misé (@bet, vérité-terrain exacte)
+    start_chips: dict[str, float] = {}
+    bet_attr: dict[str, float] = {}
+    name_to_key: dict[str, str] = {}
+    if g_gen is not None:
+        for p in g_gen.findall("players/player"):
+            name = p.get("name", "")
+            key = player_key(name, salt)
+            name_to_key[name] = key
+            stack = _ipoker_amount(p.get("chips"))
+            start_chips[key] = stack
+            bet_attr[key] = _ipoker_amount(p.get("bet"))
+            hand.seats.append(
+                PlayerSeat(
+                    seat=int(p.get("seat", "0")),
+                    player=key,
+                    stack=stack,
+                    is_hero=(key == hero_key),
+                )
+            )
+            if p.get("dealer") == "1":
+                hand.button_seat = int(p.get("seat", "0"))
+
+    street_live: dict[str, float] = defaultdict(float)  # misé cette rue (hors ante)
+    board: list[str] = []
+    ante_total = 0.0
+    shown: dict[str, tuple[str, ...]] = {}
+    prev_street: Street | None = None
+    street_opened = False
+
+    for rnd in game.findall("round"):
+        street = _IPOKER_ROUND_STREET.get(rnd.get("no", ""), Street.PREFLOP)
+        if street is not prev_street:
+            # nouvelle rue → la mise live repart de zéro. Préflop (round 0
+            # blindes puis round 1 relances) est UNE seule rue : pas de reset
+            # entre les deux, sinon les blindes sortiraient de la baseline.
+            # La rue préflop est déjà « ouverte » par la BB (mise initiale) :
+            # la 1re action agressive y est donc une RELANCE, pas un bet —
+            # sans quoi la stat PFR (preflop_raise) manquerait les open-raises.
+            street_live.clear()
+            street_opened = street is Street.PREFLOP
+            prev_street = street
+
+        for cards in rnd.findall("cards"):
+            ctype = (cards.get("type") or "").lower()
+            toks = [c for c in (_ipoker_card(t) for t in (cards.text or "").split()) if c]
+            if ctype == "pocket":
+                key = name_to_key.get(cards.get("player", ""))
+                if key and toks:
+                    shown[key] = tuple(toks)
+                    if key == hero_key:
+                        hand.hero_cards = tuple(toks)
+            else:  # Flop / Turn / River
+                for c in toks:
+                    if c not in board:
+                        board.append(c)
+
+        for act in rnd.findall("action"):
+            name = act.get("player", "")
+            key = name_to_key.get(name, player_key(name, salt))
+            code = act.get("type", "")
+            raw = _ipoker_amount(act.get("sum"))
+
+            if code == _IPOKER_FOLD:
+                hand.actions.append(HandAction(key, street, ActionType.FOLD, 0.0))
+                continue
+            if code == _IPOKER_CHECK:
+                hand.actions.append(HandAction(key, street, ActionType.CHECK, 0.0))
+                continue
+
+            if code == _IPOKER_ANTE:               # argent mort, hors baseline
+                inc = raw
+                kind = ActionType.POST
+                ante_total = max(ante_total, raw)
+            elif code in _IPOKER_BLINDS:           # blinde live (incrément)
+                inc = raw
+                street_live[key] += raw
+                kind = ActionType.POST
+            elif code in _IPOKER_CALL_CODES:       # call (incrément)
+                inc = raw
+                street_live[key] += raw
+                kind = ActionType.CALL
+            elif code in _IPOKER_RAISE_CODES:      # bet/raise (« raise to » de la rue)
+                inc = max(0.0, raw - street_live[key])
+                street_live[key] = raw
+                kind = ActionType.RAISE if street_opened else ActionType.BET
+                street_opened = True
+            else:                                   # code inconnu : traité en call prudent
+                inc = raw
+                street_live[key] += raw
+                kind = ActionType.CALL
+
+            hand.actions.append(
+                HandAction(key, street, kind, amount=inc, total_bet=street_live[key])
+            )
+
+    hand.ante = ante_total
+    hand.board = tuple(board)
+
+    # All-in exact via la vérité-terrain @bet (le total misé y est donné sans
+    # l'ambiguïté ante/relance du champ sum) : un joueur dont le total misé
+    # atteint son tapis de départ est all-in. On ne requalifie en ALLIN que
+    # sa dernière action AGRESSIVE (bet/raise) — cohérent avec le modèle où
+    # ALLIN vaut relance (preflop_raise, three_bet le comptent ainsi). Un
+    # suivi qui met all-in reste un CALL (VPIP oui, PFR non) ; son caractère
+    # all-in se lit dans les tapis.
+    for key, bet in bet_attr.items():
+        stack = start_chips.get(key, 0.0)
+        if stack <= 0 or bet < stack - 1e-9:
+            continue
+        for i in range(len(hand.actions) - 1, -1, -1):
+            a = hand.actions[i]
+            if a.player != key or a.action in (ActionType.FOLD, ActionType.CHECK):
+                continue
+            if a.action in (ActionType.BET, ActionType.RAISE):
+                hand.actions[i] = HandAction(
+                    a.player, a.street, ActionType.ALLIN, a.amount, a.total_bet
+                )
+            break  # dernière action volontaire traitée (call all-in laissé CALL)
+
+    # cartes montrées (adversaires abattus) reportées dans les sièges
+    if shown:
+        hand.seats = [
+            PlayerSeat(s.seat, s.player, s.stack, s.is_hero, shown.get(s.player, s.cards))
+            for s in hand.seats
+        ]
+
+    # gains (jetons ; rake nul en tournoi)
+    if g_gen is not None:
+        for p in g_gen.findall("players/player"):
+            win = _ipoker_amount(p.get("win"))
+            if win > 0:
+                hand.winners[player_key(p.get("name", ""), salt)] = win
+
+    # Pot final = somme des gains : c'est le pot RÉELLEMENT attribué (tous
+    # pots annexes compris), exact par définition. Reconstruire le pot depuis
+    # les mises se heurte à une bizarrerie de comptabilité de l'ante côté
+    # iPoker (l'ante du relanceur est tantôt fondue dans le « raise to »,
+    # tantôt à part, selon la version du client) ; la somme des gains, elle,
+    # ne dépend d'aucune de ces conventions. Le pot à un point de décision
+    # précis se recalcule de toute façon depuis les incréments d'action.
+    hand.pot = sum(hand.winners.values())
+    return hand
+
+
+def parse_ipoker(text: str, salt: str = "") -> list[ParsedHand]:
+    """Parse un fichier session iPoker (XML) — potentiellement N mains.
+
+    Contrairement à Winamax/PokerStars (une main par bloc texte), un
+    ``<session>`` iPoker agrège plusieurs ``<game>``. Renvoie donc une liste.
+    """
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError as exc:
+        raise HandHistoryError(f"XML iPoker illisible : {exc}") from exc
+    if root.tag != "session":
+        raise HandHistoryError("racine <session> iPoker absente.")
+    sg = root.find("general")
+    return [_parse_ipoker_game(sg, game, salt) for game in root.findall("game")]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # DISPATCH
 # ═══════════════════════════════════════════════════════════════════════════
 
 
 def detect_room(text: str) -> Room:
-    head = text[:400].lower()
+    head = text[:600].lower()
     if "winamax" in head:
         return Room.WINAMAX
     if "pokerstars" in head:
         return Room.POKERSTARS
-    if "ipoker" in head or "game #" in head:
+    # iPoker : XML <session> (gametype « Holdem NL »), pas de bannière texte
+    if "<session" in head or "ipoker" in head or "<gametype>" in head:
         return Room.IPOKER
     return Room.UNKNOWN
 
 
 def parse_text(text: str, salt: str = "") -> ParsedHand:
+    """Parse UNE main texte (Winamax/PokerStars).
+
+    iPoker est multi-mains et XML : utiliser :func:`parse_ipoker` ou
+    :func:`iter_hands`, qui aiguillent correctement.
+    """
     room = detect_room(text)
     if room is Room.WINAMAX:
         return parse_winamax(text, salt)
-    if room in (Room.POKERSTARS, Room.IPOKER):
+    if room is Room.POKERSTARS:
         return parse_pokerstars(text, salt)
+    if room is Room.IPOKER:
+        hands = parse_ipoker(text, salt)
+        if not hands:
+            raise HandHistoryError("aucune main dans la session iPoker.")
+        return hands[0]
     raise HandHistoryError("room non reconnue.")
 
 
 def iter_hands(text: str, salt: str = "") -> Iterator[ParsedHand]:
     """Découpe un fichier multi-mains et parse chaque main indépendamment.
 
-    Une main illisible ne fait pas échouer le fichier : elle est ignorée. Sur
-    des millions de mains, un format aberrant finit toujours par apparaître.
+    Aiguille sur le format : XML iPoker (une session → N mains) ou texte
+    Winamax/PokerStars (un bloc → une main). Une main illisible ne fait
+    jamais échouer le fichier : elle est ignorée — sur des millions de
+    mains, un format aberrant finit toujours par apparaître.
     """
+    if detect_room(text) is Room.IPOKER:
+        try:
+            yield from parse_ipoker(text, salt)
+        except HandHistoryError:
+            return
+        return
     blocks = re.split(r"\n\s*\n(?=(?:Winamax|PokerStars))", text.strip())
     for block in blocks:
         block = block.strip()

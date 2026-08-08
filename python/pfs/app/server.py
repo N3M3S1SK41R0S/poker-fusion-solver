@@ -690,6 +690,45 @@ class API:
         }
 
 
+    # ── Revue de session : analyse a posteriori de mains DÉJÀ jouées ─────
+    @staticmethod
+    def review(p: dict) -> dict:
+        """Revue post-partie d'un dossier d'historiques (jamais en direct).
+
+        Payload : {"path": "<dossier d'historiques iPoker/XML>"}. Renvoie le
+        profil statistique du héros et l'analyse d'équité des tapis. Ne lit
+        que des mains terminées ; ne regarde aucune partie en cours.
+        """
+        from pfs.analysis import review_folder
+
+        path = str(p.get("path", "")).strip()
+        if not path:
+            raise ValueError("champ 'path' requis (dossier d'historiques).")
+        rep = review_folder(path)
+        pr = rep.profile
+        return {
+            "profile": {
+                "n_hands": pr.n_hands,
+                "net_bb": round(pr.net_bb, 1),
+                "vpip": round(pr.vpip, 1), "vpip_opp": pr.vpip_opp,
+                "pfr": round(pr.pfr, 1), "pfr_opp": pr.pfr_opp,
+                "three_bet": round(pr.three_bet, 1), "three_bet_opp": pr.three_bet_opp,
+                "fold_to_cbet": round(pr.fold_to_cbet, 1), "fold_cbet_opp": pr.fold_cbet_opp,
+                "wtsd": round(pr.wtsd, 1), "wtsd_opp": pr.wtsd_opp,
+            },
+            "allin": {
+                "measured": rep.n_allin_measured,
+                "total": rep.n_allin_total,
+                "skipped": rep.n_allin_skipped,
+                "avg_equity": round(rep.avg_allin_equity, 1),
+                "realized": round(rep.total_realized, 0),
+                "expected": round(rep.total_expected, 0),
+                "luck_bb": round(rep.luck_bb, 1),
+            },
+            "explain": rep.explain(),
+        }
+
+
 ROUTES: dict[str, Callable[[dict], dict]] = {
     "range": API.range_get,
     "range/compare": API.range_compare,
@@ -711,6 +750,7 @@ ROUTES: dict[str, Callable[[dict], dict]] = {
     "equity": API.equity,
     "postflop": API.postflop,
     "resolve": API.resolve,
+    "review": API.review,
 }
 
 
