@@ -1,5 +1,45 @@
 # Journal des versions — Poker Fusion Solver
 
+## v4.2.0 — 8 août 2026
+
+Reconnaissance de cartes — la limite annoncée en v4.1 est levée.
+
+### Ajouté
+
+- **`pfs/vision`** — reconnaissance de cartes à partir d'images.
+  - `phash.py` : hash perceptuel DCT 256 bits (bloc 16×16), robuste à
+    l'échelle et au bruit. Le bloc 8×8 initial ne séparait pique et trèfle
+    de même rang que de 2 bits ; 16×16 porte la séparation à 30 bits.
+  - `card_recognizer.py` : `identify_card`, `recognize_cards` (par ROI),
+    `build_templates` (re-calibrage sur un autre thème/room en une commande),
+    seuils de confiance calés sur les distances mesurées.
+  - `templates/pmu_deck/` : les 52 cartes du client PMU, extraites de
+    `PokerCommonWidgetsQRC.rcc` et **étiquetées + vérifiées visuellement**
+    (complétude 13×4 + planche de contrôle) ; `templates/pmu_phash.json`
+    signatures pré-calculées.
+  - Route `POST /api/recognize` ; outil console `reconnaitre.py`
+    (image → cartes, et image → cartes → conseil avec le contexte du spot).
+- Dépendance `pillow>=10` (module vision).
+
+### Mesuré
+
+- Auto-reconnaissance 52/52 ; séparation ≥ 30 bits entre cartes distinctes ;
+  échelle ×3/×5/×8 : 52/52 ; bruit (flou + σ10) : 52/52, pire distance
+  correcte 18 (seuil d'acceptation 55). Flux complet image → cartes → conseil
+  validé de bout en bout.
+
+### Tests
+
+- 718 → **731 tests verts** (+13, `test_vision.py`), 19 goldens inchangés.
+
+### À caler encore
+
+- Coordonnées des régions d'intérêt (position des cartes sur la table) :
+  dépendent de la room et de la résolution, à mesurer une fois sur une vraie
+  capture. Le recogniseur, lui, est prêt.
+
+---
+
 ## v4.1.0 — 8 août 2026
 
 Session Claude Code (Fable 5) sur le PC Windows de Pierre. Reprise de la

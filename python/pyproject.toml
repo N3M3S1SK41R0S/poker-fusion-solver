@@ -1,7 +1,7 @@
 [project]
 name = "pfs"
-version = "4.1.0"
-description = "Poker Fusion Solver — 14 fusions, solveur NLHE, analyse post-partie iPoker/PMU, 718 tests"
+version = "4.2.0"
+description = "Poker Fusion Solver — 14 fusions, solveur NLHE, analyse post-partie iPoker/PMU, reconnaissance de cartes, 731 tests"
 requires-python = ">=3.12"
 dependencies = [
     "numpy>=2.0",
@@ -10,6 +10,7 @@ dependencies = [
     "pykalman>=0.11.2",
     "phevaluator>=0.6.0",
     "pokerkit>=0.7.4",
+    "pillow>=10.0",        # reconnaissance de cartes (pfs.vision)
 ]
 
 [project.optional-dependencies]

@@ -1,9 +1,18 @@
-# ♠ Poker Fusion Solver v4.1
+# ♠ Poker Fusion Solver v4.2
 
-Assistant poker personnel — **14 fusions mathématiques**, un solveur NLHE, et une
-suite d'**analyse a posteriori** de tes propres mains. Application 100 % locale.
+Assistant poker personnel — **14 fusions mathématiques**, un solveur NLHE, une
+suite d'**analyse a posteriori** de tes propres mains, et la **reconnaissance de
+cartes** à partir d'une image. Application 100 % locale.
 
-**718 tests verts · 19 goldens · zéro dépendance réseau · zéro € de licence.**
+**731 tests verts · 19 goldens · zéro dépendance réseau · zéro € de licence.**
+
+v4.2 — **reconnaissance de cartes** (`pfs/vision`) : à partir d'une capture,
+le recogniseur identifie les cartes par hash perceptuel (pHash DCT) sur le deck
+du client PMU, extrait et étiqueté (52 cartes vérifiées). Robuste à l'échelle
+(un gabarit 15×20 reconnaît une carte affichée bien plus grande — testé jusqu'à
+×8), robuste au bruit, séparation de 30 bits entre cartes distinctes. Le flux
+complet image → cartes → conseil est câblé (`reconnaitre.py`). Re-calibrable sur
+un autre thème/room en une commande (`build_templates`).
 
 v4.1 — la suite d'analyse post-partie, adossée aux solveurs du cœur :
 
@@ -120,7 +129,9 @@ adossé aux solveurs du cœur, donc chaque verdict est calculé, pas énoncé.
 | `analysis/session_review` | profil VPIP/PFR/3-bet/fold-cbet/WTSD + équité des tapis « all-in adjusted » | `/api/review` |
 | `analysis/pushfold_review` | décisions préflop tapis court vs Nash jam/fold, écart en bb | `/api/review/pushfold` |
 | `analysis/spot_advisor` | « que fallait-il faire ? » depuis un spot (cartes, board, pot, mise) | `/api/advise` |
+| `vision/card_recognizer` | reconnaît les cartes d'une image (pHash sur le deck PMU) | `/api/recognize` |
 | `analyser_main.py` | outil console : une main, en rafale, ou `--recap` du journal | — |
+| `reconnaitre.py` | outil console : image → cartes → conseil | — |
 
 **Deux niveaux de certitude, toujours annoncés.** *Certain* quand l'équilibre de Nash
 push/fold tranche (tapis court — vérité de théorie des jeux). *Indicatif* en postflop,
@@ -202,22 +213,39 @@ P(tilt) de 5,4 % à 24,1 % — ×4,8.
 
 ---
 
-## Phase 1 — perception : faisabilité GO, calibrage restant
+## Reconnaissance de cartes (`pfs/vision`)
 
-La **faisabilité** de la capture d'écran est désormais **tranchée et mesurée** sur la
-machine cible (Windows 11, DPI 150 %) : la sonde `rust/crates/pfs-capture/src/bin/probe.rs`
+```bash
+cd python
+python reconnaitre.py --card carte.png            # une carte
+python reconnaitre.py --image table.png --rois "120,300,60,80; 190,300,60,80"
+# image -> cartes -> conseil (ROI héros puis board) :
+python reconnaitre.py --image table.png \
+    --hero-rois "..." --board-rois "..." --pot 100 --bet 75 --bb 10
+```
+
+pHash DCT 256 bits sur le deck PMU étiqueté (`vision/templates/pmu_deck`, 52 cartes
+vérifiées). Mesuré : auto-reconnaissance 52/52, séparation ≥ 30 bits entre cartes
+distinctes, robuste à l'échelle (×3/×5/×8 : 52/52) et au bruit. Re-calibrage sur un
+autre thème : `build_templates(dossier)` sur des `<carte>.png`.
+
+**Ce qui reste à caler** : les **coordonnées des régions d'intérêt** (où sont les
+cartes sur la table) dépendent de la room et de la résolution — à mesurer une fois
+sur une vraie capture. Le recogniseur, lui, est prêt et robuste.
+
+## Phase 1 — perception (capture temps réel)
+
+La **faisabilité** de la capture d'écran est **tranchée et mesurée** sur la machine
+cible (Windows 11, DPI 150 %) : la sonde `rust/crates/pfs-capture/src/bin/probe.rs`
 (WGC, `windows-capture` 2.0.0) capture une fenêtre **occultée** et lit une région
-d'intérêt 200×100 en **p95 445 µs** (proxy animé) / **245 µs** (client PMU réel) —
-sous le budget 1 ms. Harnais reproductible : `scripts/perception/probe_occulte.ps1`,
-et `probe.exe --auto` détecte le client (PMU, Winamax, PokerStars, partypoker…).
-
-Ce qui reste : le **recogniseur de cartes** (pHash + gabarits) et le mapping des ROI
-par room — c'est du calibrage, plus une question de faisabilité. Le reste du projet
-tourne et est testé sur toute plateforme (Python pur, hors le crate Rust natif).
+d'intérêt 200×100 en **p95 445 µs** (proxy) / **245 µs** (client PMU réel) — sous le
+budget 1 ms. Harnais : `scripts/perception/probe_occulte.ps1` ; `probe.exe --auto`
+détecte le client (PMU, Winamax, PokerStars, partypoker…).
 
 **Ce que ce paquet ne fait PAS** : aucune assistance en direct pendant une partie
-d'argent réel. La suite d'analyse ne lit que des mains **terminées** — c'est un choix
-assumé, pas une limite technique.
+d'argent réel. La suite d'analyse et la reconnaissance ne servent que des mains
+**terminées** (captures a posteriori) — c'est un choix assumé, pas une limite
+technique.
 
 ---
 

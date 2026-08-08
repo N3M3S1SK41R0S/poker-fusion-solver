@@ -760,6 +760,33 @@ class API:
         }
 
 
+    # ── Reconnaissance de cartes depuis une image ───────────────────────
+    @staticmethod
+    def recognize(p: dict) -> dict:
+        """Reconnaît des cartes dans une image (chemin local).
+
+        Payload : {"path": "capture.png", "rois": [[x,y,w,h], ...]}. Sans
+        ``rois``, l'image entière est traitée comme une seule carte.
+        """
+        from pfs.vision import identify_card, recognize_cards
+
+        path = str(p.get("path", "")).strip()
+        if not path:
+            raise ValueError("champ 'path' requis (image).")
+        rois = p.get("rois")
+        if rois:
+            matches = recognize_cards(path, [tuple(int(v) for v in r) for r in rois])
+        else:
+            matches = [identify_card(path)]
+        return {
+            "cards": [m.card for m in matches],
+            "detail": [
+                {"card": m.card, "distance": m.distance, "margin": m.margin,
+                 "confidence": m.confidence, "runner_up": m.runner_up}
+                for m in matches
+            ],
+        }
+
     # ── Conseil sur un spot déjà joué (« qu'aurais-je dû faire ? ») ──────
     @staticmethod
     def advise(p: dict) -> dict:
@@ -814,6 +841,7 @@ ROUTES: dict[str, Callable[[dict], dict]] = {
     "review": API.review,
     "review/pushfold": API.review_pushfold,
     "advise": API.advise,
+    "recognize": API.recognize,
 }
 
 
