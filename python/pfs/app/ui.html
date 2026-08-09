@@ -86,6 +86,60 @@ pre{background:#0a0a12;border:1px solid var(--line);border-radius:9px;padding:11
 canvas{max-width:100%}
 footer{text-align:center;color:var(--dim2);font-size:11px;padding:26px 0 0;
  border-top:1px solid #14141f;margin-top:30px}
+
+/* ═══ CODE COULEUR DES ACTIONS ═══════════════════════════════════════════
+   Une seule sémantique dans TOUT le logiciel, pour qu'une couleur veuille
+   toujours dire la même chose :
+     vert   = action rentable (payer, miser, pousser)
+     rouge  = se coucher
+     ambre  = marginal / mixte — les deux options se valent
+     violet = information, pas une action
+   Chaque verdict porte AUSSI un mot et une icône : la couleur ne doit
+   jamais être le seul canal (daltonisme, capture en noir et blanc). */
+.verdict{border-radius:16px;padding:20px 22px;margin:14px 0;
+ border:1px solid var(--line);background:var(--panel);
+ display:grid;gap:16px;grid-template-columns:minmax(0,auto) minmax(0,1fr);
+ align-items:center;position:relative;overflow:hidden}
+.verdict::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;
+ background:var(--vc,var(--dim))}
+.verdict .act{font-size:32px;font-weight:900;letter-spacing:-.02em;line-height:1.05;
+ color:var(--vc);display:flex;align-items:center;gap:10px;white-space:nowrap}
+.verdict .act .ico{font-size:28px}
+.verdict .why{color:var(--dim);font-size:13px}
+.verdict .why b{color:var(--txt)}
+.verdict .sub{font-size:11px;color:var(--dim2);letter-spacing:.06em;margin-top:3px}
+/* la notation de main ne doit JAMAIS passer en majuscules : « 54o » (offsuit)
+   et « 54s » (suited) sont deux mains différentes, le suffixe est minuscule. */
+.verdict .sub .hand{font-family:ui-monospace,monospace;font-size:12.5px;
+ font-weight:700;color:var(--txt);text-transform:none}
+.verdict .sub .word{text-transform:uppercase}
+.verdict.go{--vc:var(--g)}      /* payer / miser / pousser */
+.verdict.no{--vc:var(--r)}      /* se coucher */
+.verdict.mid{--vc:var(--y)}     /* marginal, mixte */
+.verdict.info{--vc:var(--p)}    /* information */
+@media(max-width:640px){.verdict{grid-template-columns:1fr}}
+
+/* jauge équité vs équité requise — le seuil de bascule rendu visible */
+.gauge{margin-top:12px}
+.gauge .track{position:relative;height:26px;border-radius:8px;background:#0d0d16;
+ border:1px solid var(--line);overflow:hidden}
+.gauge .fill{position:absolute;left:0;top:0;bottom:0;border-radius:7px 0 0 7px;
+ background:linear-gradient(90deg,#22c55e55,#22c55eaa)}
+.gauge .need{position:absolute;top:-3px;bottom:-3px;width:3px;background:var(--y);
+ box-shadow:0 0 0 1px #0d0d16}
+.gauge .legend{display:flex;justify-content:space-between;font-size:11px;
+ color:var(--dim2);margin-top:5px}
+.gauge .legend b{color:var(--txt);font-variant-numeric:tabular-nums}
+
+/* saisie du spot : grande, lisible, une action évidente */
+.spotbar{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}
+.spotbar input{font-size:15px;padding:9px 11px;font-family:ui-monospace,monospace}
+.spotbar label{font-size:10.5px}
+.cta{font-size:15px;font-weight:800;padding:11px 16px;letter-spacing:.02em}
+kbd{font:11px ui-monospace,monospace;background:#1a1a28;border:1px solid var(--line);
+ border-bottom-width:2px;border-radius:5px;padding:1px 5px;color:var(--dim)}
+.hint{font-size:11.5px;color:var(--dim2);margin-top:6px}
+.skel{color:var(--dim2);font-size:13px;padding:18px 0;text-align:center}
 </style>
 </head>
 <body>
@@ -98,8 +152,63 @@ footer{text-align:center;color:var(--dim2);font-size:11px;padding:26px 0 0;
 
 <div class="wrap">
 
+<!-- ══════════ MA MAIN — le point d'entrée ══════════ -->
+<section id="s-spot" class="on">
+  <h1>Ma main — que fallait-il faire ?</h1>
+  <p class="lead">Recopie ce que montre ta capture d'écran, puis <kbd>Entrée</kbd>.
+  Le solveur tranche : <b style="color:#22c55e">vert</b> = action rentable ·
+  <b style="color:#ef4444">rouge</b> = se coucher ·
+  <b style="color:#eab308">ambre</b> = marginal, les deux se valent.</p>
+
+  <div class="card">
+    <div class="spotbar">
+      <div><label>Ta main</label><input id="sp-hero" placeholder="Ah Kd" autofocus></div>
+      <div><label>Board (vide = préflop)</label><input id="sp-board" placeholder="Qs 7d 2c"></div>
+      <div><label>Pot</label><input id="sp-pot" type="number" value="100"></div>
+      <div><label>Mise à payer</label><input id="sp-bet" type="number" value="75"></div>
+      <div><label>Ton tapis</label><input id="sp-stack" type="number" value="300"></div>
+      <div><label>Big blind</label><input id="sp-bb" type="number" value="10"></div>
+      <div><label>Adversaire</label>
+        <select id="sp-villain">
+          <option value="moyenne" selected>Range moyenne</option>
+          <option value="large">Range large (joue tout)</option>
+          <option value="serree">Range serrée (nitté)</option>
+        </select></div>
+      <div><label>Position</label>
+        <select id="sp-pos"><option>BTN</option><option>SB</option><option>BB</option>
+          <option>CO</option><option>MP</option><option>UTG</option></select></div>
+    </div>
+    <div class="row" style="margin-top:12px;align-items:center">
+      <button class="cta" style="width:auto" onclick="adviseRun()">Que fallait-il faire ?</button>
+      <span class="hint">Préflop : laisse le board vide et renseigne ton tapis —
+        en tapis court, c'est l'équilibre de Nash qui tranche.</span>
+    </div>
+  </div>
+
+  <div id="sp-out"><div class="skel">Entre ta main, puis <kbd>Entrée</kbd>.</div></div>
+</section>
+
+<!-- ══════════ MES SESSIONS — revue des mains jouées ══════════ -->
+<section id="s-review">
+  <h1>Mes sessions — où fuit ton EV</h1>
+  <p class="lead">Analyse tes historiques de mains déjà jouées : profil statistique,
+  part de variance aux tapis, et tes décisions préflop confrontées à l'équilibre de Nash.</p>
+
+  <div class="card">
+    <label>Dossier d'historiques (XML iPoker / PMU)</label>
+    <div class="row" style="align-items:center;gap:8px">
+      <input id="rv-path" style="flex:1;min-width:280px;font-family:ui-monospace,monospace"
+             placeholder="C:\Users\...\PMU PLAY 100%% Poker\data\<pseudo>\History">
+      <button style="width:auto" onclick="reviewRun()">Analyser</button>
+    </div>
+    <div class="hint">Rien ne sort de la machine : la lecture est locale.</div>
+  </div>
+
+  <div id="rv-out"><div class="skel">Indique un dossier d'historiques pour lancer la revue.</div></div>
+</section>
+
 <!-- ══════════ STUDY ══════════ -->
-<section id="s-study" class="on">
+<section id="s-study">
   <h1>Study — ranges, entropie, distance de Fisher</h1>
   <p class="lead">Clique une case pour ajuster sa fréquence. Le pinceau règle la valeur posée.
   Le mode <b>Compare</b> superpose la solution GTO et calcule ton score.</p>
@@ -475,7 +584,7 @@ footer{text-align:center;color:var(--dim2);font-size:11px;padding:26px 0 0;
 </section>
 
 <footer>
-  Poker Fusion Solver v4.0 — 14 fusions + tous les standards · solveur river/turn réel · 127.0.0.1 uniquement · aucune sortie réseau
+  Poker Fusion Solver v4.2 — 14 fusions · solveur river/turn réel · analyse post-partie · reconnaissance de cartes · 127.0.0.1 uniquement · aucune sortie réseau
 </footer>
 </div>
 
@@ -485,9 +594,14 @@ const RANKS="AKQJT98765432".split("");
 let W=new Array(169).fill(0), GTO=new Array(169).fill(0), RECON=null, ERRS=null;
 let hmmObs=[], drillT0=0;
 
-const TABS=[["s-study","Study"],["s-fusion","Fusion"],["s-train","Train"],
-            ["s-sizing","Sizing"],["s-analyze","Analyze"],["s-solver","Solveur"],
-            ["s-bankroll","Bankroll"],["s-hmm","État mental"]];
+// Onglets nommés par TÂCHE, pas par module interne : on cherche « ma main »,
+// pas « bet_sizing ». L'ordre va du plus fréquent (juger une main) au plus
+// spécialisé (les outils d'expert).
+const TABS=[["s-spot","♠ Ma main"],["s-review","Mes sessions"],
+            ["s-study","Ranges"],["s-train","S'entraîner"],
+            ["s-fusion","Lire l'adversaire"],["s-sizing","Miser juste"],
+            ["s-solver","Solveur"],["s-bankroll","Bankroll & ICM"],
+            ["s-analyze","Importer"],["s-hmm","Tilt"]];
 const tabsEl=document.getElementById("tabs");
 TABS.forEach(([id,label],i)=>{
   const b=document.createElement("button");
@@ -496,7 +610,8 @@ TABS.forEach(([id,label],i)=>{
     document.querySelectorAll("section").forEach(s=>s.classList.remove("on"));
     b.classList.add("on"); document.getElementById(id).classList.add("on");
     if(id==="s-fusion"){fusionRun();skillRun();} if(id==="s-sizing"){sizingRun();bcRun();}
-    if(id==="s-bankroll"){brRun();icmRun();} if(id==="s-hmm")hmmRun();};
+    if(id==="s-bankroll"){brRun();icmRun();} if(id==="s-hmm")hmmRun();
+    if(id==="s-spot")document.getElementById("sp-hero").focus();};
   tabsEl.appendChild(b);
 });
 
@@ -523,6 +638,157 @@ async function api(route,body={}){
     if(j.error)console.warn(route,j.error);
     return j;
   }catch(e){document.getElementById("status").textContent="✕ hors ligne";return{error:String(e)};}
+}
+
+// ══ MA MAIN — verdict en code couleur ═══════════════════════════════════
+// La couleur suit l'ACTION, pas l'humeur : on classe le verdict rendu par le
+// solveur dans l'une des quatre familles de la sémantique (cf. CSS).
+function verdictClass(action){
+  const a=(action||"").toUpperCase();
+  if(a.startsWith("FOLD"))                       return ["no","✕","Se coucher"];
+  if(a.includes("MARGINAL"))                     return ["mid","≈","Marginal"];
+  if(a.startsWith("MIXTE"))                      return ["mid","◐","Fréquence mixte"];
+  if(a.startsWith("JAM"))                        return ["go","▲","Tapis"];
+  if(a.startsWith("CALL"))                       return ["go","✓","Payer"];
+  if(a.startsWith("MISER")||a.startsWith("OUVRIR")) return ["go","▲","Miser"];
+  if(a.startsWith("CHECK"))                      return ["mid","–","Checker"];
+  return ["info","·",""];
+}
+
+function gaugeHTML(eq,need){
+  if(eq==null) return "";
+  const pct=Math.max(0,Math.min(100,eq*100));
+  const npct=need==null?null:Math.max(0,Math.min(100,need*100));
+  return `<div class="gauge">
+    <div class="track">
+      <div class="fill" style="width:${pct}%"></div>
+      ${npct!=null?`<div class="need" style="left:${npct}%" title="seuil de bascule"></div>`:""}
+    </div>
+    <div class="legend">
+      <span>ton équité <b>${pct.toFixed(1)} %</b></span>
+      ${npct!=null?`<span>il en faut <b>${npct.toFixed(1)} %</b> pour payer</span>`:"<span></span>"}
+    </div></div>`;
+}
+
+async function adviseRun(){
+  const g=id=>document.getElementById(id).value;
+  const out=document.getElementById("sp-out");
+  if(!g("sp-hero").trim()){out.innerHTML='<div class="skel">Entre d\'abord ta main.</div>';return;}
+  out.innerHTML='<div class="skel">⟳ calcul en cours…</div>';
+  const r=await api("advise",{hero:g("sp-hero"),board:g("sp-board"),
+    pot:+g("sp-pot")||0,bet:+g("sp-bet")||0,stack:+g("sp-stack")||0,
+    big_blind:+g("sp-bb")||1,position:g("sp-pos"),villain:g("sp-villain")});
+  if(r.error){out.innerHTML=`<div class="warn"><b>Impossible de juger ce spot.</b><br>${r.error}</div>`;return;}
+  const [cls,ico,word]=verdictClass(r.action);
+  const certain=r.confidence==="certain";
+  out.innerHTML=`
+    <div class="verdict ${cls}">
+      <div>
+        <div class="act"><span class="ico">${ico}</span>${r.action}</div>
+        <div class="sub"><span class="hand">${r.hand}</span> · <span class="word">${word}</span></div>
+      </div>
+      <div>
+        <div class="why">${(r.reasons||[]).map(x=>`<div>· ${x}</div>`).join("")}</div>
+        ${gaugeHTML(r.equity,r.required)}
+      </div>
+    </div>
+    <div class="row">
+      ${r.ev_bb!=null?`<div class="kpi col"><div class="v" style="color:${r.ev_bb>=0?"#22c55e":"#ef4444"}">${r.ev_bb>=0?"+":""}${r.ev_bb.toFixed(2)}</div><div class="l">EV (bb)</div></div>`:""}
+      ${r.equity!=null?`<div class="kpi col"><div class="v">${(r.equity*100).toFixed(1)} %</div><div class="l">ton équité</div></div>`:""}
+      ${r.required!=null?`<div class="kpi col"><div class="v" style="color:#eab308">${(r.required*100).toFixed(1)} %</div><div class="l">équité requise</div></div>`:""}
+      ${r.mdf!=null?`<div class="kpi col"><div class="v">${(r.mdf*100).toFixed(1)} %</div><div class="l">MDF</div></div>`:""}
+    </div>
+    <div class="${certain?"ok":"card"}" style="margin-top:10px">
+      <b>${certain?"✓ Verdict certain":"⚠ Verdict indicatif"}</b> — ${r.regime}.
+      ${certain?"C'est l'équilibre de Nash : une vérité de théorie des jeux, pas un avis."
+               :"L'équité est exacte, mais la range adverse est une hypothèse."}
+      ${(r.assumptions||[]).length?`<div class="muted" style="margin-top:6px">${
+        r.assumptions.map(a=>"– "+a).join("<br>")}</div>`:""}
+    </div>`;
+}
+
+// ══ MES SESSIONS ════════════════════════════════════════════════════════
+// Une statistique n'a de sens qu'avec son nombre d'occasions et sa zone
+// saine : on affiche les trois ensemble, jamais le pourcentage seul.
+function statRow(label,val,opp,lo,hi,note){
+  const inZone=val>=lo&&val<=hi;
+  const col=opp<20?"var(--dim)":(inZone?"var(--g)":"var(--o)");
+  const pct=Math.max(0,Math.min(100,val));
+  return `<tr>
+    <td>${label}${note?`<div class="muted">${note}</div>`:""}</td>
+    <td class="num" style="color:${col};font-weight:700">${val.toFixed(1)} %</td>
+    <td style="width:45%">
+      <div class="bar" style="height:9px;position:relative">
+        <i style="width:${pct}%;background:${col}"></i>
+        <span style="position:absolute;top:-2px;bottom:-2px;left:${lo}%;width:${hi-lo}%;
+          background:#22c55e18;border-left:1px solid #22c55e66;border-right:1px solid #22c55e66"></span>
+      </div>
+      <div class="muted" style="margin-top:2px">zone saine ${lo}–${hi} %</div>
+    </td>
+    <td class="num muted">${opp} occ.</td></tr>`;
+}
+
+async function reviewRun(){
+  const path=document.getElementById("rv-path").value.trim();
+  const out=document.getElementById("rv-out");
+  if(!path){out.innerHTML='<div class="skel">Indique un dossier d\'historiques.</div>';return;}
+  out.innerHTML='<div class="skel">⟳ lecture des mains et calcul des équités…</div>';
+  const r=await api("review",{path});
+  if(r.error){out.innerHTML=`<div class="warn"><b>Lecture impossible.</b><br>${r.error}</div>`;return;}
+  const p=r.profile,a=r.allin;
+  const luckGood=a.luck_bb>=0;
+  out.innerHTML=`
+    <div class="row">
+      <div class="kpi col"><div class="v">${p.n_hands}</div><div class="l">mains analysées</div></div>
+      <div class="kpi col"><div class="v" style="color:${p.net_bb>=0?"#22c55e":"#ef4444"}">${p.net_bb>=0?"+":""}${p.net_bb}</div><div class="l">résultat net (bb)</div></div>
+      <div class="kpi col"><div class="v">${a.avg_equity} %</div><div class="l">équité moyenne aux tapis</div></div>
+      <div class="kpi col"><div class="v" style="color:${luckGood?"#22c55e":"#ef4444"}">${luckGood?"+":""}${a.luck_bb}</div><div class="l">part de chance (bb)</div></div>
+    </div>
+    <div class="card">
+      <h2 style="margin-top:0">Ton profil</h2>
+      <table><tbody>
+        ${statRow("VPIP — mains jouées",p.vpip,p.vpip_opp,28,50)}
+        ${statRow("PFR — relances préflop",p.pfr,p.pfr_opp,28,45)}
+        ${statRow("Écart VPIP−PFR — passivité",p.vpip-p.pfr,p.vpip_opp,0,18,"plus l'écart est grand, plus tu suis au lieu de relancer")}
+        ${statRow("3-bet",p.three_bet,p.three_bet_opp,8,24)}
+        ${statRow("Fold to c-bet",p.fold_to_cbet,p.fold_cbet_opp,40,60)}
+        ${statRow("WTSD — va à l'abattage",p.wtsd,p.wtsd_opp,25,40)}
+      </tbody></table>
+      <div class="muted" style="margin-top:8px">Les zones saines valent pour le format
+      court (3-max / heads-up). Sous 20 occasions, une fréquence est une indication,
+      pas une mesure — la valeur reste grise.</div>
+    </div>
+    <div class="${luckGood?"ok":"warn"}">
+      <b>Aux tapis : ${a.measured} confrontations mesurées sur ${a.total}</b>
+      (${a.skipped} non mesurables : multiway, ou cartes adverses inconnues).
+      Tu as réalisé <b>${a.realized}</b> jetons pour <b>${a.expected}</b> espérés →
+      ${luckGood?"la variance t'a été <b>favorable</b>"
+                :"la variance t'a été <b>défavorable</b>"} de ${Math.abs(a.luck_bb)} bb.
+      Cette part-là ne dit rien de ton niveau : c'est ce qui reste APRÈS elle qui compte.
+    </div>`;
+  // enchaîne sur la revue shove/fold
+  const s=await api("review/pushfold",{path});
+  if(s.error||!s.judged) return;
+  out.insertAdjacentHTML("beforeend",`
+    <div class="card">
+      <h2 style="margin-top:0">Tes tapis préflop face au Nash</h2>
+      <div class="row">
+        <div class="kpi col"><div class="v">${s.judged}</div><div class="l">décisions jugées</div></div>
+        <div class="kpi col"><div class="v" style="color:${s.mistakes?"#f97316":"#22c55e"}">${s.mistakes}</div><div class="l">écarts</div></div>
+        <div class="kpi col"><div class="v" style="color:${s.loose_jams?"#ef4444":"#22c55e"}">${s.loose_jams}</div><div class="l">jams trop lâches</div></div>
+        <div class="kpi col"><div class="v" style="color:#eab308">${s.total_cost_bb}</div><div class="l">coût total (bb)</div></div>
+      </div>
+      ${s.worst.length?`<table style="margin-top:8px"><thead><tr><th>Main</th><th>Tapis</th>
+        <th>Ta décision</th><th>Verdict</th><th style="text-align:right">Coût</th></tr></thead><tbody>
+        ${s.worst.map(w=>`<tr><td class="num" style="font-weight:700">${w.hand}</td>
+          <td class="num">${w.eff_bb} bb</td><td>${w.decision}</td>
+          <td><span class="pill y">${w.verdict}</span></td>
+          <td class="num" style="text-align:right;color:#ef4444">−${w.cost_bb} bb</td></tr>`).join("")}
+        </tbody></table>`:'<div class="ok">Aucun écart : tes tapis préflop sont justes.</div>'}
+      <div class="muted" style="margin-top:8px">${s.skipped_multiway} spots multiway et
+      ${s.skipped_deep} au-delà de 25 bb ne sont pas jugés — le solveur push/fold est
+      heads-up. Rien n'est approximé en silence.</div>
+    </div>`);
 }
 
 // ── grille ────────────────────────────────────────────────────────────
@@ -1040,14 +1306,23 @@ Bob collected 7€ from pot
 *** SUMMARY ***
 Total pot 7€`;
 
-// Raccourcis clavier — 1..8 pour les onglets, Échap pour revenir à Study.
+// Raccourcis clavier — 1..9 pour les onglets, Échap pour revenir à « Ma main ».
 document.addEventListener("keydown",e=>{
   if(e.target.tagName==="INPUT"||e.target.tagName==="TEXTAREA"||e.target.tagName==="SELECT")return;
-  if(e.key>="1"&&e.key<="8"){const i=+e.key-1;const t=document.querySelectorAll(".tab")[i];if(t)t.click();}
+  if(e.key>="1"&&e.key<="9"){const i=+e.key-1;const t=document.querySelectorAll(".tab")[i];if(t)t.click();}
   if(e.key==="Escape")document.querySelectorAll(".tab")[0].click();
 });
 
+// Entrée = calculer, depuis n'importe quel champ du spot ou du dossier :
+// enchaîner les mains ne doit jamais demander d'aller chercher un bouton.
+["sp-hero","sp-board","sp-pot","sp-bet","sp-stack","sp-bb","sp-villain","sp-pos"]
+  .forEach(id=>{const el=document.getElementById(id);
+    el.addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();adviseRun();}});});
+document.getElementById("rv-path")
+  .addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();reviewRun();}});
+
 buildGrid(); refresh();
+document.getElementById("sp-hero").focus();
 </script>
 </body>
 </html>
