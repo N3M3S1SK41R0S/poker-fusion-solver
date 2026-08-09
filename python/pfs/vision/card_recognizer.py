@@ -19,7 +19,26 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Iterable, Sequence
 
-from pfs.vision.phash import HASH_BITS, autocrop_card, hamming, phash
+from pfs.vision.phash import (
+    HASH_BITS,
+    autocrop_card,
+    colour_distance,
+    colour_signature,
+    corner_phash,
+    hamming,
+    phash,
+)
+
+# Signature : hash du carton entier + hash du coin (le rang) + couleur moyenne.
+Signature = tuple[int, int, tuple[float, float, float]]
+
+# Poids de la couleur : un écart d'enseigne du thème « fond plein »
+# (rouge vs vert, ~150 en RGB) pèse ~50 — l'ordre de grandeur de la
+# séparation de forme, sans l'écraser.
+COLOUR_WEIGHT = 0.34
+# Poids du coin : c'est là que se lit le RANG. Sans lui, deux cartes de même
+# enseigne mais de rang différent ne se séparaient que de 0 à 2 bits.
+CORNER_WEIGHT = 1.6
 
 __all__ = [
     "CardMatch",
@@ -31,14 +50,29 @@ __all__ = [
 ]
 
 _HERE = Path(__file__).parent
-DEFAULT_TEMPLATES = _HERE / "templates" / "pmu_phash.json"
-_DECK_DIR = _HERE / "templates" / "pmu_deck"
+_TEMPLATE_ROOT = _HERE / "templates"
+DEFAULT_TEMPLATES = _TEMPLATE_ROOT / "pmu_phash.json"
+_DECK_DIR = _TEMPLATE_ROOT / "pmu_deck"
 
-# distance de Hamming au-delà de laquelle on refuse de trancher (sur 256 bits).
-# Calée sur les mesures : les vraies reconnaissances (même deck, échelle et
-# bruit variés) restent < 40, la séparation entre cartes distinctes est ≥ 30.
-MAX_ACCEPT_DISTANCE = 55
-MIN_MARGIN = 8
+# Thèmes livrés. Le client PMU change complètement l'habillage des cartes
+# selon le réglage : « pmu_deck » = deck classique (fond blanc, symboles
+# rouges/noirs) ; « pmu_solid » = fond plein saturé (rouge=cœur, bleu=carreau,
+# vert=trèfle, noir=pique) avec glyphes blancs. On ne DEVINE pas le thème :
+# toutes les signatures sont dans la même banque, et c'est la plus proche qui
+# gagne. Ajouter un thème = déposer un dossier de `<carte>.png` ici.
+_THEMES = ("pmu_deck", "pmu_solid")
+
+# Seuils calés sur 1 560 essais (7 tapis × 2 habillages × cadrages serré et
+# large). Deux constats dictent la règle :
+#   · les distances des bonnes et des mauvaises réponses SE CHEVAUCHENT —
+#     la distance seule ne peut donc pas trancher ;
+#   · c'est la MARGE avec le second candidat qui sépare proprement.
+# Compromis mesuré (lues / fausses) : marge 12 → 96,8 % / 1,67 % ;
+# marge 25 → 95,0 % / 0,45 % ; marge 32 → 94,0 % / 0,06 %.
+# On retient 32 : une carte fausse annoncée avec aplomb fausse silencieusement
+# tout le conseil qui suit, alors qu'un refus demande juste de recadrer.
+MAX_ACCEPT_DISTANCE = 900
+MIN_MARGIN = 32
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,43 +107,92 @@ def build_templates(deck_dir: str | Path = _DECK_DIR,
         Signature par carte.
     """
     deck_dir = Path(deck_dir)
-    templates: dict[str, int] = {}
+    templates: dict[str, Signature] = {}
     for f in sorted(deck_dir.glob("*.png")):
-        templates[f.stem] = phash(f)
+        templates[f.stem] = (phash(f), corner_phash(f), colour_signature(f))
     if not templates:
         raise FileNotFoundError(f"aucun gabarit `<carte>.png` dans {deck_dir}")
     if save_to is not None:
-        # signatures 256 bits stockées en hexadécimal (portable, sans risque
-        # de dépassement d'entier côté parseurs JSON tiers)
-        Path(save_to).write_text(
-            json.dumps({k: format(v, "x") for k, v in templates.items()},
-                       indent=0, sort_keys=True),
-            encoding="utf-8")
+        Path(save_to).write_text(_dumps(templates), encoding="utf-8")
     return templates
 
 
+def _dumps(templates: dict[str, "Signature"]) -> str:
+    """Sérialise : hash 256 bits en hexadécimal (portable) + couleur moyenne."""
+    return json.dumps(
+        {k: {"h": format(h, "x"), "k": format(kh, "x"),
+             "c": [round(x, 2) for x in c]}
+         for k, (h, kh, c) in templates.items()},
+        indent=0, sort_keys=True)
+
+
+def build_all_themes(
+    save_to: str | Path | None = DEFAULT_TEMPLATES,
+) -> dict[str, Signature]:
+    """Signatures de TOUS les thèmes présents, clés « carte@thème ».
+
+    Un même `Ah` existe dans plusieurs habillages : les clés sont donc
+    suffixées par le thème pour qu'aucune signature n'en écrase une autre.
+    """
+    out: dict[str, Signature] = {}
+    for theme in _THEMES:
+        d = _TEMPLATE_ROOT / theme
+        if not d.is_dir():
+            continue
+        for card, sig in build_templates(d).items():
+            out[f"{card}@{theme}"] = sig
+    if not out:
+        raise FileNotFoundError(f"aucun thème de cartes sous {_TEMPLATE_ROOT}")
+    if save_to is not None:
+        Path(save_to).write_text(_dumps(out), encoding="utf-8")
+    return out
+
+
 @lru_cache(maxsize=4)
-def load_templates(path: str | Path = DEFAULT_TEMPLATES) -> dict[str, int]:
+def load_templates(path: str | Path = DEFAULT_TEMPLATES) -> dict[str, Signature]:
     """Charge les signatures pré-calculées (mémoïsé). Repli : les reconstruit.
 
-    Si le JSON pré-calculé est absent mais que le dossier de gabarits existe,
-    on recalcule à la volée — le paquet reste fonctionnel même sans le JSON.
+    Si le JSON pré-calculé est absent mais que les dossiers de gabarits
+    existent, on recalcule à la volée — le paquet reste fonctionnel même
+    sans le JSON.
     """
     p = Path(path)
     if p.exists():
         raw = json.loads(p.read_text(encoding="utf-8"))
-        # signatures en hexadécimal (cf. build_templates)
-        return {k: int(v, 16) for k, v in raw.items()}
-    return build_templates()
+        return {k: (int(v["h"], 16), int(v["k"], 16), tuple(v["c"]))
+                for k, v in raw.items()}
+    return build_all_themes(save_to=None)
 
 
-def _rank(image, templates: dict[str, int]) -> tuple[int, str, int, str | None]:
-    """(distance, carte, marge, dauphin) pour une image donnée."""
+def _card_of(key: str) -> str:
+    """« Ah@pmu_solid » → « Ah » (le thème n'intéresse que le diagnostic)."""
+    return key.split("@", 1)[0]
+
+
+def _rank(image, templates: dict[str, Signature]) -> tuple[int, str, int, str | None]:
+    """(distance, carte, marge, dauphin) pour une image donnée.
+
+    Distance = forme (Hamming sur le pHash) + couleur pondérée. La marge se
+    calcule contre la meilleure AUTRE carte, pas contre le même carton dans un
+    autre habillage : deux thèmes qui proposent tous deux « Ah » ne créent
+    aucune ambiguïté et ne doivent pas écraser la marge.
+    """
     h = phash(image)
-    ranked = sorted(((hamming(h, sig), card) for card, sig in templates.items()))
-    best_d, best_c = ranked[0]
-    second_d, second_c = ranked[1] if len(ranked) > 1 else (HASH_BITS, None)
-    return best_d, best_c, second_d - best_d, second_c
+    kh = corner_phash(image)
+    c = colour_signature(image)
+    ranked = sorted(
+        (hamming(h, sig) + CORNER_WEIGHT * hamming(kh, ksig)
+         + COLOUR_WEIGHT * colour_distance(c, col), key)
+        for key, (sig, ksig, col) in templates.items()
+    )
+    best_d, best_key = ranked[0]
+    best_card = _card_of(best_key)
+    second_d, second_card = float(HASH_BITS), None
+    for d, key in ranked[1:]:
+        if _card_of(key) != best_card:
+            second_d, second_card = d, _card_of(key)
+            break
+    return round(best_d), best_card, round(second_d - best_d), second_card
 
 
 def identify_card(image, templates: dict[str, int] | None = None,
@@ -140,19 +223,22 @@ def identify_card(image, templates: dict[str, int] | None = None,
     templates = templates if templates is not None else load_templates()
     best = _rank(image, templates)
     if autocrop:
-        try:
-            cropped = autocrop_card(image)
-            alt = _rank(cropped, templates)
-            # « meilleur des deux » : le recadrage ne doit jamais dégrader
-            # une sélection déjà juste
-            if alt[0] < best[0]:
-                best = alt
-        except Exception:
-            pass
+        # deux polarités : carte CLAIRE sur tapis sombre (deck classique) et
+        # carte SOMBRE sur fond clair (thème à fond plein). On garde la
+        # meilleure lecture des trois — un cadrage déjà juste n'est jamais
+        # dégradé, puisque l'original participe à la comparaison.
+        for dark in (False, True):
+            try:
+                alt = _rank(autocrop_card(image, dark_card=dark), templates)
+                if alt[0] < best[0]:
+                    best = alt
+            except Exception:
+                pass
 
     best_d, best_c, margin, second_c = best
-    conf = max(0.0, 1.0 - best_d / HASH_BITS) * (1.0 if margin >= MIN_MARGIN
-                                                 else margin / MIN_MARGIN)
+    # La confiance suit la MARGE, pas la distance absolue : c'est elle qui
+    # sépare une lecture sûre d'une hésitation (cf. calibration ci-dessus).
+    conf = max(0.0, min(1.0, margin / 80.0))
     accepted = best_d <= MAX_ACCEPT_DISTANCE and margin >= MIN_MARGIN
     return CardMatch(
         card=best_c if accepted else None,

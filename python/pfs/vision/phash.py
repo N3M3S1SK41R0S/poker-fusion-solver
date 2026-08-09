@@ -24,10 +24,12 @@ import numpy as np
 import numpy.typing as npt
 from scipy.fft import dct
 
-__all__ = ["phash", "hamming", "autocrop_card", "HASH_BITS"]
+__all__ = ["phash", "hamming", "autocrop_card", "colour_signature",
+           "colour_distance", "HASH_BITS"]
 
-_SIZE = 32          # image normalisée avant DCT
-_LOW = 16           # bloc basse fréquence conservé (16×16 = 256 bits)
+_SIZE = 64          # image normalisée avant DCT
+_LOW = 24           # bloc basse fréquence conservé (24×24 = 576 bits)
+_INSET = 0.08       # frange écartée (coins arrondis transparents)
 HASH_BITS = _LOW * _LOW
 
 
@@ -83,6 +85,15 @@ def phash(image) -> int:
     from PIL import Image
 
     gray = _to_gray_array(image)
+    # On écarte une frange : les coins des cartes sont ARRONDIS et
+    # transparents. Sur un gabarit ils sont composés sur blanc, à l'écran ils
+    # laissent voir le tapis — leur couleur dépend donc du fond et pollue la
+    # signature. En hachant le cœur de la carte, la comparaison redevient
+    # valable quel que soit le tapis.
+    h, w = gray.shape
+    iy, ix = int(h * _INSET), int(w * _INSET)
+    if h - 2 * iy >= 8 and w - 2 * ix >= 8:
+        gray = gray[iy:h - iy, ix:w - ix]
     im = Image.fromarray(gray.astype(np.uint8)).resize((_SIZE, _SIZE), Image.LANCZOS)
     a = np.asarray(im, dtype=np.float64)
 
@@ -105,6 +116,48 @@ def hamming(a: int, b: int) -> int:
     return int(bin(a ^ b).count("1"))
 
 
+def corner_phash(image) -> int:
+    """Signature de la COLONNE D'INDEX (gauche) : le rang ET l'enseigne.
+
+    Deux raisons de la hacher à part. Sur un habillage à fond plein, le rang
+    est un petit glyphe noyé dans un large aplat : ramené à la taille du
+    carton entier il ne pèse presque rien, et « 7♦ » devenait indistinguable
+    de « J♦ » (marge mesurée : 0 bit). Symétriquement, la zone doit descendre
+    assez bas pour inclure l'ENSEIGNE : limitée au rang seul, elle confondait
+    une enseigne sur deux (26/52 — cœur avec carreau, pique avec trèfle).
+
+    Tous les habillages placent rang au-dessus, enseigne en dessous, dans une
+    colonne à gauche : une même fraction convient donc aux deux.
+    """
+    im = _as_pil(image)
+    w, h = im.size
+    box = im.crop((0, 0, max(4, int(w * 0.46)), max(4, int(h * 0.82))))
+    return phash(box)
+
+
+def colour_signature(image) -> tuple[float, float, float]:
+    """Couleur moyenne du cœur de la carte (R, G, B).
+
+    Indispensable : certains habillages codent l'ENSEIGNE par la couleur du
+    carton (rouge = cœur, bleu = carreau, vert = trèfle, noir = pique). En
+    niveaux de gris, rouge et vert sont presque identiques — le hash seul
+    confondait donc une couleur sur deux (26/52 mesuré). La couleur moyenne
+    lève cette ambiguïté sans rien coûter.
+    """
+    rgb = _rgb_array(image)
+    h, w = rgb.shape[:2]
+    iy, ix = int(h * _INSET), int(w * _INSET)
+    core = rgb[iy:h - iy, ix:w - ix] if (h - 2 * iy >= 4 and w - 2 * ix >= 4) else rgb
+    m = core.reshape(-1, 3).mean(axis=0)
+    return (float(m[0]), float(m[1]), float(m[2]))
+
+
+def colour_distance(a: tuple[float, float, float],
+                    b: tuple[float, float, float]) -> float:
+    """Distance euclidienne RGB entre deux signatures de couleur."""
+    return float(np.sqrt(sum((x - y) ** 2 for x, y in zip(a, b))))
+
+
 def _otsu(gray: npt.NDArray[np.float64]) -> float:
     """Seuil d'Otsu (1979) : sépare deux populations en maximisant la
     variance inter-classes. Aucun réglage à la main — c'est l'image qui
@@ -121,7 +174,19 @@ def _otsu(gray: npt.NDArray[np.float64]) -> float:
     return float(centres[int(np.argmax(between))])
 
 
-def autocrop_card(image, pad: int = 1):
+def _rgb_array(image) -> npt.NDArray[np.float64]:
+    """Tableau (H, W, 3) RGB, alpha composé sur blanc."""
+    from PIL import Image
+
+    im = _as_pil(image)
+    if im.mode in ("RGBA", "LA", "P"):
+        im = im.convert("RGBA")
+        bg = Image.new("RGBA", im.size, (255, 255, 255, 255))
+        im = Image.alpha_composite(bg, im)
+    return np.asarray(im.convert("RGB"), dtype=np.float64)
+
+
+def autocrop_card(image, pad: int = 1, dark_card: bool = False):
     """Recadre sur la carte contenue dans une sélection APPROXIMATIVE.
 
     Sans ça, la reconnaissance exige un cadrage au pixel près : une
@@ -129,10 +194,16 @@ def autocrop_card(image, pad: int = 1):
     chuter le taux à zéro — mesuré. Personne ne cadre au pixel près à la
     souris, donc on retrouve nous-mêmes le bord de la carte.
 
-    Principe : une carte est une grande tache CLAIRE sur un fond plus
-    sombre. Seuil d'Otsu, plus grande composante connexe claire, boîte
-    englobante. Si rien de probant n'est trouvé, l'image est renvoyée telle
-    quelle — le recadrage ne doit jamais dégrader un cadrage déjà correct.
+    Principe : la carte est la grande région dont la COULEUR s'écarte du
+    tapis. On estime le tapis sur le pourtour de la sélection (vrai dès que
+    le cadrage est généreux, ce que l'interface demande), puis on seuille la
+    distance couleur par Otsu et on garde la plus grande composante connexe.
+
+    Travailler sur la couleur et non sur la luminosité est indispensable :
+    un carton rouge sur feutre vert a quasiment la MÊME luminosité — mesuré,
+    l'ancienne version tombait à 0/52 dans ce cas. La distance au fond, elle,
+    ne suppose ni carte claire ni carte sombre, et fonctionne donc pour tout
+    habillage de cartes sur tout tapis.
 
     Parameters
     ----------
@@ -140,23 +211,49 @@ def autocrop_card(image, pad: int = 1):
         Sélection contenant la carte (et un peu de décor autour).
     pad : int
         Marge conservée autour du bord détecté, en pixels.
+    dark_card : bool
+        Conservé pour compatibilité ; sans effet (la détection par écart de
+        couleur n'a plus besoin de connaître la polarité).
 
     Returns
     -------
     PIL.Image
         La carte recadrée (ou l'image d'origine si la détection échoue).
     """
-    from PIL import Image
     from scipy import ndimage
 
-    gray = _to_gray_array(image)
-    h, w = gray.shape
+    rgb = _rgb_array(image)
+    h, w = rgb.shape[:2]
     if h < 8 or w < 8:
         return _as_pil(image)
 
-    mask = gray > _otsu(gray)
+    # couleur du tapis : médiane du pourtour (robuste à un coin de carte qui
+    # dépasserait dans le cadre)
+    b = max(1, int(min(h, w) * 0.06))
+    ring = np.concatenate([rgb[:b].reshape(-1, 3), rgb[-b:].reshape(-1, 3),
+                           rgb[:, :b].reshape(-1, 3), rgb[:, -b:].reshape(-1, 3)])
+    felt = np.median(ring, axis=0)
+
+    dist = np.sqrt(((rgb - felt) ** 2).sum(axis=2))
+    if float(dist.max()) < 24.0:       # sélection uniforme : rien à isoler
+        return _as_pil(image)
+
+    # Seuil calé sur le BRUIT PROPRE du tapis, pas sur une séparation en deux
+    # classes : un seuil d'Otsu opposait les glyphes (très loin du tapis) au
+    # RESTE, et rangeait le corps d'une carte noire du côté du feutre vert —
+    # le recadrage ne gardait alors qu'un glyphe. En prenant « tout ce qui
+    # dépasse nettement la dispersion du tapis », le carton entier est retenu,
+    # quelle que soit sa couleur.
+    ring_d = np.sqrt(((ring - felt) ** 2).sum(axis=1))
+    thr = max(float(np.percentile(ring_d, 98)) * 1.8, 18.0)
+    mask = dist > thr
     if mask.mean() > 0.97 or mask.mean() < 0.02:
-        return _as_pil(image)          # image uniforme : rien à recadrer
+        return _as_pil(image)
+
+    # les trous internes (glyphes de la couleur du tapis) ne doivent pas
+    # scinder la carte en morceaux
+    mask = ndimage.binary_closing(mask, structure=np.ones((3, 3)), iterations=2)
+    mask = ndimage.binary_fill_holes(mask)
 
     lab, n = ndimage.label(mask)
     if n == 0:
