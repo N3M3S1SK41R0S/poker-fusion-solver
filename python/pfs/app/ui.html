@@ -140,6 +140,54 @@ kbd{font:11px ui-monospace,monospace;background:#1a1a28;border:1px solid var(--l
  border-bottom-width:2px;border-radius:5px;padding:1px 5px;color:var(--dim)}
 .hint{font-size:11.5px;color:var(--dim2);margin-top:6px}
 .skel{color:var(--dim2);font-size:13px;padding:18px 0;text-align:center}
+
+/* zone de collage d'une capture + cadrage des cartes */
+.drop{border:2px dashed var(--line);border-radius:12px;padding:22px;text-align:center;
+ color:var(--dim);background:#0d0d16;cursor:pointer;transition:.15s}
+.drop:hover,.drop:focus,.drop.over{border-color:var(--p);background:#150f22;outline:none}
+#shot{max-width:100%;border-radius:10px;border:1px solid var(--line);cursor:crosshair;
+ display:block}
+#shot-sel{position:absolute;border:2px solid var(--y);background:#eab30822;
+ pointer-events:none;display:none;border-radius:3px}
+.chip{display:inline-block;margin:3px 4px 0 0;padding:3px 9px;border-radius:7px;
+ font-family:ui-monospace,monospace;font-size:12px;font-weight:700;
+ background:#22c55e1f;color:#86efac;border:1px solid #22c55e55}
+.chip.bad{background:#ef44441f;color:#fca5a5;border-color:#ef444455}
+
+/* ═══ MOBILE ═══════════════════════════════════════════════════════════
+   Le verdict et la saisie doivent rester utilisables au pouce : on réduit
+   les marges, on empile les grilles à 2-3 colonnes, et on garde les
+   champs à 16 px — en dessous, iOS zoome automatiquement au focus. */
+@media(max-width:760px){
+  body{font-size:14px}
+  .wrap{padding:0 12px}
+  nav .wrap{gap:10px;padding:8px 12px}
+  .brand{font-size:11px}
+  .tab{padding:7px 11px;font-size:13px}
+  h1{font-size:20px;margin:16px 0 4px}
+  h2{font-size:15px}
+  .card{padding:12px;border-radius:10px}
+  .grid2,.grid3{grid-template-columns:1fr}
+  .col{min-width:0}
+  .row{gap:8px}
+  .verdict{padding:16px;gap:12px}
+  .verdict .act{font-size:26px}
+  .spotbar{grid-template-columns:1fr 1fr}
+  .spotbar input,.spotbar select{font-size:16px}   /* pas de zoom iOS */
+  input,select,textarea{font-size:16px}
+  .cta{width:100%}
+  table{font-size:12px}
+  th,td{padding:6px 5px}
+  .gc,.gh{width:24px}
+  .gc{height:24px;font-size:8px}
+  .gh{height:14px;font-size:8px}
+  #shot{max-width:100%}
+}
+@media(max-width:420px){
+  .spotbar{grid-template-columns:1fr}
+  .gc,.gh{width:21px}
+  .gc{height:21px;font-size:7.5px}
+}
 </style>
 </head>
 <body>
@@ -186,6 +234,32 @@ kbd{font:11px ui-monospace,monospace;background:#1a1a28;border:1px solid var(--l
   </div>
 
   <div id="sp-out"><div class="skel">Entre ta main, puis <kbd>Entrée</kbd>.</div></div>
+
+  <div class="card" style="margin-top:14px">
+    <h2 style="margin-top:0">Depuis une capture d'écran</h2>
+    <div id="drop" class="drop" tabindex="0">
+      <b>Colle une capture</b> (<kbd>Ctrl</kbd>+<kbd>V</kbd>) ou dépose une image ici.
+      <div class="hint">Ensuite, <b>encadre chaque carte</b> à la souris : elle
+      est identifiée et le champ se remplit tout seul. Cadre <b>largement</b> —
+      englobe toute la carte, quitte à mordre autour : le bord est retrouvé
+      automatiquement. Un cadrage qui <i>rogne</i> la carte, lui, échoue.</div>
+    </div>
+    <div id="shot-wrap" style="display:none">
+      <div class="row" style="align-items:center;gap:8px;margin-bottom:8px">
+        <button class="ghost sm" style="width:auto" onclick="setShotTarget('hero')">
+          Cadrer → ma main</button>
+        <button class="ghost sm" style="width:auto" onclick="setShotTarget('board')">
+          Cadrer → board</button>
+        <button class="ghost sm" style="width:auto" onclick="shotReset()">Effacer</button>
+        <span class="muted" id="shot-mode">cible : ma main</span>
+      </div>
+      <div id="shot-holder" style="position:relative;display:inline-block;max-width:100%">
+        <canvas id="shot"></canvas>
+        <div id="shot-sel"></div>
+      </div>
+      <div id="shot-log" class="hint"></div>
+    </div>
+  </div>
 </section>
 
 <!-- ══════════ MES SESSIONS — revue des mains jouées ══════════ -->
@@ -707,6 +781,109 @@ async function adviseRun(){
     </div>`;
 }
 
+// ══ CAPTURE D'ÉCRAN → CARTES ════════════════════════════════════════════
+// Pas de coordonnées codées en dur : les positions des cartes changent avec
+// la room, le thème et la résolution. On laisse ENCADRER la carte à la
+// souris — geste immédiat, valable partout, et qui n'exige aucun calibrage.
+let shotImg=null, shotTarget="hero", shotHero=[], shotBoard=[];
+
+function shotReset(){
+  shotHero=[]; shotBoard=[];
+  document.getElementById("shot-log").innerHTML="";
+  syncShotFields();
+}
+function syncShotFields(){
+  document.getElementById("sp-hero").value=shotHero.join(" ");
+  document.getElementById("sp-board").value=shotBoard.join(" ");
+  const chips=[...shotHero.map(c=>`<span class="chip">${c}</span>`),
+               ...shotBoard.map(c=>`<span class="chip">${c}</span>`)];
+  const log=document.getElementById("shot-log");
+  log.innerHTML=chips.length
+    ? `main : ${shotHero.join(" ")||"—"} · board : ${shotBoard.join(" ")||"—"} ${chips.join("")}`
+    : "";
+}
+function setShotTarget(t){
+  shotTarget=t;
+  document.getElementById("shot-mode").textContent=
+    "cible : "+(t==="hero"?"ma main":"board");
+}
+
+function loadShot(blob){
+  const img=new Image();
+  img.onload=()=>{
+    shotImg=img;
+    const cv=document.getElementById("shot");
+    // borne l'affichage pour rester utilisable ; le découpage se fait
+    // toujours dans les coordonnées de l'image D'ORIGINE (facteur ci-dessous)
+    const maxW=900, scale=Math.min(1,maxW/img.width);
+    cv.width=Math.round(img.width*scale); cv.height=Math.round(img.height*scale);
+    cv.dataset.scale=scale;
+    cv.getContext("2d").drawImage(img,0,0,cv.width,cv.height);
+    document.getElementById("shot-wrap").style.display="";
+    shotReset();
+  };
+  img.src=URL.createObjectURL(blob);
+}
+
+(function initShot(){
+  const drop=document.getElementById("drop");
+  drop.addEventListener("click",()=>drop.focus());
+  ["dragenter","dragover"].forEach(e=>drop.addEventListener(e,ev=>{
+    ev.preventDefault(); drop.classList.add("over");}));
+  ["dragleave","drop"].forEach(e=>drop.addEventListener(e,ev=>{
+    ev.preventDefault(); drop.classList.remove("over");}));
+  drop.addEventListener("drop",ev=>{
+    const f=[...(ev.dataTransfer.files||[])].find(f=>f.type.startsWith("image/"));
+    if(f)loadShot(f);});
+  // Ctrl+V n'importe où dans la page (hors champ de saisie)
+  document.addEventListener("paste",ev=>{
+    const it=[...(ev.clipboardData?.items||[])].find(i=>i.type.startsWith("image/"));
+    if(!it)return;
+    ev.preventDefault(); loadShot(it.getAsFile());
+    document.querySelectorAll(".tab")[0].click();
+  });
+
+  // cadrage à la souris
+  const cv=document.getElementById("shot"), sel=document.getElementById("shot-sel");
+  let x0=0,y0=0,drag=false;
+  const pos=ev=>{const r=cv.getBoundingClientRect();
+    return [ev.clientX-r.left,ev.clientY-r.top];};
+  cv.addEventListener("mousedown",ev=>{[x0,y0]=pos(ev);drag=true;
+    Object.assign(sel.style,{display:"block",left:x0+"px",top:y0+"px",
+      width:"0px",height:"0px"});});
+  cv.addEventListener("mousemove",ev=>{if(!drag)return;const[x,y]=pos(ev);
+    Object.assign(sel.style,{left:Math.min(x,x0)+"px",top:Math.min(y,y0)+"px",
+      width:Math.abs(x-x0)+"px",height:Math.abs(y-y0)+"px"});});
+  cv.addEventListener("mouseup",async ev=>{
+    if(!drag)return; drag=false; sel.style.display="none";
+    const[x,y]=pos(ev);
+    const w=Math.abs(x-x0), h=Math.abs(y-y0);
+    if(w<10||h<10)return;                       // clic accidentel
+    const s=+cv.dataset.scale||1;               // vers l'image d'origine
+    const roi=[Math.round(Math.min(x,x0)/s),Math.round(Math.min(y,y0)/s),
+               Math.round(w/s),Math.round(h/s)];
+    // découpe la région et l'envoie seule : plus robuste qu'un aller-retour
+    // de l'image entière à chaque carte
+    const c=document.createElement("canvas");
+    c.width=roi[2]; c.height=roi[3];
+    c.getContext("2d").drawImage(shotImg,roi[0],roi[1],roi[2],roi[3],0,0,roi[2],roi[3]);
+    const log=document.getElementById("shot-log");
+    log.insertAdjacentHTML("beforeend",' <span class="muted">⟳</span>');
+    const r=await api("recognize",{image_b64:c.toDataURL("image/png")});
+    const m=(r.detail||[])[0];
+    if(!m||!m.card){
+      // message ACTIONNABLE : la cause la plus fréquente est un cadrage qui
+      // rogne la carte (le cadrage trop large, lui, est rattrapé)
+      log.innerHTML+=` <span class="chip bad">illisible — recadre plus large</span>`;
+      return;
+    }
+    if(shotTarget==="hero"){ if(shotHero.length<2)shotHero.push(m.card); }
+    else { if(shotBoard.length<5)shotBoard.push(m.card); }
+    if(shotHero.length===2&&shotTarget==="hero")setShotTarget("board");
+    syncShotFields();
+  });
+})();
+
 // ══ MES SESSIONS ════════════════════════════════════════════════════════
 // Une statistique n'a de sens qu'avec son nombre d'occasions et sa zone
 // saine : on affiche les trois ensemble, jamais le pourcentage seul.
@@ -968,15 +1145,31 @@ async function bcRun(){
   const r=await api("bluffcatch",{pot:v("bc-pot"),bet:v("bc-bet"),
     bluff_freq:v("bc-f")/100,bluff_std:v("bc-s")/100});
   if(r.error)return;
-  const cls=r.reco.startsWith("CALL")?"g":r.reco.startsWith("FOLD")?"r":"y";
-  document.getElementById("bc-out").innerHTML=`<div class="grid3">
+  // même composant « verdict » que l'onglet Ma main : une décision se
+  // présente partout de la même façon, avec la même sémantique de couleur.
+  const [cls,ico,word]=verdictClass(r.reco);
+  document.getElementById("bc-out").innerHTML=`
+    <div class="verdict ${cls}" style="padding:16px 18px">
+      <div>
+        <div class="act" style="font-size:26px"><span class="ico">${ico}</span>${r.reco.split(" (")[0]}</div>
+        <div class="sub"><span class="word">${word||"bluff-catch"}</span></div>
+      </div>
+      <div>
+        <div class="why">
+          <div>· Marge sur l'équité requise : <b>${(r.margin*100).toFixed(1)} points</b>.</div>
+          <div>· EV(payer) = <b>${r.ev_call.toFixed(2)} bb</b> ; se coucher vaut 0 par définition.</div>
+          <div>· ${(r.p_plus_ev*100).toFixed(0)} % de chances que payer soit rentable,
+            compte tenu de l'incertitude sur sa fréquence de bluff.</div>
+        </div>
+        ${gaugeHTML(r.bluff_freq!=null?r.bluff_freq:null,r.alpha)}
+      </div>
+    </div>
+    <div class="grid3">
     <div class="kpi"><div class="v">${(r.alpha*100).toFixed(1)}%</div><div class="l">équité requise</div></div>
     <div class="kpi"><div class="v">${(r.mdf*100).toFixed(1)}%</div><div class="l">MDF</div></div>
     <div class="kpi"><div class="v" style="color:${r.p_plus_ev>.6?"#86efac":r.p_plus_ev<.4?"#fca5a5":"#fde047"}">
-      ${(r.p_plus_ev*100).toFixed(1)}%</div><div class="l">P(call est +EV)</div></div>
-    </div><div class="${cls==="g"?"ok":"warn"}" style="margin-bottom:0">
-    <span class="pill ${cls}">${r.reco.split(" ")[0]}</span> marge ${(r.margin*100).toFixed(1)} pts
-    · EV(call) ${r.ev_call.toFixed(2)} bb — ${r.reco}</div>`;
+      ${(r.p_plus_ev*100).toFixed(1)}%</div><div class="l">P(payer est +EV)</div></div>
+    </div>`;
 }
 
 // ── train ─────────────────────────────────────────────────────────────

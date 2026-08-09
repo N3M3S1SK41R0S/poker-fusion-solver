@@ -19,7 +19,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Iterable, Sequence
 
-from pfs.vision.phash import HASH_BITS, hamming, phash
+from pfs.vision.phash import HASH_BITS, autocrop_card, hamming, phash
 
 __all__ = [
     "CardMatch",
@@ -103,15 +103,33 @@ def load_templates(path: str | Path = DEFAULT_TEMPLATES) -> dict[str, int]:
     return build_templates()
 
 
-def identify_card(image, templates: dict[str, int] | None = None) -> CardMatch:
-    """Reconnaît UNE carte à partir de son image (crop).
+def _rank(image, templates: dict[str, int]) -> tuple[int, str, int, str | None]:
+    """(distance, carte, marge, dauphin) pour une image donnée."""
+    h = phash(image)
+    ranked = sorted(((hamming(h, sig), card) for card, sig in templates.items()))
+    best_d, best_c = ranked[0]
+    second_d, second_c = ranked[1] if len(ranked) > 1 else (HASH_BITS, None)
+    return best_d, best_c, second_d - best_d, second_c
+
+
+def identify_card(image, templates: dict[str, int] | None = None,
+                  autocrop: bool = True) -> CardMatch:
+    """Reconnaît UNE carte à partir de son image.
+
+    Le cadrage n'a pas besoin d'être précis : par défaut, on cherche aussi
+    le bord de la carte dans la sélection (``autocrop``) et on garde la
+    meilleure des deux lectures. Sans ce recadrage, une sélection élargie
+    ou rognée de quelques pixels fait échouer la reconnaissance — mesuré.
 
     Parameters
     ----------
     image : str | PIL.Image | numpy.ndarray
-        Image d'une seule carte.
+        Image d'une carte, éventuellement avec du décor autour.
     templates : dict, optionnel
         Signatures à utiliser (défaut : le deck PMU livré).
+    autocrop : bool
+        Tenter le recadrage automatique (mettre ``False`` pour un crop
+        déjà exact, par exemple un gabarit).
 
     Returns
     -------
@@ -120,12 +138,19 @@ def identify_card(image, templates: dict[str, int] | None = None) -> CardMatch:
         confiance.
     """
     templates = templates if templates is not None else load_templates()
-    h = phash(image)
-    ranked = sorted(((hamming(h, sig), card) for card, sig in templates.items()))
-    best_d, best_c = ranked[0]
-    second_d, second_c = ranked[1] if len(ranked) > 1 else (HASH_BITS, None)
-    margin = second_d - best_d
-    # confiance : proximité absolue temperée par la marge
+    best = _rank(image, templates)
+    if autocrop:
+        try:
+            cropped = autocrop_card(image)
+            alt = _rank(cropped, templates)
+            # « meilleur des deux » : le recadrage ne doit jamais dégrader
+            # une sélection déjà juste
+            if alt[0] < best[0]:
+                best = alt
+        except Exception:
+            pass
+
+    best_d, best_c, margin, second_c = best
     conf = max(0.0, 1.0 - best_d / HASH_BITS) * (1.0 if margin >= MIN_MARGIN
                                                  else margin / MIN_MARGIN)
     accepted = best_d <= MAX_ACCEPT_DISTANCE and margin >= MIN_MARGIN

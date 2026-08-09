@@ -267,6 +267,9 @@ class API:
             "z": a.z_margin if math.isfinite(a.z_margin) else None,
             "p_plus_ev": a.prob_call_is_plus_ev,
             "ev_call": a.ev_call, "reco": a.recommendation,
+            # fréquence de bluff estimée : c'est l'« équité » du bluff-catch,
+            # ce qu'on compare au seuil alpha — l'interface la trace en jauge.
+            "bluff_freq": a.estimated_bluff_freq,
         }
 
     # ── bankroll F9 ──────────────────────────────────────────────────────
@@ -763,21 +766,35 @@ class API:
     # ── Reconnaissance de cartes depuis une image ───────────────────────
     @staticmethod
     def recognize(p: dict) -> dict:
-        """Reconnaît des cartes dans une image (chemin local).
+        """Reconnaît des cartes dans une image (chemin local OU collée).
 
-        Payload : {"path": "capture.png", "rois": [[x,y,w,h], ...]}. Sans
-        ``rois``, l'image entière est traitée comme une seule carte.
+        Payload : soit ``{"path": "capture.png"}`` (fichier local), soit
+        ``{"image_b64": "data:image/png;base64,..."}`` (image collée depuis
+        le navigateur). Avec ``rois`` : [[x,y,w,h], ...] une carte par région ;
+        sans ``rois``, l'image entière est traitée comme une seule carte.
         """
+        import base64
+        import io
+
         from pfs.vision import identify_card, recognize_cards
 
+        b64 = str(p.get("image_b64", "")).strip()
         path = str(p.get("path", "")).strip()
-        if not path:
-            raise ValueError("champ 'path' requis (image).")
+        if b64:
+            from PIL import Image
+            if "," in b64:               # préfixe « data:image/png;base64, »
+                b64 = b64.split(",", 1)[1]
+            source = Image.open(io.BytesIO(base64.b64decode(b64)))
+        elif path:
+            source = path
+        else:
+            raise ValueError("fournir 'path' (fichier) ou 'image_b64' (image collée).")
+
         rois = p.get("rois")
         if rois:
-            matches = recognize_cards(path, [tuple(int(v) for v in r) for r in rois])
+            matches = recognize_cards(source, [tuple(int(v) for v in r) for r in rois])
         else:
-            matches = [identify_card(path)]
+            matches = [identify_card(source)]
         return {
             "cards": [m.card for m in matches],
             "detail": [
