@@ -45,6 +45,7 @@ __all__ = [
     "build_templates",
     "load_templates",
     "identify_card",
+    "identify_card_autour",
     "recognize_cards",
     "DEFAULT_TEMPLATES",
 ]
@@ -501,6 +502,101 @@ def _crop(image, roi: Sequence[int]):
         im = image
     x, y, w, h = roi
     return im.crop((x, y, x + w, y + h))
+
+
+#: Cadrages essayés autour d'une boîte imprécise, et budget d'essais.
+#:
+#: Le détecteur rend une boîte « à peu près juste » ; le hachage exige une
+#: boîte exacte. Mesuré sur la première capture réelle : la boîte rendue fait
+#: 126 px de large pour une carte de 121, décalée de 7 px — et cet écart-là
+#: suffit à faire passer une lecture parfaite au refus (3♥ : refus à 681 avec
+#: la boîte du détecteur, « sure » à 209 avec la boîte exacte).
+#:
+#: Essayer plusieurs cadrages et garder le meilleur, c'est se donner N chances
+#: de tomber par hasard sous le seuil : le problème des comparaisons
+#: multiples, qui se paie en cartes inventées. Il fallait donc le MESURER
+#: avant de l'adopter — `banc_cadrage.py`, grille de 225 cadrages ::
+#:
+#:     vraies cartes   5♣ : refus/propose 575 → « sure » 362, marge  97
+#:                     3♥ : refus         681 → « sure » 222, marge 165
+#:     240 non-cartes  écart minimal 644 (seuil 625) ; marge au minimum :
+#:                     médiane 12, p95 32, MAXIMUM 46
+#:     → 0 non-carte affirmée sur 240.
+#:
+#: C'est la MARGE qui protège, plus encore que la distance : au minimum de
+#: bruit elle plafonne à 46, contre 97 et 165 pour les vraies cartes.
+#:
+#: Le parcours va du centre vers l'extérieur et s'arrête à la première
+#: lecture sûre. Une carte lisible est donc trouvée en quelques essais
+#: (~20 ms l'essai), et seul un échec paie le budget entier. L'arrêt
+#: anticipé réduit aussi le nombre de comparaisons effectives, donc le
+#: risque mesuré ci-dessus est un majorant.
+PAS_CADRAGE = 3
+BUDGET_CADRAGE = 40
+
+
+def _cadrages(pas: int, budget: int) -> list[tuple[int, int, int, int]]:
+    """Décalages (dx, dy, dw, dh), du plus proche du centre au plus lointain."""
+    d = (-2 * pas, -pas, 0, pas, 2 * pas)
+    t = (-2 * pas, 0, 2 * pas)
+    grille = [(dx, dy, dw, dh) for dx in d for dy in d for dw in t for dh in t]
+    grille.sort(key=lambda o: (abs(o[0]) + abs(o[1]) + abs(o[2]) + abs(o[3])))
+    return grille[:budget]
+
+
+def identify_card_autour(
+    image,
+    boite: Sequence[int],
+    templates: dict[str, int] | None = None,
+    pas: int = PAS_CADRAGE,
+    budget: int = BUDGET_CADRAGE,
+) -> CardMatch:
+    """Reconnaît une carte dont la boîte n'est juste qu'à quelques pixels.
+
+    À utiliser quand la boîte vient d'une détection automatique ou d'un
+    cadrage à la souris — jamais nécessaire sur un gabarit découpé au pixel.
+
+    Parameters
+    ----------
+    image : PIL.Image
+        La capture entière.
+    boite : sequence of int
+        ``(x, y, largeur, hauteur)``, approximative.
+    pas : int
+        Écart en pixels entre deux cadrages essayés.
+    budget : int
+        Nombre maximal de cadrages. Le parcours partant du centre, un budget
+        court reste efficace : c'est le cas d'échec qui le consomme en entier.
+
+    Returns
+    -------
+    CardMatch
+        La première lecture sûre rencontrée ; à défaut, la plus proche
+        obtenue. Les seuils de confiance sont ceux d'`identify_card` : cette
+        fonction élargit la recherche, elle n'abaisse aucune exigence.
+    """
+    templates = templates if templates is not None else load_templates()
+    x, y, w, h = (int(v) for v in boite)
+    largeur, hauteur = image.width, image.height
+    meilleur: CardMatch | None = None
+
+    for dx, dy, dw, dh in _cadrages(pas, budget):
+        xx, yy, ww, hh = x + dx, y + dy, w + dw, h + dh
+        if ww < 20 or hh < 20 or xx < 0 or yy < 0:
+            continue
+        if xx + ww > largeur or yy + hh > hauteur:
+            continue
+        m = identify_card(image.crop((xx, yy, xx + ww, yy + hh)), templates)
+        if m.statut == "sure":
+            return m
+        if meilleur is None or m.distance < meilleur.distance:
+            meilleur = m
+
+    if meilleur is not None:
+        return meilleur
+    # Aucun cadrage n'a même pu être essayé (boîte hors image) : on rend la
+    # lecture brute plutôt qu'une exception, l'appelant saura la refuser.
+    return identify_card(image.crop((x, y, x + w, y + h)), templates)
 
 
 def recognize_cards(

@@ -47,7 +47,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from pfs.vision.archive import enregistrer_echec
-from pfs.vision.card_recognizer import identify_card
+from pfs.vision.card_recognizer import identify_card_autour
 from pfs.vision.table_detector import CardBox, read_table
 
 __all__ = [
@@ -412,7 +412,10 @@ def _lire_boites(image, boites: list[CardBox], role: str,
     lues: list[CarteLue] = []
     for b in boites:
         decoupe = image.crop((b.x, b.y, b.x + b.w, b.y + b.h))
-        m = identify_card(decoupe)
+        # La boîte vient d'une détection automatique : elle est juste à
+        # quelques pixels près, ce qui ne suffit pas au hachage. On cherche
+        # donc le bon cadrage autour d'elle, sans abaisser aucun seuil.
+        m = identify_card_autour(image, (b.x, b.y, b.w, b.h))
         lues.append(CarteLue(
             role=role, boite=(b.x, b.y, b.w, b.h),
             carte=m.card, candidat=m.best_guess, statut=m.statut,
