@@ -56,14 +56,28 @@ def _decoder(image_b64: str) -> bytes:
     return base64.b64decode(image_b64)
 
 
-def _horodate(prefixe: str, suffixe: str) -> str:
-    return f"{datetime.now().strftime(_HORODATAGE)}_{prefixe}{suffixe}"
+def _horodate(dossier: Path, prefixe: str, suffixe: str) -> Path:
+    """Chemin horodaté, garanti libre.
+
+    L'horodatage seul ne suffit pas : une lecture de table archive jusqu'à
+    huit découpes dans la même seconde, et les noms entraient en collision —
+    les échecs s'écrasaient silencieusement. Une session de calibration ne
+    conservait qu'une découpe par seconde et par statut, ce qui vide le banc
+    d'essai de sa substance sans qu'aucune erreur ne se manifeste.
+    """
+    base = f"{datetime.now().strftime(_HORODATAGE)}_{prefixe}"
+    chemin = dossier / f"{base}{suffixe}"
+    n = 1
+    while chemin.exists():
+        chemin = dossier / f"{base}-{n}{suffixe}"
+        n += 1
+    return chemin
 
 
 def enregistrer_capture(image_b64: str, note: str = "") -> Path:
     """Archive une capture entière. Renvoie le chemin écrit."""
     d = dossier_archive()
-    chemin = d / _horodate("capture", ".png")
+    chemin = _horodate(d, "capture", ".png")
     chemin.write_bytes(_decoder(image_b64))
     if note:
         chemin.with_suffix(".txt").write_text(note, encoding="utf-8")
@@ -90,7 +104,7 @@ def enregistrer_echec(image_b64: str, diagnostic: dict) -> Path:
     """
     d = dossier_archive() / "echecs"
     statut = str(diagnostic.get("statut", "refus"))
-    chemin = d / _horodate(statut, ".png")
+    chemin = _horodate(d, statut, ".png")
     chemin.write_bytes(_decoder(image_b64))
     chemin.with_suffix(".json").write_text(
         json.dumps(diagnostic, ensure_ascii=False, indent=1), encoding="utf-8")

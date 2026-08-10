@@ -119,6 +119,19 @@ footer{text-align:center;color:var(--dim2);font-size:11px;padding:26px 0 0;
 .verdict.info{--vc:var(--p)}    /* information */
 @media(max-width:640px){.verdict{grid-template-columns:1fr}}
 
+/* Bandeau de CONFIANCE DE LECTURE — onglet Calibration.
+   Volontairement distinct de .verdict : celui-ci encode une ACTION
+   (payer / se coucher), celui-là dit seulement si la machine a su lire une
+   image. Partager le composant reviendrait à suggérer qu'une lecture sûre
+   est un feu vert pour jouer. */
+.lecture{display:flex;align-items:center;gap:10px;border-radius:12px;
+ padding:12px 14px;border:1px solid var(--line);background:#0d0d16;
+ font-weight:700;font-size:14px;border-left:4px solid var(--lc,var(--dim))}
+.lecture.ok{--lc:var(--g);color:#86efac}
+.lecture.part{--lc:var(--y);color:#fde047}
+.lecture.ko{--lc:var(--r);color:#fca5a5}
+.lecture .ico{font-size:17px}
+
 /* jauge équité vs équité requise — le seuil de bascule rendu visible */
 .gauge{margin-top:12px}
 .gauge .track{position:relative;height:26px;border-radius:8px;background:#0d0d16;
@@ -292,6 +305,47 @@ kbd{font:11px ui-monospace,monospace;background:#1a1a28;border:1px solid var(--l
   </div>
 
   <div id="rv-out"><div class="skel">Indique un dossier d'historiques pour lancer la revue.</div></div>
+</section>
+
+<!-- ══════════ CALIBRATION — lire l'écran, sans jamais conseiller ══════════ -->
+<section id="s-calib">
+  <h1>Calibration — ce que la machine voit de ta table</h1>
+  <p class="lead">Capture la fenêtre de ton client et affiche <b>uniquement ce
+  qu'elle a lu</b>, carte par carte, avec sa confiance. C'est un banc d'essai
+  de la reconnaissance : il ne dit jamais quoi jouer.</p>
+
+  <div class="card" style="border-left:3px solid var(--am)">
+    <b>Pourquoi cet onglet ne conseille rien.</b>
+    <div class="hint" style="margin-top:6px">
+      Lire ton propre écran pour vérifier qu'un programme reconnaît des images
+      ne retire rien à personne. Recevoir une recommandation calculée
+      <i>pendant</i> une main d'argent réel la retire aux adversaires, qui
+      ignorent qu'ils affrontent une machine. La séparation est inscrite dans
+      le code, pas seulement ici : <span class="mono">pfs/vision/live.py</span>
+      n'importe aucun calculateur de décision, et un test le vérifie à chaque
+      exécution. Pour un verdict, va sur <b>♠ Ma main</b> (main terminée) ou
+      <b>Simulateur</b> (entraînement).
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="align-items:flex-end;gap:8px">
+      <div style="flex:1;min-width:240px">
+        <label>Fenêtre à lire</label>
+        <select id="cal-fen"><option value="">détection automatique</option></select>
+      </div>
+      <button class="ghost" style="width:auto" onclick="calFenetres()">Rafraîchir</button>
+      <button style="width:auto" onclick="calLire()">Lire maintenant</button>
+      <label style="width:auto;display:flex;align-items:center;gap:6px;margin:0">
+        <input type="checkbox" id="cal-boucle" style="width:auto;margin:0">
+        <span class="muted">en continu</span></label>
+    </div>
+    <div class="hint">La fenêtre doit être ouverte et non minimisée. Windows
+    n'émet une image que lorsqu'elle se redessine — une table figée est
+    réveillée automatiquement.</div>
+  </div>
+
+  <div id="cal-out"><div class="skel">Choisis une fenêtre, puis « Lire maintenant ».</div></div>
 </section>
 
 <!-- ══════════ SIMULATEUR ══════════ -->
@@ -735,6 +789,7 @@ let hmmObs=[], drillT0=0;
 // pas « bet_sizing ». L'ordre va du plus fréquent (juger une main) au plus
 // spécialisé (les outils d'expert).
 const TABS=[["s-spot","♠ Ma main"],["s-review","Mes sessions"],
+            ["s-calib","Calibration"],
             ["s-simu","Simulateur"],["s-lex","Lexique"],
             ["s-study","Ranges"],["s-train","S'entraîner"],
             ["s-fusion","Lire l'adversaire"],["s-sizing","Miser juste"],
@@ -750,6 +805,8 @@ TABS.forEach(([id,label],i)=>{
     if(id==="s-fusion"){fusionRun();skillRun();} if(id==="s-sizing"){sizingRun();bcRun();}
     if(id==="s-bankroll"){brRun();icmRun();} if(id==="s-hmm")hmmRun();
     if(id==="s-spot")document.getElementById("sp-hero").focus();
+    if(id==="s-calib"&&document.getElementById("cal-fen").options.length<2)calFenetres();
+    if(id!=="s-calib")calStop();
     if(id==="s-lex"&&!document.getElementById("lx-out").innerHTML)lexRun();};
   tabsEl.appendChild(b);
 });
@@ -771,6 +828,14 @@ const dEQ     =()=>debounce("eq",eqRun,400);
 // jeton périmé, et TOUT échoue alors en 403. Sans message explicite, cela se
 // manifestait par un « ⚠ erreur » minuscule et des résultats vides — on
 // cherchait le défaut dans la reconnaissance alors que rien n'était calculé.
+// Échappe avant insertion dans du HTML. Nécessaire dès qu'une valeur ne
+// vient pas de nous : les titres de fenêtres sont écrits par d'autres
+// programmes et peuvent contenir n'importe quoi, « < » compris.
+function esc(v){
+  return String(v??"").replace(/[&<>"']/g,
+    c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
 function alerte(html){
   let el=document.getElementById("alerte");
   if(!el){
@@ -1010,6 +1075,90 @@ async function majArchive(){
     <b>${a.echecs}</b> découpe(s) non lue(s)
     (${a.refus} refus, ${a.proposes} à confirmer)
     <div class="muted" style="margin-top:4px">${a.dossier}</div>`;
+}
+
+/* ═══════════ Calibration en direct ═══════════
+   Affiche CE QUI A ÉTÉ LU, jamais ce qu'il faut faire. Aucune de ces
+   fonctions n'appelle « advise », « simuler » ni aucune route de décision :
+   voir l'encadré de l'onglet et pfs/vision/live.py. */
+let calTimer=null;
+
+async function calFenetres(){
+  const sel=document.getElementById("cal-fen");
+  const r=await api("live/fenetres",{});
+  const garde=sel.value;
+  sel.innerHTML='<option value="">détection automatique</option>';
+  if(r.error||r.erreur){
+    document.getElementById("cal-out").innerHTML=
+      `<div class="card"><div class="lecture ko"><span class="ico">⚠</span>
+       ${esc(r.erreur||r.error)}</div></div>`;
+    return;
+  }
+  (r.fenetres||[]).forEach(t=>{
+    const o=document.createElement("option"); o.value=t; o.textContent=t;
+    sel.appendChild(o);});
+  sel.value=garde;
+}
+
+function calStop(){
+  if(calTimer){clearTimeout(calTimer);calTimer=null;}
+  const c=document.getElementById("cal-boucle"); if(c)c.checked=false;
+}
+
+async function calLire(){
+  const out=document.getElementById("cal-out");
+  const fen=document.getElementById("cal-fen").value;
+  out.innerHTML='<div class="skel">Capture en cours…</div>';
+  const t0=performance.now();
+  const r=await api("live/lire",{fenetre:fen});
+  const ms=Math.round(performance.now()-t0);
+
+  if(r.error||r.erreur){
+    out.innerHTML=`<div class="card"><div class="lecture ko">
+      <span class="ico">⚠</span> ${esc(r.erreur||r.error)}</div></div>`;
+    calStop(); return;
+  }
+
+  // La couleur dit la CONFIANCE DE LECTURE, jamais une action de jeu :
+  // vert « lue », ambre « à confirmer », rouge « refusée ».
+  const cls={sure:"g",propose:"y",refus:"r"};
+  const mot={sure:"lue",propose:"à confirmer",refus:"refusée"};
+  const lignes=(r.cartes||[]).map(c=>`
+    <tr><td><span class="pill ${cls[c.statut]||'d'}">${mot[c.statut]||esc(c.statut)}</span></td>
+      <td class="mono">${esc(c.role)}</td>
+      <td class="mono" style="font-size:15px">${c.carte?esc(c.carte):
+        '<span class="muted">—</span>'}</td>
+      <td class="mono muted">${c.candidat?esc(c.candidat):''}</td>
+      <td class="num">${c.ecart??''}</td>
+      <td class="num">${c.marge??''}</td>
+      <td class="num muted">${c.boite.join('×')}</td></tr>`).join("");
+
+  const taux=r.total?Math.round(r.taux*100):0;
+  const bandeau=r.total===0
+    ? `<div class="lecture part"><span class="ico">◐</span>
+       aucune carte détectée — le localisateur n'a rien trouvé qui
+       ressemble à une carte</div>`
+    : `<div class="lecture ${taux===100?'ok':taux>=50?'part':'ko'}">
+       <span class="ico">${taux===100?'✓':taux>=50?'◐':'✗'}</span>
+       ${r.sures}/${r.total} carte(s) lue(s) avec certitude (${taux} %)</div>`;
+
+  out.innerHTML=`<div class="card">
+    ${bandeau}
+    <div class="hint" style="margin:8px 0">${esc(r.fenetre)} ·
+      ${r.largeur}×${r.hauteur} · ${ms} ms ·
+      les lectures non sûres sont archivées pour être rejouées après correction</div>
+    ${r.total?`<table><thead><tr>
+      <th>lecture</th><th>rôle</th><th>carte</th><th>candidat</th>
+      <th class="num">écart</th><th class="num">marge</th><th class="num">boîte</th>
+      </tr></thead><tbody>${lignes}</tbody></table>
+      <div class="hint" style="margin-top:8px"><b>écart</b> : distance au
+      gabarit le plus proche (plus bas = plus ressemblant).
+      <b>marge</b> : avance sur le deuxième candidat — c'est elle qui fait la
+      confiance, un écart faible avec deux candidats à égalité ne vaut rien.</div>`:''}
+  </div>`;
+
+  if(document.getElementById("cal-boucle").checked)
+    calTimer=setTimeout(calLire,1200);
 }
 
 function loadShot(blob){

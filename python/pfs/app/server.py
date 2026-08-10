@@ -859,6 +859,55 @@ class API:
             ],
         }
 
+    # ── Calibration en direct : LIRE l'écran, jamais conseiller ──────────
+    #
+    # Ces deux routes capturent la fenêtre d'un client et rendent ce que le
+    # recogniseur y a lu, avec la confiance de chaque carte. Elles ne
+    # renvoient aucun verdict et n'appellent aucun calculateur de décision :
+    # c'est un banc d'essai de la perception, pas une assistance de jeu.
+    # `tests/test_live_sans_conseil.py` verrouille cette frontière.
+    @staticmethod
+    def live_fenetres(_p: dict) -> dict:
+        """Fenêtres capturables, les tables probables en tête."""
+        from pfs.vision.live import SondeIntrouvable, fenetres_disponibles
+
+        try:
+            return {"fenetres": fenetres_disponibles()}
+        except SondeIntrouvable as e:
+            return {"fenetres": [], "erreur": str(e)}
+
+    @staticmethod
+    def live_lire(p: dict) -> dict:
+        """Capture une fenêtre et rend UNIQUEMENT ce qui y a été lu.
+
+        Payload : ``{"fenetre": "PMU"}`` — absent ou vide pour la détection
+        automatique d'un client poker connu.
+        """
+        from dataclasses import asdict
+
+        from pfs.vision.live import (
+            CaptureImpossible,
+            SondeIntrouvable,
+            lire_ecran,
+        )
+
+        titre = str(p.get("fenetre", "")).strip() or None
+        try:
+            lecture = lire_ecran(titre)
+        except (CaptureImpossible, SondeIntrouvable) as e:
+            return {"erreur": str(e)}
+        return {
+            "fenetre": lecture.fenetre,
+            "largeur": lecture.largeur,
+            "hauteur": lecture.hauteur,
+            "sures": lecture.sures,
+            "total": len(lecture.cartes),
+            "taux": lecture.taux,
+            "resume": lecture.resume(),
+            "cartes": [asdict(c) for c in lecture.cartes],
+            "image_b64": lecture.image_b64,
+        }
+
     # ── Conseil sur un spot déjà joué (« qu'aurais-je dû faire ? ») ──────
     @staticmethod
     def advise(p: dict) -> dict:
@@ -969,6 +1018,8 @@ ROUTES: dict[str, Callable[[dict], dict]] = {
     "recognize": API.recognize,
     "simuler": API.simuler,
     "lexique": API.lexique,
+    "live/fenetres": API.live_fenetres,
+    "live/lire": API.live_lire,
     "capture": API.capture,
     "archive": API.archive,
 }
@@ -1091,19 +1142,63 @@ def _jeton_persistant() -> str:
     return jeton
 
 
+class _ServeurExclusif(ThreadingHTTPServer):
+    """Serveur qui REFUSE de démarrer si le port est déjà pris.
+
+    Ce détail a coûté des heures de diagnostic. `HTTPServer` active
+    `allow_reuse_address` (SO_REUSEADDR) par défaut. Sur Unix cela sert
+    seulement à réutiliser un port en TIME_WAIT ; **sur Windows, la même
+    option autorise un second processus à se lier à un port déjà en
+    écoute**. Les deux serveurs vivent alors côte à côte et les requêtes
+    partent chez l'un ou chez l'autre, sans règle.
+
+    Symptôme observé : après modification du code, chaque redémarrage
+    lançait un nouveau serveur pendant que l'ancien continuait de répondre.
+    Les routes fraîchement ajoutées renvoyaient « route inconnue » une fois
+    sur deux, et le défaut semblait venir du routeur.
+
+    `SO_EXCLUSIVEADDRUSE` rétablit le comportement attendu : le second
+    démarrage échoue franchement, avec un message qui dit quoi faire.
+    """
+
+    allow_reuse_address = False
+
+    def server_bind(self) -> None:
+        import socket
+
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            try:
+                self.socket.setsockopt(socket.SOL_SOCKET,
+                                       socket.SO_EXCLUSIVEADDRUSE, 1)
+            except OSError:
+                pass    # option refusée : le garde-fou saute, pas le serveur
+        super().server_bind()
+
+
 def create_server(port: int = 8731,
-                  token: str | None = None) -> tuple[ThreadingHTTPServer, str]:
+                  token: str | None = None) -> tuple[ThreadingHTTPServer, str]:  # noqa: E501
     """Crée le serveur, lié à **127.0.0.1 uniquement**.
 
     ``token`` explicite (les tests en fournissent un) ou jeton persistant.
     """
     token = token if token is not None else _jeton_persistant()
-    srv = ThreadingHTTPServer(("127.0.0.1", port), _make_handler(token))
+    srv = _ServeurExclusif(("127.0.0.1", port), _make_handler(token))
     return srv, token
 
 
 def run(port: int = 8731, open_browser: bool = True) -> None:
-    srv, token = create_server(port)
+    try:
+        srv, token = create_server(port)
+    except OSError as e:
+        # Sans ce message, un second démarrage échouait en silence pendant
+        # que l'ancien serveur — donc l'ancien CODE — continuait de servir.
+        print(f"\n  ✗ Impossible d'écouter sur le port {port} : {e}\n")
+        print("  Un Poker Fusion Solver tourne déjà. Deux possibilités :")
+        print(f"    • rejoins-le            : http://127.0.0.1:{port}/")
+        print("    • ou arrête-le d'abord  : "
+              "Get-Process python | Stop-Process\n")
+        print(f"  (ou démarre ailleurs : python -m pfs --port {port + 1})\n")
+        raise SystemExit(1) from e
     url = f"http://127.0.0.1:{srv.server_address[1]}/?t={token}"
     print("╔" + "═" * 66 + "╗")
     print("║  ♠  POKER FUSION SOLVER — interface locale" + " " * 24 + "║")
