@@ -153,6 +153,7 @@ kbd{font:11px ui-monospace,monospace;background:#1a1a28;border:1px solid var(--l
  font-family:ui-monospace,monospace;font-size:12px;font-weight:700;
  background:#22c55e1f;color:#86efac;border:1px solid #22c55e55}
 .chip.bad{background:#ef44441f;color:#fca5a5;border-color:#ef444455}
+.chip.amb{background:#eab3081f;color:#fde047;border-color:#eab30855}
 
 /* ═══ MOBILE ═══════════════════════════════════════════════════════════
    Le verdict et la saisie doivent rester utilisables au pouce : on réduit
@@ -871,10 +872,47 @@ function loadShot(blob){
     log.insertAdjacentHTML("beforeend",' <span class="muted">⟳</span>');
     const r=await api("recognize",{image_b64:c.toDataURL("image/png")});
     const m=(r.detail||[])[0];
+
+    // Lecture PLAUSIBLE mais pas certaine : on la propose au lieu de la
+    // gober. Mesuré sur images dégradées (ré-échelle, JPEG), une lecture de
+    // ce niveau n'est juste qu'une fois sur deux — la faire valider d'un clic
+    // coûte une seconde et supprime l'erreur, alors que l'accepter d'office
+    // fausserait tout le conseil.
+    if(m&&!m.card&&m.statut==="propose"&&m.best_guess){
+      const id="p"+Date.now();
+      log.insertAdjacentHTML("beforeend",
+        ` <span class="chip amb">${m.best_guess} ?</span>
+          <button class="ghost sm" style="width:auto" id="${id}">oui</button>`);
+      const b=document.getElementById(id);
+      if(b)b.onclick=()=>{
+        if(shotTarget==="hero"){ if(shotHero.length<2)shotHero.push(m.best_guess); }
+        else { if(shotBoard.length<5)shotBoard.push(m.best_guess); }
+        if(shotHero.length===2&&shotTarget==="hero")setShotTarget("board");
+        b.previousElementSibling.remove(); b.remove(); syncShotFields();
+      };
+      return;
+    }
+
     if(!m||!m.card){
-      // message ACTIONNABLE : la cause la plus fréquente est un cadrage qui
-      // rogne la carte (le cadrage trop large, lui, est rattrapé)
-      log.innerHTML+=` <span class="chip bad">illisible — recadre plus large</span>`;
+      // Un refus n'est pas une impasse : on montre CE QUE le recogniseur a
+      // failli lire et de combien il s'en est fallu. Sans ça, impossible de
+      // savoir s'il faut recadrer, si l'habillage manque, ou si l'image est
+      // trop dégradée. Le candidat reste acceptable d'un clic — c'est l'œil
+      // humain qui tranche, et sa lecture est fiable.
+      const cand=m&&m.best_guess?m.best_guess:"—";
+      const d=m?m.distance:"?", mg=m?m.margin:"?";
+      const id="cand"+(shotHero.length+shotBoard.length)+"_"+Date.now();
+      log.insertAdjacentHTML("beforeend",
+        ` <span class="chip bad">illisible — hésite sur <b>${cand}</b>
+          (écart ${d}, marge ${mg})</span>
+         <button class="ghost sm" style="width:auto" id="${id}">c'était ${cand}</button>`);
+      const btn=document.getElementById(id);
+      if(btn&&m&&m.best_guess)btn.onclick=()=>{
+        if(shotTarget==="hero"){ if(shotHero.length<2)shotHero.push(cand); }
+        else { if(shotBoard.length<5)shotBoard.push(cand); }
+        if(shotHero.length===2&&shotTarget==="hero")setShotTarget("board");
+        btn.remove(); syncShotFields();
+      };
       return;
     }
     if(shotTarget==="hero"){ if(shotHero.length<2)shotHero.push(m.card); }

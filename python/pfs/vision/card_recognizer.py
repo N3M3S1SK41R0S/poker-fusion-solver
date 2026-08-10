@@ -67,12 +67,24 @@ _THEMES = ("pmu_deck", "pmu_solid")
 #   · les distances des bonnes et des mauvaises réponses SE CHEVAUCHENT —
 #     la distance seule ne peut donc pas trancher ;
 #   · c'est la MARGE avec le second candidat qui sépare proprement.
-# Compromis mesuré (lues / fausses) : marge 12 → 96,8 % / 1,67 % ;
-# marge 25 → 95,0 % / 0,45 % ; marge 32 → 94,0 % / 0,06 %.
-# On retient 32 : une carte fausse annoncée avec aplomb fausse silencieusement
-# tout le conseil qui suit, alors qu'un refus demande juste de recadrer.
+# Compromis mesuré sur images NETTES (lues / fausses) : marge 12 → 96,8 % /
+# 1,67 % ; marge 25 → 95,0 % / 0,45 % ; marge 32 → 94,0 % / 0,06 %.
+#
+# MAIS ces marges s'effondrent sur une image réelle. Reproduction des
+# conditions d'une vraie capture (habillage à fond plein, cartes 78×104 sur
+# tapis clair) : image ré-échelonnée à 0,66 → **0/8 acceptées**, alors que le
+# bon carton était en tête dans 5 cas sur 8 (« 9s » lu 9s avec 11 de marge,
+# « Jh » lu Jh avec 8). Un couperet unique jetait donc des lectures JUSTES.
+#
+# D'où trois niveaux plutôt qu'un seuil : au-dessus de MARGE_SURE la lecture
+# s'impose ; entre MARGE_PROPOSE et MARGE_SURE elle est PROPOSÉE et attend un
+# clic — l'œil humain tranche en une seconde et ne se trompe pas sur une carte
+# qu'il voit ; en dessous, on refuse. Aucune carte n'est jamais affirmée à
+# tort, et plus rien n'est perdu en silence.
 MAX_ACCEPT_DISTANCE = 900
-MIN_MARGIN = 32
+MARGE_SURE = 32
+MARGE_PROPOSE = 8
+MIN_MARGIN = MARGE_SURE     # compatibilité : ancien nom du seuil d'acceptation
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,10 +96,28 @@ class CardMatch:
     margin: int            # écart avec le 2e meilleur (grand = sans ambiguïté)
     confidence: float      # dans [0, 1]
     runner_up: str | None  # 2e meilleur candidat (diagnostic)
+    best_guess: str | None = None
+    """Meilleur candidat, MÊME quand la lecture est refusée.
+
+    Un refus sans candidat est une impasse : impossible de distinguer un
+    cadrage à reprendre d'un habillage absent de la banque. En exposant ce que
+    le recogniseur a failli lire, et de combien il s'en est fallu, l'appelant
+    peut diagnostiquer — et l'utilisateur trancher lui-même, son œil restant
+    la référence.
+    """
+
+    statut: str = "refus"
+    """« sure » (lecture qui s'impose) · « propose » (à confirmer d'un clic) ·
+    « refus » (rien de plausible). Voir MARGE_SURE / MARGE_PROPOSE."""
 
     @property
     def accepted(self) -> bool:
         return self.card is not None
+
+    @property
+    def a_confirmer(self) -> bool:
+        """Lecture plausible mais pas certaine : l'appelant doit demander."""
+        return self.statut == "propose"
 
 
 def build_templates(deck_dir: str | Path = _DECK_DIR,
@@ -239,12 +269,20 @@ def identify_card(image, templates: dict[str, int] | None = None,
     # La confiance suit la MARGE, pas la distance absolue : c'est elle qui
     # sépare une lecture sûre d'une hésitation (cf. calibration ci-dessus).
     conf = max(0.0, min(1.0, margin / 80.0))
-    accepted = best_d <= MAX_ACCEPT_DISTANCE and margin >= MIN_MARGIN
+    plausible = best_d <= MAX_ACCEPT_DISTANCE
+    if plausible and margin >= MARGE_SURE:
+        statut = "sure"
+    elif plausible and margin >= MARGE_PROPOSE:
+        statut = "propose"
+    else:
+        statut = "refus"
     return CardMatch(
-        card=best_c if accepted else None,
+        card=best_c if statut == "sure" else None,
         distance=best_d, margin=margin,
         confidence=round(max(0.0, min(1.0, conf)), 3),
         runner_up=second_c,
+        best_guess=best_c if statut != "refus" else None,
+        statut=statut,
     )
 
 

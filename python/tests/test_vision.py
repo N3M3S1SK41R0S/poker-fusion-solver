@@ -239,6 +239,56 @@ class TestThemesAndBackgrounds(unittest.TestCase):
         self.assertEqual(got, board)
 
 
+class TestTroisNiveaux(unittest.TestCase):
+    """Une lecture est AFFIRMÉE, PROPOSÉE, ou refusée — jamais un couperet.
+
+    Le seuil unique jetait des lectures justes dès que l'image n'était plus
+    parfaite : sur une capture ré-échelonnée à 0,66, **0/8** étaient acceptées
+    alors que le bon carton était en tête 5 fois sur 8 (marges 8 à 11, sous le
+    seuil de 32). D'où le niveau intermédiaire : la lecture est proposée et
+    attend un clic. Mesuré sur 520 essais dégradés : 68,3 % affirmées,
+    21,2 % proposées, 10,6 % refusées.
+
+    Honnêteté : sur ces mêmes images dégradées, une lecture AFFIRMÉE est juste
+    à 95,5 % — pas 99,9 %. C'est pourquoi l'interface montre toujours les
+    cartes lues dans un champ que l'utilisateur relit : une erreur est visible,
+    jamais silencieuse.
+    """
+
+    def test_gabarit_est_toujours_affirme(self) -> None:
+        for theme in _THEMES:
+            if not (_TEMPLATE_ROOT / theme).is_dir():
+                continue
+            for card in _cards(theme):
+                m = identify_card(_TEMPLATE_ROOT / theme / f"{card}.png")
+                self.assertEqual(m.statut, "sure", f"{theme}/{card}")
+                self.assertEqual(m.card, card)
+
+    def test_statut_et_card_sont_coherents(self) -> None:
+        # `card` n'est renseigné QUE pour une lecture affirmée
+        for theme in _THEMES:
+            if not (_TEMPLATE_ROOT / theme).is_dir():
+                continue
+            for card in _cards(theme)[:6]:
+                m = identify_card(_TEMPLATE_ROOT / theme / f"{card}.png")
+                if m.statut == "sure":
+                    self.assertIsNotNone(m.card)
+                else:
+                    self.assertIsNone(m.card)
+
+    def test_refus_ne_propose_aucun_candidat(self) -> None:
+        blank = np.full((80, 60, 3), 255, dtype=np.uint8)
+        m = identify_card(blank)
+        self.assertEqual(m.statut, "refus")
+        self.assertIsNone(m.card)
+        self.assertIsNone(m.best_guess)
+
+    def test_a_confirmer_reflete_le_statut(self) -> None:
+        m = identify_card(_TEMPLATE_ROOT / "pmu_solid" / "Ah.png")
+        self.assertFalse(m.a_confirmer)
+        self.assertTrue(m.accepted)
+
+
 class TestRejection(unittest.TestCase):
     def test_blank_image_is_not_a_card(self) -> None:
         blank = np.full((80, 60, 3), 255, dtype=np.uint8)

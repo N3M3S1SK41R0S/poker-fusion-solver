@@ -799,7 +799,10 @@ class API:
             "cards": [m.card for m in matches],
             "detail": [
                 {"card": m.card, "distance": m.distance, "margin": m.margin,
-                 "confidence": m.confidence, "runner_up": m.runner_up}
+                 "confidence": m.confidence, "runner_up": m.runner_up,
+                 # exposé même en cas de refus : c'est ce qui rend l'échec
+                 # diagnostiquable côté interface
+                 "best_guess": m.best_guess, "statut": m.statut}
                 for m in matches
             ],
         }
