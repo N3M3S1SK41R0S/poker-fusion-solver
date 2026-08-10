@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import secrets
 import threading
 import webbrowser
@@ -951,9 +952,44 @@ def _make_handler(token: str) -> type[BaseHTTPRequestHandler]:
     return Handler
 
 
-def create_server(port: int = 8731) -> tuple[ThreadingHTTPServer, str]:
-    """Crée le serveur, lié à **127.0.0.1 uniquement**, avec jeton aléatoire."""
-    token = secrets.token_urlsafe(24)
+def _jeton_persistant() -> str:
+    """Jeton aléatoire, conservé d'un démarrage à l'autre.
+
+    Un jeton régénéré à chaque lancement invalide toutes les pages déjà
+    ouvertes : chaque redémarrage renvoyait un 403 silencieux, et l'onglet
+    semblait « ne plus rien reconnaître » alors que rien n'était calculé.
+    Le jeton est donc tiré une fois puis relu, dans le dossier de données
+    local de l'utilisateur.
+
+    Le modèle de menace ne change pas : le serveur n'écoute que sur la boucle
+    locale, et le fichier n'est lisible que par le compte qui l'a créé — les
+    mêmes conditions que l'URL déjà présente dans l'historique du navigateur.
+    """
+    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~/.local/share")
+    chemin = Path(base) / "PokerFusionSolver" / "jeton"
+    try:
+        jeton = chemin.read_text(encoding="utf-8").strip()
+        if len(jeton) >= 16:
+            return jeton
+    except OSError:
+        pass
+    jeton = secrets.token_urlsafe(24)
+    try:
+        chemin.parent.mkdir(parents=True, exist_ok=True)
+        chemin.write_text(jeton, encoding="utf-8")
+        os.chmod(chemin, 0o600)
+    except OSError:
+        pass          # jeton de session : le logiciel reste utilisable
+    return jeton
+
+
+def create_server(port: int = 8731,
+                  token: str | None = None) -> tuple[ThreadingHTTPServer, str]:
+    """Crée le serveur, lié à **127.0.0.1 uniquement**.
+
+    ``token`` explicite (les tests en fournissent un) ou jeton persistant.
+    """
+    token = token if token is not None else _jeton_persistant()
     srv = ThreadingHTTPServer(("127.0.0.1", port), _make_handler(token))
     return srv, token
 

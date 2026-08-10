@@ -703,16 +703,45 @@ const dSkill  =()=>debounce("skill",skillRun);
 const dICM    =()=>debounce("icm",icmRun);
 const dEQ     =()=>debounce("eq",eqRun,400);
 
+// Bandeau d'anomalie : un onglet resté ouvert après un redémarrage porte un
+// jeton périmé, et TOUT échoue alors en 403. Sans message explicite, cela se
+// manifestait par un « ⚠ erreur » minuscule et des résultats vides — on
+// cherchait le défaut dans la reconnaissance alors que rien n'était calculé.
+function alerte(html){
+  let el=document.getElementById("alerte");
+  if(!el){
+    el=document.createElement("div");
+    el.id="alerte"; el.className="warn";
+    el.style.cssText="position:sticky;top:44px;z-index:60;margin:10px 0";
+    document.querySelector(".wrap").prepend(el);
+  }
+  el.innerHTML=html;
+}
+
 async function api(route,body={}){
   document.getElementById("status").textContent="⟳";
   try{
     const r=await fetch(`/api/${route}?t=${encodeURIComponent(TOKEN)}`,
       {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    if(r.status===403){
+      document.getElementById("status").textContent="⚠ jeton périmé";
+      alerte("<b>Jeton périmé.</b> Le logiciel a redémarré depuis l'ouverture de "
+        +"cette page : le jeton change à chaque démarrage, par sécurité. "
+        +"Rouvre l'application depuis le raccourci <b>PKS</b> (ou relance "
+        +"<code>run.bat</code>) — rien n'est calculé tant que cette page n'est "
+        +"pas rechargée avec le nouveau lien.");
+      return{error:"jeton périmé"};
+    }
     const j=await r.json();
     document.getElementById("status").textContent=j.error?"⚠ erreur":"✓";
     if(j.error)console.warn(route,j.error);
     return j;
-  }catch(e){document.getElementById("status").textContent="✕ hors ligne";return{error:String(e)};}
+  }catch(e){
+    document.getElementById("status").textContent="✕ hors ligne";
+    alerte("<b>Serveur injoignable.</b> Le logiciel n'est plus lancé : "
+      +"redémarre-le depuis le raccourci <b>PKS</b>.");
+    return{error:String(e)};
+  }
 }
 
 // ══ MA MAIN — verdict en code couleur ═══════════════════════════════════
