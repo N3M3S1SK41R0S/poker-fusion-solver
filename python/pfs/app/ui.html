@@ -166,6 +166,7 @@ kbd{font:11px ui-monospace,monospace;background:#1a1a28;border:1px solid var(--l
  font-family:ui-monospace,monospace;font-size:12px;font-weight:700;
  background:#22c55e1f;color:#86efac;border:1px solid #22c55e55}
 .chip.bad{background:#ef44441f;color:#fca5a5;border-color:#ef444455}
+.chip.ok{background:#22c55e1f;color:#86efac;border-color:#22c55e55}
 .chip.amb{background:#eab3081f;color:#fde047;border-color:#eab30855}
 /* cartes du simulateur : lisibles d'un coup d'œil, couleur portée par
    l'enseigne et non par le seul texte */
@@ -261,17 +262,17 @@ kbd{font:11px ui-monospace,monospace;background:#1a1a28;border:1px solid var(--l
     <h2 style="margin-top:0">Depuis une capture d'écran</h2>
     <div id="drop" class="drop" tabindex="0">
       <b>Colle une capture</b> (<kbd>Ctrl</kbd>+<kbd>V</kbd>) ou dépose une image ici.
-      <div class="hint">Ensuite, <b>encadre chaque carte</b> à la souris : elle
-      est identifiée et le champ se remplit tout seul. Cadre <b>largement</b> —
-      englobe toute la carte, quitte à mordre autour : le bord est retrouvé
-      automatiquement. Un cadrage qui <i>rogne</i> la carte, lui, échoue.</div>
+      <div class="hint">C'est tout : les cartes sont trouvées, lues et jugées
+      automatiquement. Rien à cadrer.</div>
     </div>
     <div id="shot-wrap" style="display:none">
       <div class="row" style="align-items:center;gap:8px;margin-bottom:8px">
+        <span class="muted">Une carte a échappé à la lecture ? Encadre-la
+          à la souris :</span>
         <button class="ghost sm" style="width:auto" onclick="setShotTarget('hero')">
-          Cadrer → ma main</button>
+          → ma main</button>
         <button class="ghost sm" style="width:auto" onclick="setShotTarget('board')">
-          Cadrer → board</button>
+          → board</button>
         <button class="ghost sm" style="width:auto" onclick="shotReset()">Effacer</button>
         <span class="muted" id="shot-mode">cible : ma main</span>
       </div>
@@ -1161,6 +1162,46 @@ async function calLire(){
     calTimer=setTimeout(calLire,1200);
 }
 
+/* Lecture AUTOMATIQUE d'une capture collée : plus rien à cadrer.
+   Le cadrage à la souris ne subsiste que comme rattrapage, pour ce que la
+   détection rate — il ne doit plus être le chemin normal. */
+async function lireCaptureAuto(blob){
+  const log=document.getElementById("shot-log");
+  log.innerHTML='<span class="muted">⟳ lecture de la capture…</span>';
+  let b64;
+  try{
+    b64=await new Promise((ok,ko)=>{const fr=new FileReader();
+      fr.onload=()=>ok(fr.result); fr.onerror=ko; fr.readAsDataURL(blob);});
+  }catch(e){ log.innerHTML=""; return; }
+
+  const t0=performance.now();
+  const r=await api("lire_capture",{image_b64:b64});
+  const ms=Math.round(performance.now()-t0);
+  if(r.error){
+    log.innerHTML=`<span class="chip bad">lecture automatique impossible :
+      ${esc(r.error)} — cadre à la main ci-dessous</span>`;
+    return;
+  }
+
+  shotHero=(r.main||[]).slice(0,2);
+  shotBoard=(r.tableau||[]).slice(0,5);
+  syncShotFields();
+
+  // Ce qui a été VU sans être lu reste montré : c'est ce qui permet de
+  // savoir s'il faut recadrer, et c'est ce qui part dans l'archive.
+  const rates=[...(r.hero||[]),...(r.board||[])].filter(c=>c.statut!=="sure");
+  const bilan=`<span class="chip ${r.sures===r.total&&r.total?"ok":"amb"}">`+
+    `${r.sures}/${r.total} carte(s) lue(s) · ${ms} ms</span>`;
+  const detail=rates.map(c=>
+    `<span class="chip bad">non lue${c.candidat?` — hésite sur <b>${esc(c.candidat)}</b>`:""}
+      (écart ${c.ecart}, marge ${c.marge})</span>`).join(" ");
+  log.insertAdjacentHTML("beforeend"," "+bilan+" "+detail);
+  if(rates.length) majArchive();
+
+  // Le but de tout ceci : le verdict, sans un clic de plus.
+  if(shotHero.length===2) adviseRun();
+}
+
 function loadShot(blob){
   archiverCapture(blob);
   const img=new Image();
@@ -1174,6 +1215,7 @@ function loadShot(blob){
     cv.getContext("2d").drawImage(img,0,0,cv.width,cv.height);
     document.getElementById("shot-wrap").style.display="";
     shotReset();
+    lireCaptureAuto(blob);
   };
   img.src=URL.createObjectURL(blob);
 }

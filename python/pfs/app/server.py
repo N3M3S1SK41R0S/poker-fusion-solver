@@ -859,6 +859,69 @@ class API:
             ],
         }
 
+    @staticmethod
+    def lire_capture(p: dict) -> dict:
+        """Capture entière → cartes du héros et du board, SANS cadrage.
+
+        Le cadrage à la souris n'a plus de raison d'être : le détecteur
+        localise les cartes et leur attribue un rôle. Il restait exigé parce
+        que l'onglet avait été écrit avant que la détection ne fonctionne.
+
+        Payload : ``{"image_b64": "..."}``. Renvoie les cartes lues avec leur
+        confiance, et ce qui a échoué — pour que l'échec reste rattrapable à
+        la main plutôt que silencieux.
+        """
+        import base64
+        import io
+
+        from PIL import Image
+
+        from pfs.vision.archive import enregistrer_echec
+        from pfs.vision.card_recognizer import identify_card_autour
+        from pfs.vision.table_detector import read_table
+
+        b64 = str(p.get("image_b64", "")).strip()
+        if not b64:
+            raise ValueError("champ 'image_b64' requis.")
+        if "," in b64:
+            b64 = b64.split(",", 1)[1]
+        image = Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGB")
+
+        table = read_table(image)
+        sortie: dict[str, list] = {"hero": [], "board": [], "autres": []}
+        cle = {"hero": "hero", "board": "board", "others": "autres"}
+        for role in ("hero", "board", "others"):
+            for b in getattr(table, role):
+                m = identify_card_autour(image, (b.x, b.y, b.w, b.h))
+                sortie[cle[role]].append({
+                    "carte": m.card, "candidat": m.best_guess,
+                    "statut": m.statut, "ecart": m.distance,
+                    "marge": m.margin, "boite": [b.x, b.y, b.w, b.h]})
+                # Seuls les rôles identifiés instruisent : un dos
+                # d'adversaire est illisible par nature, l'archiver noierait
+                # les vrais échecs.
+                if m.statut != "sure" and role in ("hero", "board"):
+                    decoupe = image.crop((b.x, b.y, b.x + b.w, b.y + b.h))
+                    tampon = io.BytesIO()
+                    decoupe.save(tampon, format="PNG")
+                    enregistrer_echec(
+                        base64.b64encode(tampon.getvalue()).decode("ascii"),
+                        {"statut": m.statut, "distance": m.distance,
+                         "margin": m.margin, "best_guess": m.best_guess,
+                         "role": role, "origine": "collage",
+                         "boite": [b.x, b.y, b.w, b.h]})
+
+        sures = [c for r in ("hero", "board") for c in sortie[r]
+                 if c["statut"] == "sure"]
+        total = len(sortie["hero"]) + len(sortie["board"])
+        return {
+            **sortie,
+            "largeur": image.width, "hauteur": image.height,
+            "sures": len(sures), "total": total,
+            "main": [c["carte"] for c in sortie["hero"] if c["carte"]],
+            "tableau": [c["carte"] for c in sortie["board"] if c["carte"]],
+        }
+
     # ── Calibration en direct : LIRE l'écran, jamais conseiller ──────────
     #
     # Ces deux routes capturent la fenêtre d'un client et rendent ce que le
@@ -1018,6 +1081,7 @@ ROUTES: dict[str, Callable[[dict], dict]] = {
     "recognize": API.recognize,
     "simuler": API.simuler,
     "lexique": API.lexique,
+    "lire_capture": API.lire_capture,
     "live/fenetres": API.live_fenetres,
     "live/lire": API.live_lire,
     "capture": API.capture,
