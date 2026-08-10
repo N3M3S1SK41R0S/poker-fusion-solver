@@ -154,6 +154,14 @@ kbd{font:11px ui-monospace,monospace;background:#1a1a28;border:1px solid var(--l
  background:#22c55e1f;color:#86efac;border:1px solid #22c55e55}
 .chip.bad{background:#ef44441f;color:#fca5a5;border-color:#ef444455}
 .chip.amb{background:#eab3081f;color:#fde047;border-color:#eab30855}
+/* cartes du simulateur : lisibles d'un coup d'œil, couleur portée par
+   l'enseigne et non par le seul texte */
+.carte{display:inline-block;min-width:34px;text-align:center;padding:4px 7px;
+ border-radius:6px;background:#f4f4f8;color:#15151f;font-weight:800;
+ font-family:ui-monospace,monospace;font-size:15px;margin-right:3px;
+ border:1px solid #c8c8d4}
+.carte.r{color:#c81e2a}
+.diffgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:10px}
 
 /* ═══ MOBILE ═══════════════════════════════════════════════════════════
    Le verdict et la saisie doivent rester utilisables au pouce : on réduit
@@ -280,6 +288,56 @@ kbd{font:11px ui-monospace,monospace;background:#1a1a28;border:1px solid var(--l
   </div>
 
   <div id="rv-out"><div class="skel">Indique un dossier d'historiques pour lancer la revue.</div></div>
+</section>
+
+<!-- ══════════ SIMULATEUR ══════════ -->
+<section id="s-simu">
+  <h1>Simulateur — une main au hasard, et quoi en faire</h1>
+  <p class="lead">Tirage réellement aléatoire. Choisis de <b>voir</b> ou de
+  <b>cacher</b> les cartes adverses : caché, c'est la condition de table ;
+  visible, tu mesures ce qu'une lecture parfaite t'apporterait.</p>
+
+  <div class="card">
+    <div class="spotbar">
+      <div><label>Joueurs à table</label>
+        <select id="si-joueurs"><option value="2" selected>2 (heads-up)</option>
+          <option value="3">3 (Twister)</option><option value="6">6</option>
+          <option value="9">9</option></select></div>
+      <div><label>Board</label>
+        <select id="si-board"><option value="0" selected>préflop</option>
+          <option value="3">flop</option><option value="4">turn</option>
+          <option value="5">river</option></select></div>
+      <div><label>Cartes adverses</label>
+        <select id="si-vis"><option value="0" selected>cachées</option>
+          <option value="1">visibles</option></select></div>
+      <div><label>Range adverse supposée</label>
+        <select id="si-vil"><option value="moyenne" selected>moyenne</option>
+          <option value="large">large</option>
+          <option value="serree">serrée</option></select></div>
+      <div><label>Pot (bb)</label><input id="si-pot" type="number" value="1.5" step="0.5"></div>
+      <div><label>Mise subie (bb)</label><input id="si-bet" type="number" value="0" step="0.5"></div>
+    </div>
+    <div class="row" style="margin-top:12px;align-items:center">
+      <button class="cta" style="width:auto" onclick="simuRun()">Tirer une main</button>
+      <span class="hint">Chaque tirage vient de l'entropie du système —
+        aucune suite à mémoriser.</span>
+    </div>
+  </div>
+
+  <div id="si-out"><div class="skel">Clique sur <b>Tirer une main</b>.</div></div>
+</section>
+
+<!-- ══════════ LEXIQUE ══════════ -->
+<section id="s-lex">
+  <h1>Lexique — tout le vocabulaire, expliqué</h1>
+  <p class="lead">Chaque terme employé par le logiciel, défini sans renvoyer
+  à un autre jargon, avec la raison pour laquelle il compte à la table.</p>
+  <div class="card">
+    <label>Chercher un terme</label>
+    <input id="lx-q" placeholder="équité, ICM, limp, MDF, VPIP…"
+           oninput="lexRun()">
+  </div>
+  <div id="lx-out"></div>
 </section>
 
 <!-- ══════════ STUDY ══════════ -->
@@ -673,6 +731,7 @@ let hmmObs=[], drillT0=0;
 // pas « bet_sizing ». L'ordre va du plus fréquent (juger une main) au plus
 // spécialisé (les outils d'expert).
 const TABS=[["s-spot","♠ Ma main"],["s-review","Mes sessions"],
+            ["s-simu","Simulateur"],["s-lex","Lexique"],
             ["s-study","Ranges"],["s-train","S'entraîner"],
             ["s-fusion","Lire l'adversaire"],["s-sizing","Miser juste"],
             ["s-solver","Solveur"],["s-bankroll","Bankroll & ICM"],
@@ -686,7 +745,8 @@ TABS.forEach(([id,label],i)=>{
     b.classList.add("on"); document.getElementById(id).classList.add("on");
     if(id==="s-fusion"){fusionRun();skillRun();} if(id==="s-sizing"){sizingRun();bcRun();}
     if(id==="s-bankroll"){brRun();icmRun();} if(id==="s-hmm")hmmRun();
-    if(id==="s-spot")document.getElementById("sp-hero").focus();};
+    if(id==="s-spot")document.getElementById("sp-hero").focus();
+    if(id==="s-lex"&&!document.getElementById("lx-out").innerHTML)lexRun();};
   tabsEl.appendChild(b);
 });
 
@@ -809,6 +869,92 @@ async function adviseRun(){
       ${(r.assumptions||[]).length?`<div class="muted" style="margin-top:6px">${
         r.assumptions.map(a=>"– "+a).join("<br>")}</div>`:""}
     </div>`;
+}
+
+// ══ SIMULATEUR ══════════════════════════════════════════════════════════
+function carteHTML(c){
+  const rouge="hd".includes(c[1]);
+  const sym={s:"♠",h:"♥",d:"♦",c:"♣"}[c[1]]||c[1];
+  return `<span class="carte${rouge?" r":""}">${c[0]}${sym}</span>`;
+}
+
+async function simuRun(){
+  const g=id=>document.getElementById(id).value;
+  const out=document.getElementById("si-out");
+  out.innerHTML='<div class="skel">⟳ tirage et résolution…</div>';
+  const r=await api("simuler",{joueurs:+g("si-joueurs"),cartes_board:+g("si-board"),
+    cartes_visibles:g("si-vis")==="1",villain:g("si-vil"),
+    pot:+g("si-pot")||1.5,bet:+g("si-bet")||0});
+  if(r.error){out.innerHTML=`<div class="warn">${r.error}</div>`;return;}
+
+  const lecture = (r.equite_reelle!=null&&r.equite_supposee!=null)
+    ? `<div class="card"><h2 style="margin-top:0">Ce que « voir ses cartes » apporte</h2>
+       <div class="row">
+         <div class="kpi col"><div class="v">${(r.equite_reelle*100).toFixed(1)} %</div>
+           <div class="l">équité EXACTE contre ses cartes</div></div>
+         <div class="kpi col"><div class="v">${(r.equite_supposee*100).toFixed(1)} %</div>
+           <div class="l">contre la range supposée</div></div>
+         <div class="kpi col"><div class="v" style="color:${
+             r.equite_reelle>=r.equite_supposee?"#22c55e":"#ef4444"}">${
+             ((r.equite_reelle-r.equite_supposee)*100>=0?"+":"")}${
+             ((r.equite_reelle-r.equite_supposee)*100).toFixed(1)} pts</div>
+           <div class="l">écart de lecture</div></div>
+       </div></div>` : "";
+
+  // les verdicts, regroupés par position ; la BASCULE est ce qui se retient
+  const parPos={};
+  (r.verdicts||[]).forEach(v=>{(parPos[v.position]=parPos[v.position]||[]).push(v);});
+  const tables=Object.entries(parPos).map(([pos,lst])=>{
+    lst.sort((a,b)=>a.tapis_bb-b.tapis_bb);
+    return `<div class="card"><h2 style="margin-top:0">${pos} · ${lst[0].joueurs} joueurs</h2>
+      <table><thead><tr><th>Tapis</th><th>Ce qu'il faut faire</th>
+      <th>Certitude</th><th style="text-align:right">EV</th></tr></thead><tbody>
+      ${lst.map(v=>{const [cls,ico]=verdictClass(v.action);
+        return `<tr><td class="num">${v.tapis_bb.toFixed(1)} bb</td>
+          <td><span style="color:var(--${cls==="go"?"g":cls==="no"?"r":"y"})">
+            ${ico} ${v.action}</span></td>
+          <td>${v.certain?'<span class="pill g">certain</span>'
+                         :'<span class="pill y">indicatif</span>'}</td>
+          <td class="num" style="text-align:right">${
+            v.ev_bb!=null?(v.ev_bb>=0?"+":"")+v.ev_bb.toFixed(2)+" bb":"—"}</td></tr>`;
+        }).join("")}</tbody></table></div>`;}).join("");
+
+  out.innerHTML=`
+    <div class="card">
+      <h2 style="margin-top:0">La donne</h2>
+      <div style="font-size:15px">
+        Ta main : ${r.hero.map(carteHTML).join(" ")}
+        <span class="muted mono">(${r.groupe})</span>
+        ${r.board.length?` &nbsp;·&nbsp; Board : ${r.board.map(carteHTML).join(" ")}`:""}
+      </div>
+      <div class="hint">${r.cartes_visibles&&r.villains.length
+        ? "Adversaire : "+r.villains.map(v=>v.map(carteHTML).join(" ")).join(" &nbsp;·&nbsp; ")
+        : r.villains.length+" main(s) adverse(s) CACHÉE(S) — comme à la table"}</div>
+    </div>
+    ${lecture}
+    ${r.bascule_bb!=null?`<div class="ok"><b>⚑ Seuil à retenir :</b> le verdict
+      bascule vers ${r.bascule_bb.toFixed(0)} bb. C'est ce point-là qui se
+      mémorise, pas la liste.</div>`:""}
+    ${tables}`;
+}
+
+// ══ LEXIQUE ═════════════════════════════════════════════════════════════
+async function lexRun(){
+  const r=await api("lexique",{q:document.getElementById("lx-q").value});
+  const out=document.getElementById("lx-out");
+  if(r.error){out.innerHTML=`<div class="warn">${r.error}</div>`;return;}
+  const parCat={};
+  (r.termes||[]).forEach(t=>{(parCat[t.categorie]=parCat[t.categorie]||[]).push(t);});
+  const blocs=Object.entries(parCat).map(([cat,lst])=>`
+    <h2 style="text-transform:capitalize">${cat}</h2>
+    <div class="diffgrid">${lst.map(t=>`
+      <div class="card" style="padding:12px 14px">
+        <b style="color:#c4b5fd">${t.nom}</b>
+        <div style="margin-top:4px">${t.definition}</div>
+        ${t.pourquoi?`<div class="muted" style="margin-top:6px">
+          <b>Pourquoi ça compte :</b> ${t.pourquoi}</div>`:""}
+      </div>`).join("")}</div>`).join("");
+  out.innerHTML=blocs||'<div class="skel">Aucun terme ne correspond.</div>';
 }
 
 // ══ CAPTURE D'ÉCRAN → CARTES ════════════════════════════════════════════

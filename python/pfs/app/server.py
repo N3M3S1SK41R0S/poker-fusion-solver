@@ -838,6 +838,59 @@ class API:
         }
 
 
+    # ── Simulateur de main ───────────────────────────────────────────────
+    @staticmethod
+    def simuler(p: dict) -> dict:
+        """Tire une main au hasard et dit quoi faire selon la composition.
+
+        Payload : {"joueurs": 2, "cartes_board": 0, "cartes_visibles": false,
+                   "villain": "moyenne", "positions": ["BTN"],
+                   "tapis": [5,8,10,12,15,20,25], "pot": 1.5, "bet": 0}
+        """
+        from pfs.train.simulateur import TAPIS_PAR_DEFAUT, simuler as _sim
+
+        r = _sim(
+            joueurs=int(p.get("joueurs", 2)),
+            cartes_board=int(p.get("cartes_board", 0)),
+            cartes_visibles=bool(p.get("cartes_visibles", False)),
+            tapis=[float(x) for x in (p.get("tapis") or TAPIS_PAR_DEFAUT)],
+            positions=[str(x) for x in (p.get("positions") or ["BTN"])],
+            villain=str(p.get("villain", "moyenne")),
+            pot=float(p.get("pot", 1.5) or 1.5),
+            bet=float(p.get("bet", 0) or 0),
+        )
+        return {
+            "hero": list(r.main.hero), "groupe": r.main.groupe,
+            "board": list(r.main.board),
+            "villains": [list(v) for v in r.main.villains],
+            "cartes_visibles": r.cartes_visibles,
+            "equite_reelle": r.equite_reelle,
+            "equite_supposee": r.equite_supposee,
+            "bascule_bb": r.bascule_bb,
+            "verdicts": [
+                {"tapis_bb": v.tapis_bb, "position": v.position,
+                 "joueurs": v.joueurs, "action": v.action,
+                 "certain": v.certain, "ev_bb": v.ev_bb,
+                 "equite": v.equite, "requise": v.requise}
+                for v in r.verdicts
+            ],
+            "explain": r.explain(),
+        }
+
+    # ── Lexique ──────────────────────────────────────────────────────────
+    @staticmethod
+    def lexique(p: dict) -> dict:
+        """Vocabulaire du poker et du solveur. Payload : {"q": "motif"}."""
+        from pfs.lexique import chercher
+
+        return {"termes": [
+            {"nom": t.nom, "categorie": t.categorie,
+             "definition": t.definition, "pourquoi": t.pourquoi,
+             "aussi": list(t.aussi)}
+            for t in chercher(str(p.get("q", "")))
+        ]}
+
+
 ROUTES: dict[str, Callable[[dict], dict]] = {
     "range": API.range_get,
     "range/compare": API.range_compare,
@@ -863,6 +916,8 @@ ROUTES: dict[str, Callable[[dict], dict]] = {
     "review/pushfold": API.review_pushfold,
     "advise": API.advise,
     "recognize": API.recognize,
+    "simuler": API.simuler,
+    "lexique": API.lexique,
 }
 
 
