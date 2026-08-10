@@ -796,15 +796,66 @@ class API:
             matches = recognize_cards(source, [tuple(int(v) for v in r) for r in rois])
         else:
             matches = [identify_card(source)]
+
+        detail = [
+            {"card": m.card, "distance": m.distance, "margin": m.margin,
+             "confidence": m.confidence, "runner_up": m.runner_up,
+             # exposé même en cas de refus : c'est ce qui rend l'échec
+             # diagnostiquable côté interface
+             "best_guess": m.best_guess, "statut": m.statut}
+            for m in matches
+        ]
+
+        # Archiver ce qui n'a PAS été lu avec certitude. Sans cette collecte,
+        # chaque échec réel disparaissait avec l'onglet, et il ne restait
+        # que des tables synthétiques pour mesurer — c'est ce qui a laissé
+        # passer les défauts les plus coûteux.
+        if b64 and len(matches) == 1 and matches[0].statut != "sure":
+            from pfs.vision.archive import enregistrer_echec
+            try:
+                enregistrer_echec(b64, {
+                    **detail[0],
+                    "cible": str(p.get("cible", "")),
+                    "taille_px": list(p.get("taille_px", [])),
+                })
+            except Exception:
+                pass       # l'archivage ne doit jamais casser la lecture
+
+        return {"cards": [m.card for m in matches], "detail": detail}
+
+    # ── Archive des captures et des échecs ──────────────────────────────
+    @staticmethod
+    def capture(p: dict) -> dict:
+        """Archive une capture entière. Payload : {"image_b64": "..."}."""
+        from pfs.vision.archive import dossier_archive, enregistrer_capture
+
+        b64 = str(p.get("image_b64", "")).strip()
+        if not b64:
+            raise ValueError("champ 'image_b64' requis.")
+        chemin = enregistrer_capture(b64, str(p.get("note", "")))
+        return {"chemin": str(chemin), "dossier": str(dossier_archive())}
+
+    @staticmethod
+    def archive(p: dict) -> dict:
+        """Inventaire de l'archive : combien de captures, combien d'échecs."""
+        from pfs.vision.archive import dossier_archive, lister_echecs
+
+        d = dossier_archive()
+        echecs = lister_echecs()
         return {
-            "cards": [m.card for m in matches],
-            "detail": [
-                {"card": m.card, "distance": m.distance, "margin": m.margin,
-                 "confidence": m.confidence, "runner_up": m.runner_up,
-                 # exposé même en cas de refus : c'est ce qui rend l'échec
-                 # diagnostiquable côté interface
-                 "best_guess": m.best_guess, "statut": m.statut}
-                for m in matches
+            "dossier": str(d),
+            "captures": len(list(d.glob("*.png"))),
+            "echecs": len(echecs),
+            "refus": sum(1 for e in echecs if e.statut == "refus"),
+            "proposes": sum(1 for e in echecs if e.statut == "propose"),
+            "annotes": sum(1 for e in echecs if e.verite),
+            "derniers": [
+                {"fichier": e.image.name, "statut": e.statut,
+                 "candidat": e.diagnostic.get("best_guess"),
+                 "distance": e.diagnostic.get("distance"),
+                 "marge": e.diagnostic.get("margin"),
+                 "verite": e.verite}
+                for e in echecs[:20]
             ],
         }
 
@@ -918,6 +969,8 @@ ROUTES: dict[str, Callable[[dict], dict]] = {
     "recognize": API.recognize,
     "simuler": API.simuler,
     "lexique": API.lexique,
+    "capture": API.capture,
+    "archive": API.archive,
 }
 
 

@@ -268,6 +268,10 @@ kbd{font:11px ui-monospace,monospace;background:#1a1a28;border:1px solid var(--l
       </div>
       <div id="shot-log" class="hint"></div>
     </div>
+    <div id="arch" class="hint" style="margin-top:10px"></div>
+    <div class="hint">Chaque capture collée et chaque découpe non lue sont
+    conservées sur ton disque : c'est la matière réelle qui manque pour
+    corriger la reconnaissance.</div>
   </div>
 </section>
 
@@ -984,7 +988,32 @@ function setShotTarget(t){
     "cible : "+(t==="hero"?"ma main":"board");
 }
 
+// Toute capture collée est archivée sur le disque. Les captures qui ont
+// échoué disparaissaient avec l'onglet : il ne restait que des tables
+// synthétiques pour mesurer, et c'est ce qui a laissé passer les défauts
+// les plus coûteux. Une capture réelle vaut mille tables reconstituées.
+async function archiverCapture(blob){
+  try{
+    const b64=await new Promise(r=>{const fr=new FileReader();
+      fr.onload=()=>r(fr.result); fr.readAsDataURL(blob);});
+    const rep=await api("capture",{image_b64:b64});
+    if(!rep.error)majArchive();
+  }catch(e){/* l'archivage ne doit jamais empêcher de travailler */}
+}
+
+async function majArchive(){
+  const el=document.getElementById("arch");
+  if(!el)return;
+  const a=await api("archive",{});
+  if(a.error)return;
+  el.innerHTML=`<b>${a.captures}</b> capture(s) archivée(s) ·
+    <b>${a.echecs}</b> découpe(s) non lue(s)
+    (${a.refus} refus, ${a.proposes} à confirmer)
+    <div class="muted" style="margin-top:4px">${a.dossier}</div>`;
+}
+
 function loadShot(blob){
+  archiverCapture(blob);
   const img=new Image();
   img.onload=()=>{
     shotImg=img;
@@ -1056,8 +1085,10 @@ function loadShot(blob){
     c.getContext("2d").drawImage(shotImg,roi[0],roi[1],roi[2],roi[3],0,0,roi[2],roi[3]);
     const log=document.getElementById("shot-log");
     log.insertAdjacentHTML("beforeend",' <span class="muted">⟳</span>');
-    const r=await api("recognize",{image_b64:c.toDataURL("image/png")});
+    const r=await api("recognize",{image_b64:c.toDataURL("image/png"),
+      cible:shotTarget, taille_px:[roi[2],roi[3]]});
     const m=(r.detail||[])[0];
+    if(m&&m.statut!=="sure")majArchive();
 
     // Lecture PLAUSIBLE mais pas certaine : on la propose au lieu de la
     // gober. Mesuré sur images dégradées (ré-échelle, JPEG), une lecture de
