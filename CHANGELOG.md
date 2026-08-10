@@ -37,11 +37,41 @@ Le conseil reste disponible sur les mains **terminées** et à l'entraînement.
 
 - **Deux serveurs sur le même port.** `HTTPServer` active `allow_reuse_address`
   par défaut ; sur Windows cette option laisse un **second** processus se lier
-  à un port déjà en écoute. Après chaque modification du code, un nouveau
-  serveur démarrait pendant que l'ancien continuait de répondre : les routes
-  fraîchement ajoutées renvoyaient « route inconnue » une fois sur deux. Le
-  serveur utilise désormais `SO_EXCLUSIVEADDRUSE` et refuse de démarrer, avec
-  un message actionnable, si le port est pris.
+  à un port déjà en écoute — vérifié en faisant écouter *trois* processus sur
+  le même port, `netstat` affichant les trois. Le partage n'est pas
+  équitable : le listener **le plus ancien capte la totalité** des connexions
+  (12/12 puis 6/6), le suivant ne prenant le relais qu'à sa mort. Après chaque
+  modification du code, un nouveau serveur démarrait donc pendant que l'ancien
+  répondait à *tout*, et les routes fraîchement ajoutées renvoyaient « route
+  inconnue » systématiquement — pas par intermittence, ce qui rendait le
+  diagnostic trompeur. Le serveur utilise désormais `SO_EXCLUSIVEADDRUSE` et
+  refuse de démarrer, avec un message actionnable, si le port est pris.
+- **Cartes inventées avec aplomb.** La première lecture en direct a produit
+  une carte « 4h » avec le statut **sure** sur une découpe de *décor*. La
+  règle de confiance ne regardait que la **marge** — l'avance du meilleur
+  gabarit sur le deuxième — sans exiger que ce gabarit *ressemble* à l'image.
+  Sur une découpe qui n'est pas une carte, le classement des gabarits est
+  arbitraire, et l'écart entre le premier et le deuxième l'est autant. Mesure
+  sur 552 échantillons : les vraies cartes cadrées sur feutre s'échelonnent
+  de 251 à 599, les non-cartes (bruit, feutre, dos, jetons) de 658 à 790 —
+  un vide franc où ne tombe aucun des deux nuages. `DISTANCE_SURE = 625` s'y
+  place : 100 % des vraies cartes conservées, 100 % des fausses rejetées. Un
+  premier essai à 520 a été mesuré puis abandonné, il coupait au milieu des
+  vraies cartes (40/52 → 12/52 sur feutre vert). Une carte masquée au tiers
+  par le HUD tombe à 688, donc côté « non-carte » — c'est le bon
+  comportement : masquée, elle ne doit pas être affirmée.
+- **Chemin d'archive mensonger.** Le logiciel annonçait
+  `%LOCALAPPDATA%\PokerFusionSolver\captures`, un dossier qui **n'existe pas**
+  sur le disque. L'interpréteur du projet dérive d'un Python Microsoft Store
+  (`sys.base_prefix` sous `C:\Program Files\WindowsApps\...`) : Windows
+  redirige silencieusement les écritures vers le `LocalCache` du paquet, tout
+  en laissant `os.environ["LOCALAPPDATA"]` et `os.path.abspath` afficher le
+  chemin d'origine. `Test-Path` répondait `False` là où Python voyait ses
+  fichiers. `dossier_archive()` résout désormais le chemin réel, copiable dans
+  l'explorateur. Aucun test ne pouvait le détecter : tous remplacent
+  `LOCALAPPDATA` par un dossier temporaire, ce qui court-circuite la
+  virtualisation — d'où `tests/test_archive_chemin_reel.py`, qui travaille
+  dans l'environnement réel.
 - **Échecs d'archive qui s'écrasaient.** Les noms de fichiers étant horodatés
   à la seconde, les huit découpes d'une même lecture de table se recouvraient :
   l'archive ne gardait qu'une découpe par seconde et par statut, en silence.
@@ -52,19 +82,52 @@ Le conseil reste disponible sur les mains **terminées** et à l'entraînement.
 
 ### Mesuré
 
-- Localisation sur image réduite à 1280 px avant reconnaissance sur
-  l'originale : sur 48 tables synthétiques 2560×1529, **100 % de localisation
-  et de rôles** dans les deux cas, mais **32 boîtes fantômes à pleine échelle
-  contre 0 à 1280** — la réduction lisse les petits décors pris pour des
-  cartes. Balayage complet des largeurs dans `live.py` : 1280 est un optimum,
-  pas un compromis.
-- Boucle live complète : **750 ms** sur une table, 5,6 s sur une fenêtre de
-  bureau chargée (cas le pire, milliers d'arêtes verticales).
-- **Non mesuré, assumé** : la précision de reconnaissance sur une vraie table
-  de room. La chaîne a été validée de bout en bout, mais sur une table
-  synthétique dont les cartes ne sont pas celles du deck PMU — le taux de
-  lecture observé (0/8) ne dit rien de la performance réelle. C'est la
-  première chose à faire à la prochaine session.
+Banc rejouable : `python banc_localisation.py --large` (54 tables décorées
+2560×1529 par configuration). Il n'existait pas dans une première version de
+cette entrée, et les chiffres publiés étaient donc invérifiables — deux
+d'entre eux étaient faux.
+
+- **La localisation se fait à pleine échelle.** C'est la seule largeur qui
+  tient partout : **100 % de localisation et de rôles dans les cinq
+  configurations** (habillage plein, deck classique, images bruitées, cartes
+  de 52×70 et de 80×108). Réduire à 1280 avant de chercher ne coûte rien sur
+  la famille de tables qui avait servi à la première mesure, mais fait tomber
+  la localisation à **56,0 % sur le deck classique**, 70,2 % en 52×70,
+  79,8 % avec du bruit. 1280 n'est même pas monotone : 960 y fait mieux
+  (65,5 %). Le réglage reste accessible par paramètre pour le seul cas qui le
+  justifie — une fenêtre de bureau très chargée.
+- Contrepartie assumée : la pleine échelle produit **~0,83 boîte fantôme par
+  table** (45 sur 54), contre 0 à 1280. Toutes tombent dans `others`, aucune
+  n'est promue carte du héros ou du board, et les échecs de `others` ne sont
+  plus archivés — sinon le banc se remplirait de découpes de feutre et de dos
+  d'adversaires, illisibles par nature.
+- Coût : ~700 ms pour localiser une table à pleine échelle, ~230 ms à 1280.
+  Hors capture, la chaîne complète coûte ~300 ms sur une table 2030×1271
+  (décodage 10 ms, localisation ~220 ms, reconnaissance de 6 boîtes ~45 ms).
+
+### Corrigé après coup dans cette même entrée
+
+Trois chiffres publiés ici étaient faux, et une décision de conception en
+découlait :
+
+- « 48 tables, 100 % de localisation à 1280 comme à pleine échelle » — le
+  banc en comptait 18, et le 100 % à 1280 ne valait que pour une seule
+  famille de tables.
+- « 32 boîtes fantômes à pleine échelle » — le compte est proportionnel au
+  nombre de tables (~0,83/table) : 15 sur 18 tables, 45 sur 54. 32 ne
+  correspond à aucun banc.
+- « 1280 est un optimum, pas un compromis » — faux, voir ci-dessus.
+- La justification « en dessous, les arêtes de carte passent sous le plancher
+  de 14 px » était fausse aussi : à 640 px la carte fait encore 23 px de
+  haut. La cause de l'effondrement n'est pas isolée.
+
+### Non mesuré, assumé
+
+La précision de reconnaissance sur une **vraie table de room**. La chaîne a
+été validée de bout en bout, mais sur une table synthétique dont les cartes
+ne sont pas celles du deck PMU — le taux de lecture observé (0/8) ne dit rien
+de la performance réelle. C'est la première chose à faire à la prochaine
+session.
 
 ## v4.2.0 — 8 août 2026
 

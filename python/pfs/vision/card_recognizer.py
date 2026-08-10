@@ -79,9 +79,45 @@ _THEMES = ("pmu_deck", "pmu_solid")
 # D'où trois niveaux plutôt qu'un seuil : au-dessus de MARGE_SURE la lecture
 # s'impose ; entre MARGE_PROPOSE et MARGE_SURE elle est PROPOSÉE et attend un
 # clic — l'œil humain tranche en une seconde et ne se trompe pas sur une carte
-# qu'il voit ; en dessous, on refuse. Aucune carte n'est jamais affirmée à
-# tort, et plus rien n'est perdu en silence.
-MAX_ACCEPT_DISTANCE = 900
+# qu'il voit ; en dessous, on refuse.
+#
+# CORRECTION (10 août 2026). Cette construction affirmait tout de même des
+# cartes à tort, et la première lecture en direct l'a montré : une découpe de
+# DÉCOR a été lue « 4h », statut « sure », à un écart de 703 — parce que la
+# marge, elle, valait 44. La marge seule ne suffit pas : elle dit qu'un
+# gabarit devance ses concurrents, pas qu'il ressemble à l'image.
+#
+# Mesure du plancher de bruit sur 240 découpes qui ne sont PAS des cartes
+# (bruit uniforme, aplats de feutre, dos de cartes, jetons chiffrés) ::
+#
+#     famille   écart min   p5    médiane      sure   propose
+#     bruit          658   684        718         1        21
+#     feutre         700   713        747         0        25
+#     dos            686   695        730         1        20
+#     jeton          670   699        717         0        28
+#
+# Le plancher global est 658, très en dessous de MAX_ACCEPT_DISTANCE : 39 %
+# des non-cartes atteignaient « propose » et 0,8 % « sure ».
+#
+# Une lecture affirmée exige donc désormais AUSSI d'être PROCHE. Les deux
+# populations se séparent franchement — 312 cartes réellement cadrées sur
+# feutre (2 habillages × 3 feutres × 52 cartes) contre les 240 non-cartes ::
+#
+#                              n     min   p5   médiane   p95   max
+#     cartes bien identifiées  312   251   268     406    565   599
+#     non-cartes               240   658   695     724    767   790
+#
+# Il existe donc un vide réel entre 599 et 658, où AUCUN des 552 échantillons
+# ne tombe. Le seuil s'y place au milieu : il garde 100 % des vraies cartes
+# et rejette 100 % des fausses. Un premier essai à 520 avait été tenté et
+# rejeté — il coupait au milieu de la population des vraies cartes et faisait
+# tomber la lecture de 40/52 à 12/52 sur feutre vert.
+#
+# Repère utile : une carte masquée au tiers par le HUD monte à 688, donc dans
+# la population des non-cartes — et c'est le bon comportement, une carte
+# masquée ne doit pas être affirmée.
+MAX_ACCEPT_DISTANCE = 900   # au-delà : refus pur et simple
+DISTANCE_SURE = 625         # au-delà : au mieux « propose », jamais « sure »
 MARGE_SURE = 32
 MARGE_PROPOSE = 8
 MIN_MARGIN = MARGE_SURE     # compatibilité : ancien nom du seuil d'acceptation
@@ -266,11 +302,15 @@ def identify_card(image, templates: dict[str, int] | None = None,
                 pass
 
     best_d, best_c, margin, second_c = best
-    # La confiance suit la MARGE, pas la distance absolue : c'est elle qui
-    # sépare une lecture sûre d'une hésitation (cf. calibration ci-dessus).
+    # La confiance suit la MARGE : c'est elle qui sépare une lecture nette
+    # d'une hésitation entre deux gabarits (cf. calibration ci-dessus).
     conf = max(0.0, min(1.0, margin / 80.0))
     plausible = best_d <= MAX_ACCEPT_DISTANCE
-    if plausible and margin >= MARGE_SURE:
+    # Mais AFFIRMER exige les deux : devancer les concurrents (marge) ET
+    # ressembler au gabarit (distance). Sans la seconde condition, une
+    # découpe de décor ou un dos de carte peut sortir « sure » sur une marge
+    # chanceuse — c'est arrivé, et c'est le pire mode d'échec de cet outil.
+    if plausible and margin >= MARGE_SURE and best_d <= DISTANCE_SURE:
         statut = "sure"
     elif plausible and margin >= MARGE_PROPOSE:
         statut = "propose"

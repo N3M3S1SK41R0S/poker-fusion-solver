@@ -38,15 +38,31 @@ _HORODATAGE = "%Y%m%d-%H%M%S"
 
 
 def dossier_archive() -> Path:
-    """Racine de l'archive, créée au besoin.
+    """Racine de l'archive, créée au besoin, **chemin réel**.
 
     Sous ``%LOCALAPPDATA%`` : hors du dépôt, donc jamais versionnée, et
     conservée d'une réinstallation du logiciel à l'autre.
+
+    Le ``realpath`` final n'est pas cosmétique. Quand l'interpréteur vient
+    du Microsoft Store — ce qui est le cas ici, ``sys.base_prefix`` pointant
+    sous ``C:\\Program Files\\WindowsApps\\PythonSoftwareFoundation...`` —
+    Windows redirige silencieusement les écritures du processus vers le
+    ``LocalCache`` du paquet, **tout en laissant** ``os.environ["LOCALAPPDATA"]``
+    et ``os.path.abspath`` afficher le chemin d'origine. Le logiciel
+    annonçait donc un dossier qui n'existe pas : ``Test-Path`` répondait
+    ``False`` depuis PowerShell là où Python voyait ses fichiers, et
+    l'utilisateur ne pouvait pas retrouver ses captures dans l'explorateur.
+
+    ``realpath`` traverse la redirection et rend le chemin qu'on peut coller
+    dans une barre d'adresse. Les tests ne pouvaient pas voir le défaut :
+    ils remplacent ``LOCALAPPDATA`` par un dossier temporaire, ce qui
+    court-circuite la virtualisation — d'où
+    ``tests/test_archive_chemin_reel.py``, qui compare les deux.
     """
     base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~/.local/share")
     d = Path(base) / "PokerFusionSolver" / "captures"
     (d / "echecs").mkdir(parents=True, exist_ok=True)
-    return d
+    return Path(os.path.realpath(d))
 
 
 def _decoder(image_b64: str) -> bytes:

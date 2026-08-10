@@ -322,42 +322,51 @@ class LectureLive:
         return f"{' | '.join(bouts)}  ({self.sures}/{len(self.cartes)} sûres)"
 
 
-#: Largeur à laquelle on ramène la capture AVANT de localiser les cartes.
+#: Réduire l'image avant de localiser : optimisation ESSAYÉE PUIS REJETÉE.
 #:
-#: Le détecteur raisonne en fractions de l'image (`MIN_AREA_FRAC`) : il est
-#: insensible à l'échelle, alors que son coût croît avec le nombre de pixels.
-#: Sur une capture d'écran 2560×1529 la localisation prend 7,6 s contre 0,6 s
-#: pour la capture elle-même — inutilisable en boucle.
+#: Le détecteur raisonne en fractions de l'image (`MIN_AREA_FRAC`), donc
+#: insensible à l'échelle, alors que son coût croît avec le nombre de
+#: pixels. Réduire avant de chercher paraissait donc gratuit. Une première
+#: mesure, sur une seule famille de tables, l'a semblé confirmer — et j'ai
+#: publié « 1280 est un optimum ». C'était faux.
 #:
-#: Balayage mesuré (18 tables synthétiques décorées 2560×1529 pour la
-#: qualité ; une vraie capture d'écran chargée pour le coût, cas le pire) ::
+#: Le banc complet (`banc_localisation.py --large`, 54 tables décorées
+#: 2560×1529 par configuration) dit l'inverse — localisation / rôles ::
 #:
-#:     largeur   carte      localisées   rôles   fantômes   synthé    réel
-#:        640    22 px           14,3 %  14,3 %        27     89 ms   936 ms
-#:        800    28 px           71,4 %  42,9 %         9    109 ms  1754 ms
-#:        960    34 px           71,4 %  42,9 %         0    147 ms  2624 ms
-#:       1280    45 px          100,0 % 100,0 %         0    229 ms  4414 ms
-#:       1600    56 px          100,0 % 100,0 %        18    335 ms  6918 ms
+#:     largeur      référence   deck classique   bruité   52×70   80×108
+#:        640      15,5 / 14,3      2,4 /  0,0  16,3/11,9  0,0/0,0  50,0/21,4
+#:        800      70,2 / 42,9     31,0 / 14,3  16,7/11,1  2,4/2,4  69,0/44,0
+#:        960      70,2 / 42,9     65,5 / 51,2  62,7/38,1 33,3/6,0  78,6/66,3
+#:       1280     100,0 /100,0     56,0 / 22,6  79,8/63,9 70,2/41,7 84,5/84,5
+#:       1600     100,0 /100,0     97,6 / 95,2  96,4/94,0 97,6/95,2 100,0/100,0
+#:     pleine     100,0 /100,0    100,0 /100,0 100,0/100,0 100,0/100,0 100,0/100,0
 #:
-#: 1280 est un optimum, pas un compromis : en dessous la localisation
-#: s'effondre (les arêtes de carte passent sous le plancher de 14 px), au
-#: dessus les boîtes fantômes reviennent — la réduction lisse justement les
-#: petits décors que le détecteur prenait pour des cartes. À pleine échelle
-#: le même banc donne 32 fantômes ; à 1280, zéro.
+#: Trois enseignements :
 #:
-#: Le coût résiduel (4,4 s) est celui d'une fenêtre de bureau chargée, dont
-#: les milliers d'arêtes verticales font enfler l'appariement du détecteur.
-#: Une table de poker est très majoritairement du feutre uni et devrait
-#: coûter bien moins — mais ce n'est pas mesuré, faute de capture d'une
-#: vraie table. À vérifier dès la première session de calibration.
+#: * **La pleine échelle est la seule largeur qui tient partout** : 100 % de
+#:   localisation ET de rôles dans les cinq configurations, sans exception.
+#: * **1280 n'est pas un optimum**, ni même monotone : sur le deck classique
+#:   il fait 56,0 % là où 960 fait 65,5 %. Le 100 % initial n'était qu'un
+#:   accord fortuit avec la taille de carte (68×92) de mon premier banc.
+#: * Le gain de temps est réel mais faible au regard de ce qu'il coûte :
+#:   ~230 ms à 1280 contre ~700 ms en pleine échelle sur une table, pour
+#:   jusqu'à 44 % des cartes perdues.
 #:
-#: La RECONNAISSANCE, elle, se fait toujours sur la capture d'origine : les
-#: boîtes sont remises à l'échelle avant découpe, pour ne perdre aucun détail
-#: du glyphe.
-LARGEUR_DETECTION = 1280
+#: La localisation se fait donc **à pleine échelle** par défaut. La réduction
+#: reste accessible par le paramètre `largeur_detection` de `lire_ecran`,
+#: pour le seul cas où elle se justifie : une fenêtre de bureau très chargée
+#: (milliers d'arêtes verticales), où la localisation atteint 7,6 s. Une
+#: table de poker, presque tout en feutre uni, coûte dix fois moins.
+#:
+#: Contrepartie assumée de la pleine échelle : elle produit ~0,83 boîte
+#: fantôme par table (45 sur 54), là où 1280 n'en produit aucune. Toutes
+#: atterrissent dans `others` — aucune n'est promue carte du héros ou du
+#: board — et `lire_ecran` n'archive plus les échecs de `others`, pour que
+#: le banc ne se remplisse pas de découpes de feutre.
+LARGEUR_SANS_REDUCTION = 0
 
 
-def _reduire(image, largeur: int = LARGEUR_DETECTION):
+def _reduire(image, largeur: int):
     """Image ramenée à `largeur` au plus, et le facteur pour revenir.
 
     Returns
@@ -391,7 +400,15 @@ def _agrandir(b: CardBox, k: float, largeur: int, hauteur: int) -> CardBox:
 
 def _lire_boites(image, boites: list[CardBox], role: str,
                  fenetre: str) -> list[CarteLue]:
-    """Reconnaît chaque boîte et archive celles qui échouent."""
+    """Reconnaît chaque boîte, et archive celles qui échouent — sauf `others`.
+
+    Une découpe de rôle inconnu qui n'est pas lue n'apprend rien : ce peut
+    être une carte, mais aussi un dos d'adversaire (illisible par nature) ou
+    une boîte fantôme posée sur du feutre. En archiver revient à remplir le
+    banc d'essai de bruit, jusqu'à noyer les vrais échecs. Seuls les rôles
+    identifiés — héros et board — méritent d'être conservés pour rejeu.
+    """
+    archivable = role in ("hero", "board")
     lues: list[CarteLue] = []
     for b in boites:
         decoupe = image.crop((b.x, b.y, b.x + b.w, b.y + b.h))
@@ -400,7 +417,7 @@ def _lire_boites(image, boites: list[CardBox], role: str,
             role=role, boite=(b.x, b.y, b.w, b.h),
             carte=m.card, candidat=m.best_guess, statut=m.statut,
             ecart=m.distance, marge=m.margin))
-        if m.statut != "sure":
+        if m.statut != "sure" and archivable:
             # L'échec est archivé tel qu'il a été soumis : c'est cette
             # découpe exacte qu'il faudra rejouer après correction.
             tampon = io.BytesIO()
@@ -415,7 +432,8 @@ def _lire_boites(image, boites: list[CardBox], role: str,
 
 
 def lire_ecran(titre: str | None = None,
-               timeout_s: int = _TIMEOUT_S) -> LectureLive:
+               timeout_s: int = _TIMEOUT_S,
+               largeur_detection: int = LARGEUR_SANS_REDUCTION) -> LectureLive:
     """Capture la fenêtre, localise les cartes, les lit, archive les échecs.
 
     C'est la boucle de calibration complète en un appel. Elle ne conseille
@@ -426,6 +444,13 @@ def lire_ecran(titre: str | None = None,
     titre : str, optional
         Sous-chaîne du titre de la fenêtre ; ``None`` pour la détection
         automatique.
+    largeur_detection : int
+        Largeur à laquelle réduire l'image AVANT de localiser les cartes.
+        ``0`` (défaut) = pas de réduction, seul réglage qui localise 100 %
+        des cartes dans toutes les configurations mesurées. Ne réduire que
+        sur une fenêtre de bureau très chargée, où la localisation à pleine
+        échelle atteint plusieurs secondes — et en sachant ce que ça coûte :
+        voir le tableau de `LARGEUR_SANS_REDUCTION`.
 
     Returns
     -------
@@ -439,12 +464,20 @@ def lire_ecran(titre: str | None = None,
     png_b64 = base64.b64encode(png).decode("ascii")
     image = Image.open(io.BytesIO(png)).convert("RGB")
 
-    reduite, k = _reduire(image)
-    table = read_table(reduite)
+    if largeur_detection:
+        cherchee, k = _reduire(image, largeur_detection)
+    else:
+        cherchee, k = image, 1.0
+    table = read_table(cherchee)
+
     cartes: list[CarteLue] = []
     for role, boites in (("hero", table.hero), ("board", table.board),
                          ("?", table.others)):
-        pleines = [_agrandir(b, k, image.width, image.height) for b in boites]
+        # La reconnaissance se fait toujours sur la capture d'origine : les
+        # boîtes sont remises à l'échelle avant découpe, pour ne perdre
+        # aucun détail du glyphe.
+        pleines = ([_agrandir(b, k, image.width, image.height)
+                    for b in boites] if largeur_detection else list(boites))
         cartes.extend(_lire_boites(image, pleines, role, titre or "auto"))
 
     return LectureLive(fenetre=titre or "auto",

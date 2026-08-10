@@ -1149,13 +1149,25 @@ class _ServeurExclusif(ThreadingHTTPServer):
     `allow_reuse_address` (SO_REUSEADDR) par défaut. Sur Unix cela sert
     seulement à réutiliser un port en TIME_WAIT ; **sur Windows, la même
     option autorise un second processus à se lier à un port déjà en
-    écoute**. Les deux serveurs vivent alors côte à côte et les requêtes
-    partent chez l'un ou chez l'autre, sans règle.
+    écoute**. Mesuré sur cette machine : trois processus ont pu écouter
+    simultanément sur le même port, `netstat` affichant les trois.
+
+    Ce n'est pas un partage équitable, et c'est ce qui rend le symptôme si
+    trompeur : **le plus ancien listener capte la totalité des connexions**
+    (12/12 puis 6/6 dans la mesure), le suivant ne prenant le relais qu'à
+    la mort du précédent.
 
     Symptôme observé : après modification du code, chaque redémarrage
-    lançait un nouveau serveur pendant que l'ancien continuait de répondre.
-    Les routes fraîchement ajoutées renvoyaient « route inconnue » une fois
-    sur deux, et le défaut semblait venir du routeur.
+    lançait un nouveau serveur pendant que l'ancien continuait de répondre —
+    et de répondre à *tout*. Les routes fraîchement ajoutées renvoyaient
+    donc « route inconnue » systématiquement, jamais par intermittence, et
+    le défaut semblait venir du routeur.
+
+    À ne pas confondre avec un autre motif, inoffensif celui-là : `python
+    -m pfs` fait toujours apparaître **deux** PID, parce que le `python.exe`
+    du venv n'est qu'un lanceur qui démarre le vrai `python3.13.exe` du
+    paquet Store. C'est une filiation parent/enfant normale, et un seul
+    socket est ouvert.
 
     `SO_EXCLUSIVEADDRUSE` rétablit le comportement attendu : le second
     démarrage échoue franchement, avec un message qui dit quoi faire.
