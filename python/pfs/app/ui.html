@@ -818,7 +818,6 @@ function loadShot(blob){
     // toujours dans les coordonnées de l'image D'ORIGINE (facteur ci-dessous)
     const maxW=900, scale=Math.min(1,maxW/img.width);
     cv.width=Math.round(img.width*scale); cv.height=Math.round(img.height*scale);
-    cv.dataset.scale=scale;
     cv.getContext("2d").drawImage(img,0,0,cv.width,cv.height);
     document.getElementById("shot-wrap").style.display="";
     shotReset();
@@ -847,9 +846,22 @@ function loadShot(blob){
   // cadrage à la souris
   const cv=document.getElementById("shot"), sel=document.getElementById("shot-sel");
   let x0=0,y0=0,drag=false;
+  // Coordonnées d'AFFICHAGE (pour dessiner le rectangle de sélection).
   const pos=ev=>{const r=cv.getBoundingClientRect();
     return [ev.clientX-r.left,ev.clientY-r.top];};
-  cv.addEventListener("mousedown",ev=>{[x0,y0]=pos(ev);drag=true;
+  // Coordonnées dans l'IMAGE D'ORIGINE. Le canvas est redimensionné à
+  // l'affichage par le CSS (max-width:100 %) : sa largeur rendue ne vaut
+  // donc PAS sa largeur d'attribut. Convertir avec la seule échelle du
+  // canvas décalait le découpage — il ne tombait pas sur la carte, d'où des
+  // écarts de reconnaissance ~730 (le double d'une carte reconnue) sur des
+  // cartes pourtant parfaitement visibles. On passe directement des pixels
+  // rendus aux pixels de l'image source.
+  const posImage=ev=>{const r=cv.getBoundingClientRect();
+    const kx=shotImg.width/r.width, ky=shotImg.height/r.height;
+    return [(ev.clientX-r.left)*kx,(ev.clientY-r.top)*ky];};
+  let ix0=0,iy0=0;                              // départ, en pixels image
+  cv.addEventListener("mousedown",ev=>{
+    [x0,y0]=pos(ev); [ix0,iy0]=posImage(ev); drag=true;
     Object.assign(sel.style,{display:"block",left:x0+"px",top:y0+"px",
       width:"0px",height:"0px"});});
   cv.addEventListener("mousemove",ev=>{if(!drag)return;const[x,y]=pos(ev);
@@ -858,11 +870,10 @@ function loadShot(blob){
   cv.addEventListener("mouseup",async ev=>{
     if(!drag)return; drag=false; sel.style.display="none";
     const[x,y]=pos(ev);
-    const w=Math.abs(x-x0), h=Math.abs(y-y0);
-    if(w<10||h<10)return;                       // clic accidentel
-    const s=+cv.dataset.scale||1;               // vers l'image d'origine
-    const roi=[Math.round(Math.min(x,x0)/s),Math.round(Math.min(y,y0)/s),
-               Math.round(w/s),Math.round(h/s)];
+    if(Math.abs(x-x0)<10||Math.abs(y-y0)<10)return;   // clic accidentel
+    const[ix,iy]=posImage(ev);
+    const roi=[Math.round(Math.min(ix,ix0)),Math.round(Math.min(iy,iy0)),
+               Math.round(Math.abs(ix-ix0)),Math.round(Math.abs(iy-iy0))];
     // découpe la région et l'envoie seule : plus robuste qu'un aller-retour
     // de l'image entière à chaque carte
     const c=document.createElement("canvas");
