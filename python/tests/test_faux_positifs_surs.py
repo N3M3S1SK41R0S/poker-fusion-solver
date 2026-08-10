@@ -152,5 +152,16 @@ def test_les_vrais_gabarits_restent_affirmes() -> None:
 
 
 def test_les_seuils_restent_ordonnes() -> None:
-    """Un seuil d'affirmation au-dessus du seuil de plausibilité n'aurait aucun sens."""
-    assert DISTANCE_SURE < MAX_ACCEPT_DISTANCE
+    """Le seuil d'affirmation ne dépasse jamais celui de plausibilité.
+
+    Affirmer une carte que l'on juge par ailleurs implausible n'aurait aucun
+    sens. L'égalité, elle, est légitime et c'est l'état actuel : les deux
+    seuils ont convergé vers le même vide mesuré entre les vraies cartes
+    (≤ 599) et les non-cartes (≥ 658). Au-dessus, rien n'est plausible ;
+    en dessous, c'est la marge qui départage « sure » de « propose ».
+
+    Ce test a été écrit avec un `<` strict alors que le plafond valait encore
+    900 ; il est passé au `<=` quand la mesure sur capture réelle a fait
+    descendre le plafond. La contrainte réelle a toujours été celle-ci.
+    """
+    assert DISTANCE_SURE <= MAX_ACCEPT_DISTANCE

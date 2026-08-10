@@ -38,7 +38,11 @@ from pfs.core.range_model import (
     group_name,
 )
 from pfs.data.hand_history import ActionType, ParsedHand, Street, parse_file
-from pfs.solver.pushfold import equity_matrix_169, solve_hu_pushfold
+from pfs.solver.pushfold import (
+    PushFoldError,
+    equity_matrix_169,
+    solve_hu_pushfold,
+)
 
 __all__ = [
     "ShoveSpot",
@@ -105,6 +109,10 @@ class PushFoldReview:
     n_hu_sb: int = 0          # décisions SB heads-up examinées
     n_skipped_multiway: int = 0
     n_skipped_deep: int = 0   # tapis > MAX_EFF_BB
+    #: Spots où le tapis effectif ne dépasse pas la blinde + l'ante : jam et
+    #: fold y sont indiscernables, il n'y a aucune décision à juger. Comptés
+    #: plutôt qu'ignorés, pour que la couverture annoncée reste vraie.
+    n_skipped_degenerate: int = 0
 
     @property
     def n_mistakes(self) -> int:
@@ -133,7 +141,8 @@ class PushFoldReview:
             "══════════════════════════════════════════════════════════",
             f"  Décisions SB heads-up jugées : {n}"
             f"   (multiway ignorés : {self.n_skipped_multiway} ;"
-            f" tapis >25bb : {self.n_skipped_deep})",
+            f" tapis >25bb : {self.n_skipped_deep} ;"
+            f" tapis ≤ blinde+ante : {self.n_skipped_degenerate})",
         ]
         if n:
             loose = len(self.loose_jams)
@@ -268,7 +277,16 @@ def review_pushfold_hands(
         if eff_bb > MAX_EFF_BB:
             rev.n_skipped_deep += 1
             continue
-        if eff_bb < 1.0:
+        # Sous ce tapis il n'y a plus de choix à juger : la grosse blinde et
+        # l'ante engagent déjà tout le monde, jam et fold se confondent. Le
+        # garde-fou testait `eff_bb < 1.0` en oubliant l'ante — un spot à
+        # 1,2 bb avec 0,25 d'ante passait donc au solveur, qui levait une
+        # PushFoldError et emportait l'analyse ENTIÈRE du dossier. Sur les
+        # 330 mains d'un compte, une seule main de ce type suffisait à ne
+        # rien rendre du tout.
+        ante_bb = h.ante / h.big_blind if h.ante else 0.0
+        if eff_bb <= 1.0 + ante_bb:
+            rev.n_skipped_degenerate += 1
             continue
 
         rev.n_hu_sb += 1
@@ -277,8 +295,16 @@ def review_pushfold_hands(
             continue
 
         g = _hand_group(h.hero_cards)
-        ante_bb = h.ante / h.big_blind if h.ante else 0.0
-        sol = _solution(round(eff_bb * 10), round(ante_bb * 100))
+        try:
+            sol = _solution(round(eff_bb * 10), round(ante_bb * 100))
+        except PushFoldError:
+            # Filet de sécurité : un spot que le solveur refuse ne doit
+            # jamais coûter la revue des autres. Il est COMPTÉ, pas ignoré
+            # en silence — une couverture partielle qui s'annonce vaut mieux
+            # qu'un total qui ment.
+            rev.n_skipped_degenerate += 1
+            rev.n_hu_sb -= 1
+            continue
         jam_freq = float(sol.jam_range[g])
         ev = float(sol.ev_jam_par_groupe[g])
         verdict, cost = _judge(decision, jam_freq, ev)

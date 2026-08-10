@@ -60,6 +60,24 @@ _DECK_DIR = _TEMPLATE_ROOT / "pmu_deck"
 # vert=trèfle, noir=pique) avec glyphes blancs. On ne DEVINE pas le thème :
 # toutes les signatures sont dans la même banque, et c'est la plus proche qui
 # gagne. Ajouter un thème = déposer un dossier de `<carte>.png` ici.
+#
+# PROVENANCE, retrouvée le 10 août 2026 (`scripts/extraire_jeux_pmu.py`, qui
+# lit les archives Qt du client sans aucun outil Qt) :
+#   · `pmu_solid` est, AU BIT PRÈS, le jeu « 5 » (= « 4c_5 ») de
+#     `PokerCommonWidgetsQRC.rcc`, en 65 × 88 — la taille exacte à laquelle la
+#     table dessine une carte (`BaseCardDelegate.qml`). C'est l'habillage de la
+#     capture PMU PLAY du 10 août ;
+#   · `pmu_deck` vient de `/Images/HHCards/hh_*`, en 15 × 20 : la vignette de
+#     l'historique des mains, pas le carton de la table.
+#
+# COUVERTURE ASSUMÉE. Le client propose **douze** jeux complets (« 0 » à « 5 »
+# et leurs variantes quatre couleurs « 4c_0 » à « 4c_5 ») ; deux sont ici.
+# L'extraction des dix autres est mesurée et sans danger — 676 gabarits, tous
+# se relisent juste, le plancher de bruit ne bouge pas (672, seuil 625) — mais
+# elle n'a été validée sur AUCUNE capture réelle et coûte 8,2 → 20,5 ms par
+# carte. Elle reste donc une commande à passer le jour où un joueur change de
+# jeu, pas une couverture annoncée d'avance :
+#     python scripts/extraire_jeux_pmu.py --extraire
 _THEMES = ("pmu_deck", "pmu_solid")
 
 # Seuils calés sur 1 560 essais (7 tapis × 2 habillages × cadrages serré et
@@ -114,13 +132,64 @@ _THEMES = ("pmu_deck", "pmu_solid")
 # tomber la lecture de 40/52 à 12/52 sur feutre vert.
 #
 # Repère utile : une carte masquée au tiers par le HUD monte à 688, donc dans
-# la population des non-cartes — et c'est le bon comportement, une carte
-# masquée ne doit pas être affirmée.
-MAX_ACCEPT_DISTANCE = 900   # au-delà : refus pur et simple
+# la population des non-cartes. Tant qu'on la compare à un gabarit ENTIER,
+# c'est le bon comportement. Depuis `_truncated_templates`, une découpe dont
+# la FORME dit qu'elle est amputée est comparée à des gabarits amputés
+# d'autant, et redescend à 212–269 : le refus ne portait pas sur la carte mais
+# sur la comparaison.
+#
+# CONFIRMATION SUR CAPTURE RÉELLE (10 août 2026, table PMU PLAY). Le
+# plafond de 900 laissait passer bien pire qu'un « sure » de trop : une carte
+# du héros a été PROPOSÉE comme « Ts » à un écart de 714, et l'interface
+# offrait de l'accepter d'un clic. Au-dessus du plancher de bruit, le
+# classement des gabarits ne porte aucune information : le premier n'est pas
+# « le plus ressemblant », il est le moins éloigné d'un ensemble qui ne
+# contient pas la réponse. Nommer un candidat dans ces conditions fabrique de
+# la confiance à partir de rien.
+#
+# Le plafond de plausibilité descend donc au même point que le seuil
+# d'affirmation : dans le vide mesuré entre les deux populations. Au-delà, le
+# recogniseur dit « je ne connais pas cette carte » — ce qui est la vérité.
+#
+# RECTIFICATION DU DIAGNOSTIC (même journée, `banc_carte_recouverte.py`).
+# Ce refus avait été attribué à un habillage ABSENT des gabarits. C'était
+# faux, et le banc le montre : l'habillage est `pmu_solid`, déjà livré, et le
+# même carton cadré sur TOUTE sa hauteur se lit 5♣ à 490 et 3♥ à 369. Ce qui
+# manquait n'était pas un jeu de cartes mais la prise en compte du bandeau
+# d'équité du client, qui recouvre le tiers bas des cartes du siège — voir
+# `_truncated_templates` juste en dessous. La valeur du seuil, elle, reste
+# celle qu'il faut : une carte dont on ne voit pas assez ne doit pas être
+# affirmée.
+MAX_ACCEPT_DISTANCE = 625   # au-delà : refus, et AUCUN candidat nommé
 DISTANCE_SURE = 625         # au-delà : au mieux « propose », jamais « sure »
 MARGE_SURE = 32
 MARGE_PROPOSE = 8
 MIN_MARGIN = MARGE_SURE     # compatibilité : ancien nom du seuil d'acceptation
+
+# --- cartes RECOUVERTES par un élément d'interface -------------------------
+# Le client PMU PLAY pose un bandeau d'équité sous chaque siège ; il mange le
+# bas des cartes. La carte reste parfaitement lisible à l'œil — rang et
+# enseigne sont en haut à gauche — mais le hachage, lui, compare une image
+# amputée à un gabarit entier. Mesuré sur la capture du 10 août 2026 (découpes
+# exactes 122 × 109, cartons de 122 × 165) : 5♣ lu « Qc » à 705, 3♥ lu « 5h »
+# à 731, donc refusés, alors que la même carte cadrée entière se lit à 490 et
+# 369. C'est la cause du refus, PAS un habillage manquant.
+#
+# Le rapport de la découpe suffit à retrouver ce qui manque : un carton entier
+# vaut 65/88 = 0,739 ; la découpe visible vaut 122/109 = 1,119 ; il en reste
+# donc 0,739 × 109/122 = 0,66. Recoupés à 0,66, les gabarits donnent 5♣ à 212
+# (marge 198) et 3♥ à 269 (marge 166) — franchement sous le seuil, et sans la
+# moindre constante calée sur cette capture.
+CARD_RATIO = 65 / 88        # largeur / hauteur d'un carton entier (gabarits livrés)
+# Au-dessous, la découpe passe pour un carton entier et rien n'est tenté. La
+# borne haute des cartes entières vaut 0,82 dans `table_detector` ; on laisse
+# une marge avant de soupçonner une amputation.
+TRUNC_MIN_RATIO = 0.85
+# Plage de fractions tentées. En dessous de 0,45 il ne reste plus l'index
+# complet (rang + enseigne occupent les 82 % supérieurs de la colonne gauche,
+# cf. `corner_phash`) ; au-dessus de 0,92 l'amputation ne change plus rien.
+TRUNC_MIN_FRACTION = 0.45
+TRUNC_MAX_FRACTION = 0.92
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,6 +304,80 @@ def _card_of(key: str) -> str:
     return key.split("@", 1)[0]
 
 
+@lru_cache(maxsize=64)
+def _truncated_templates(frac: float) -> dict[str, Signature]:
+    """Signatures des gabarits AMPUTÉS de leur bas, à la fraction `frac`.
+
+    Les gabarits livrés sont des cartons ENTIERS. À l'écran, le client pose son
+    bandeau d'équité (« 0 % 0 % 12 % ») sur le bas des cartes du siège : le
+    tiers inférieur du carton n'est jamais visible. Comparer une carte amputée
+    à un gabarit entier revient à comparer deux images différentes — mesuré sur
+    la capture PMU PLAY du 10 août : écart 705 pour le 5♣ et 731 pour le 3♥,
+    au-dessus du plancher de bruit, donc refus.
+
+    On ne devine pas la fraction manquante : elle se DÉDUIT du rapport de la
+    découpe (voir `_visible_fraction`), et on recoupe les gabarits d'autant.
+
+    Le calcul est mémoïsé par fraction arrondie au centième — les fractions
+    utiles tiennent dans une trentaine de valeurs, et une banque coûte
+    104 hachages.
+    """
+    from PIL import Image
+
+    out: dict[str, Signature] = {}
+    for theme in _THEMES:
+        d = _TEMPLATE_ROOT / theme
+        if not d.is_dir():
+            continue
+        for f in sorted(d.glob("*.png")):
+            im = Image.open(f)
+            w, h = im.size
+            keep = max(4, int(round(h * frac)))
+            if keep >= h:
+                continue
+            cut = im.crop((0, 0, w, keep))
+            out[f"{f.stem}@{theme}"] = (phash(cut), corner_phash(cut),
+                                        colour_signature(cut))
+    return out
+
+
+def _visible_fraction(image) -> float | None:
+    """Part de carte encore visible, déduite du RAPPORT de la découpe.
+
+    Un carton entier vaut ``CARD_RATIO`` (largeur / hauteur). Une découpe
+    nettement plus trapue ne peut pas être un carton entier : soit ce n'est pas
+    une carte, soit son bas est recouvert. Dans le second cas la hauteur
+    manquante se lit directement — ``frac = CARD_RATIO × h / w`` — sans aucune
+    constante calée sur une capture particulière.
+
+    Renvoie ``None`` quand la découpe a la forme d'une carte entière, ou quand
+    la fraction déduite sort de la plage où l'index (rang + enseigne, en haut à
+    gauche) reste lisible.
+    """
+    from PIL import Image
+
+    im = image if isinstance(image, Image.Image) else _as_pil_for_ratio(image)
+    w, h = im.size
+    if h <= 0 or w / h <= TRUNC_MIN_RATIO:
+        return None
+    frac = round(CARD_RATIO * h / w, 2)
+    if not (TRUNC_MIN_FRACTION <= frac <= TRUNC_MAX_FRACTION):
+        return None
+    return frac
+
+
+def _as_pil_for_ratio(image):
+    """PIL.Image à partir d'un chemin ou d'un ndarray (sans conversion de mode)."""
+    from PIL import Image
+
+    import numpy as np
+    if isinstance(image, np.ndarray):
+        return Image.fromarray(image.astype("uint8"))
+    if isinstance(image, str) or hasattr(image, "__fspath__"):
+        return Image.open(image)
+    return image
+
+
 def _rank(image, templates: dict[str, Signature]) -> tuple[int, str, int, str | None]:
     """(distance, carte, marge, dauphin) pour une image donnée.
 
@@ -259,6 +402,25 @@ def _rank(image, templates: dict[str, Signature]) -> tuple[int, str, int, str | 
             second_d, second_card = d, _card_of(key)
             break
     return round(best_d), best_card, round(second_d - best_d), second_card
+
+
+def _rank_best(image, templates: dict[str, Signature]
+               ) -> tuple[int, str, int, str | None]:
+    """Meilleure des deux lectures : gabarits entiers, puis gabarits amputés.
+
+    On n'essaie les gabarits amputés que si la découpe est TROP TRAPUE pour un
+    carton entier — c'est la seule situation où l'amputation explique la forme.
+    Sur une découpe de forme normale, rien ne change.
+    """
+    best = _rank(image, templates)
+    frac = _visible_fraction(image)
+    if frac is not None:
+        banque = _truncated_templates(frac)
+        if banque:
+            alt = _rank(image, banque)
+            if alt[0] < best[0]:
+                best = alt
+    return best
 
 
 def identify_card(image, templates: dict[str, int] | None = None,
@@ -287,7 +449,7 @@ def identify_card(image, templates: dict[str, int] | None = None,
         confiance.
     """
     templates = templates if templates is not None else load_templates()
-    best = _rank(image, templates)
+    best = _rank_best(image, templates)
     if autocrop:
         # deux polarités : carte CLAIRE sur tapis sombre (deck classique) et
         # carte SOMBRE sur fond clair (thème à fond plein). On garde la
@@ -295,7 +457,7 @@ def identify_card(image, templates: dict[str, int] | None = None,
         # dégradé, puisque l'original participe à la comparaison.
         for dark in (False, True):
             try:
-                alt = _rank(autocrop_card(image, dark_card=dark), templates)
+                alt = _rank_best(autocrop_card(image, dark_card=dark), templates)
                 if alt[0] < best[0]:
                     best = alt
             except Exception:

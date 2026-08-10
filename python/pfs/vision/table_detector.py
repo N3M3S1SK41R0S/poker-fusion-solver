@@ -6,7 +6,10 @@ leur FORME et leur COULEUR, puis on les range par géométrie.
 
 Méthode retenue : **une carte est un rectangle dont les quatre côtés sont des
 arêtes droites**. On repère les segments verticaux longs, on les apparie, on
-recale le haut et le bas sur les arêtes horizontales, puis on trie.
+recale le haut et le bas sur les arêtes horizontales, puis on trie. Une seule
+exception, et elle est chiffrée plus bas : une carte que l'interface RECOUVRE
+par le bas n'a plus qu'un rectangle VISIBLE, plus large que haut — on le rend
+tel quel, sans jamais deviner ce qui est caché.
 
 Ce qui a échoué, et pourquoi (gardé ici pour ne pas y revenir) :
   · « tout ce qui n'est pas le feutre » — une table a au moins deux tons
@@ -55,7 +58,22 @@ Ce qui a fait la différence, dans l'ordre où ça a été mesuré :
      se valent pas : celle du rapport sépare vraiment sur ce banc (0,82 contre
      0,846 pour le premier avatar, soit 2,6 points de marge et zéro carte
      perdue), celle de la densité tranche DANS une seule population et coûte
-     des cartes. Le prix des deux est chiffré juste en dessous.
+     des cartes. Le prix des deux est chiffré juste en dessous ;
+  6. une carte du héros peut être RECOUVERTE par le bas — bandeau d'équité,
+     pavé du joueur — et c'est le cas de la première capture PMU réelle du
+     dépôt (`tests/donnees/pmu_hero_tronque.png`). Ce n'est PAS un problème
+     de contraste, contrairement à ce que suggère l'intuition « carte verte
+     sur feutre vert » : au bord gauche de cette carte-là le gradient vaut 76
+     en médiane et 54 au p10 contre un seuil de 13 (bruit résiduel nul, PNG),
+     et 98,1 % des lignes du bord le dépassent — le liseré clair du pourtour
+     en porte la moitié. Les segments verticaux sont trouvés, aux bonnes
+     colonnes. Le défaut est GÉOMÉTRIQUE : le bandeau coupe la carte à 68 %
+     de sa hauteur, sa boîte visible mesure 121 × 115 soit un rapport de 1,05
+     là où une carte vaut 0,716, et l'arête verticale d'un seul de ses deux
+     bords se prolonge le long du bandeau (126 px contre 100). L'appariement
+     était donc rejeté AVANT même le test de rapport, par la règle « les deux
+     côtés couvrent la même hauteur ». Ce qu'on rend alors n'est pas la
+     carte : c'est sa partie VISIBLE.
 
 Le prix des deux bornes, mesuré sur les 144 tables du fichier de tests
 (672 cartes) :
@@ -78,6 +96,64 @@ Le prix des deux bornes, mesuré sur les 144 tables du fichier de tests
     0,82 → 0,0 %, à localisation inchangée (98,8 %). Celle-là ne coûte rien
     sur ce banc.
 
+Le chemin « carte coupée par le bas » et le prix de ses trois conditions,
+mesurés sur les mêmes 144 tables — les trois se rejouent en remettant une
+constante à sa valeur neutre :
+
+  · CUT_MIN_COVER = 0,60 (neutre : 0,85, c'est-à-dire chemin fermé). Fermé,
+    le banc donne 664/672 localisées, 659/672 rôles et 0/986 fantômes, et la
+    capture PMU ne rend AUCUNE boîte. Ouvert, le banc donne exactement les
+    mêmes chiffres. Il n'est pas inerte pour autant : sur 5 tables des 144
+    (habillage classique, tapis « bleu nuit » ou « noir », où le libellé de
+    tapis sous les cartes du héros fait office de recouvrement), une boîte
+    devient plus trapue — rapports 0,960 à 1,028 au lieu de ≤ 0,82, cadrage
+    élargi au vide entre les deux cartes. Chacune reste posée sur une vraie
+    carte du héros (IoU 0,66 à 0,72), le nombre de boîtes est identique, et
+    aucun compte ne bouge. C'est le prix mesuré du chemin sur ce banc ;
+  · CUT_TOP_ALIGN = 0,06 (neutre : 1,0, aucun alignement exigé). La coupure
+    vient du bas, donc les deux arêtes partent du même bord haut. Sans cette
+    condition, le chemin apparie un bord de plaque de siège avec une arête de
+    glyphe : le banc passe à 665/672 mais fait entrer **39 fantômes** sur
+    1 026 boîtes. C'est de loin la plus utile des trois. Le cas d'école : une
+    boîte 40 × 37 de rapport 1,08 sur le tapis noir, dont les deux arêtes sont
+    décalées de 5 px EN HAUT pour une hauteur de 32 ;
+  · CUT_BACK_MIN = 32. Une carte entière a le même fond au-dessus et en
+    dessous ; une carte coupée a la table au-dessus et l'élément qui la
+    recouvre en dessous (43,7 sur la capture PMU). Sans cette condition le
+    banc passe à 665/672 mais fait entrer 3 fantômes, tous des avatars de
+    siège (boîtes 33 × 33 et 33 × 34, rapports 0,971 à 1,000). On paie donc
+    une carte sur 672 pour ces trois-là.
+
+Les deux bornes de rapport du chemin coupé, elles, se lisent sur le banc
+`banc_localisation.py --large` (2560 × 1529, cinq configurations) :
+
+  · CUT_MIN_RATIO = 0,92. Sans plancher — c'est-à-dire en acceptant tout ce
+    qui dépasse MAX_RATIO = 0,82 — la configuration bruitée à pleine échelle
+    gagnait UN fantôme (83 boîtes fantômes au lieu de 82 sur 335), une boîte
+    58 × 66 de rapport 0,879 posée sur rien. Le plancher se place dans le vide
+    mesuré entre ce 0,879 et la plus trapue des boîtes conservées (0,960) ;
+    au-dessus, on croit à une coupure, en dessous on lit un cadrage élargi ;
+  · CUT_MAX_RATIO = 1,10 ne se justifie PAS par le banc : desserrée à 1,30
+    elle donne les mêmes 664/672 et 0/986 fantômes. Ce n'est pas une borne
+    anti-fantôme, c'est une borne de SENS — au-delà, la partie cachée dépasse
+    la partie visible. Elle est posée juste au-dessus du seul cas réel mesuré
+    (1,052), avec 5 % de marge.
+
+Ces deux bornes, prises ensemble, disent quelle PART d'une carte peut être
+recouverte pour qu'on la retrouve encore : de 22 % à 35 % de sa hauteur, en
+supposant la carte au rapport standard 0,716. En dessous de 22 % le chemin ne
+s'ouvre pas (la carte reste vue comme entière et son rapport la fait rejeter),
+au-dessus de 35 % elle est perdue. La capture PMU est à 32 % — dans la bande,
+mais près du haut. C'est la limite la plus étroite de ce module.
+
+Dernier effet du chemin coupé, sur l'attribution des rôles cette fois :
+comparer les échelles sur la HAUTEUR faisait perdre son rôle au board dès que
+la main du héros était recouverte (0/18 sur les six tapis du banc, rapport de
+hauteurs 1,315 pour une tolérance de 1,30). La comparaison porte donc sur la
+LARGEUR, qu'une coupure par le bas ne touche pas : 18/18, et le banc entier
+est inchangé au chiffre près (664/672 localisées, 659/672 rôles, 0/986
+fantômes, 0/720 dos promus, avant comme après).
+
 Taux mesurés sur le banc du fichier de tests (`tests/test_table_detector.py`,
 144 tables = 2 habillages × 6 tapis × 3 tailles de board × 2 échelles de carte
 × 2 niveaux de bruit, avec sièges, jetons, boutons, montants et cartes face
@@ -88,12 +164,25 @@ cachée). Ce banc-là est DANS le dépôt : chaque chiffre ci-dessous se rejoue.
     adverse promu en carte du héros ou du board (0/720) ;
   · **0,0 %** de boîtes fantômes (aucune carte inventée sur 986 boîtes).
 
+Sur la SEULE capture réelle dont on dispose (PMU PLAY, 1899 × 1348, tournoi
+6-max, habillage « quatre couleurs à fond plein » absent des gabarits), les
+deux cartes du héros — recouvertes par le bandeau d'équité — sont localisées
+et étiquetées « hero », et les deux dos adverses restent dans « autres ».
+Avant le chemin « carte coupée », `read_table` ne rendait que ces deux dos,
+et les étiquetait « hero » faute de rien trouver de plus bas. Une capture
+n'est pas un banc : ce résultat dit que le cas est traité, il ne dit rien
+d'un taux.
+
 Quel cas est le plus dur dépend du banc, ce n'est pas une propriété du
 détecteur : sur celui-ci, l'habillage plein est à 100 % sur les six tapis et
 tout l'écart vient du deck classique — gris moyen 94,6 %, tapis clair 96,4 %,
 les quatre autres tapis 98,2 % ou plus. Coût mesuré sur une table 900 × 560 :
 0,17 s pour cinq cartes, 0,24 à 0,35 s en moyenne sur le banc — le coût est
-dominé par l'appariement des segments, donc par leur NOMBRE.
+dominé par l'appariement des segments, donc par leur NOMBRE. Le chemin
+« carte coupée » élargit la fenêtre d'appariement de MAX_RATIO à
+CUT_MAX_RATIO, soit +34 % de colonnes candidates : mesuré sur cette même
+table (meilleur de 9 passes, chemin ouvert puis fermé puis rouvert pour
+neutraliser la charge machine), 0,217 s contre 0,202 s, soit +7 %.
 
 Limites assumées, chiffrées :
   · **compression JPEG** — le banc est en PNG, une capture d'écran réelle ne
@@ -111,15 +200,37 @@ Limites assumées, chiffrées :
   · deux cartes qui se chevauchent au point de masquer une arête verticale
     entière ne donnent qu'une seule boîte — c'est signalé par le nombre de
     cartes trouvées, jamais deviné ;
-  · le rapport accepté est 0,60–0,82 (la carte à jouer vaut 0,716, soit ±15 %).
-    Un habillage hors de cette plage serait ignoré : c'est un réglage, pas une
+  · le rapport accepté est 0,60–0,82 pour une carte entière (la carte à jouer
+    vaut 0,716, soit ±15 %), et 0,92–1,10 pour une carte coupée par le bas.
+    Un habillage hors de ces plages serait ignoré : c'est un réglage, pas une
     réécriture ;
+  · une carte coupée par le bas est rendue par sa partie VISIBLE. Sa boîte
+    n'est donc PAS la carte : sur la capture PMU elle mesure 126 × 115 pour
+    une carte de 121 px de large, décalée de 8 px sur la carte de droite —
+    le dédoublonnage garde la plus GRANDE des boîtes concurrentes, et la
+    plus grande est ici celle qui déborde sur la voisine (recouvrement 1,00
+    et 0,98 de la vérité-terrain, IoU 0,92 et 0,90). Pour la reconnaissance
+    du rang et de la couleur, qui lit le coin haut-gauche, c'est sans effet ;
+    pour un futur découpage plein cadre, ça ne l'est pas ;
+  · la part recouverte doit tomber entre 22 % et 35 % de la hauteur de la
+    carte — en supposant celle-ci au rapport standard 0,716, car sa vraie
+    hauteur n'est pas observable : le bas est caché. Sous cette hypothèse la
+    capture PMU est à 32 %, près du haut de la bande. Une carte à peine
+    entamée (moins de 22 %) est vue comme entière et rejetée sur son rapport ;
+    une carte plus qu'à moitié cachée est perdue. C'est la première chose à
+    re-chiffrer sur une deuxième capture réelle ;
+  · l'élément qui recouvre doit TRANCHER sur la table (CUT_BACK_MIN = 32).
+    Un bandeau de la teinte du tapis rendrait la coupure invisible et la
+    carte serait perdue — mesuré en peignant un bandeau (22, 38, 64) sur les
+    six tapis du banc : il échoue sur « bleu nuit » et « noir » ;
   · un rectangle uni au rapport ET à la taille d'une carte reste indiscernable
     d'une carte à ce stade ; c'est la reconnaissance (`card_recognizer`) qui
     tranche ensuite ;
-  · tout est mesuré sur des tables SYNTHÉTIQUES : pas de dégradé de feutre,
-    pas d'ombre portée, un seul jeu de gabarits de cartes. Ces chiffres
-    valident la logique, pas la tolérance au rendu d'un vrai client ;
+  · tous les TAUX sont mesurés sur des tables SYNTHÉTIQUES : pas de dégradé
+    de feutre, pas d'ombre portée, un seul jeu de gabarits de cartes. Ces
+    chiffres valident la logique, pas la tolérance au rendu d'un vrai client.
+    Le dépôt ne contient qu'UNE capture réelle, et une capture ne fait pas un
+    taux : elle vérifie qu'un cas précis est traité, rien de plus ;
   · rien n'appelle encore ce module hors de son banc et de ses tests : la
     fonctionnalité n'est PAS disponible dans l'application.
 """
@@ -156,6 +267,19 @@ QUIET_MAX = 0.25         # densité d'arêtes tolérée dans un abord « calme �
 QUIET_SIDES = 3          # nombre d'abords calmes exigés sur 4
 INNER_MAX = 0.72         # densité d'arêtes tolérée dans le carton (jetons : 0,83)
 NMS_COVER = 0.55         # recouvrement relatif au-delà duquel on ne garde qu'une
+
+# Une carte peut être RECOUVERTE par un élément d'interface posé dessus
+# (bandeau d'équité, pavé du joueur) : seule sa partie haute reste visible. Sa
+# boîte est alors plus LARGE que haute, et une seule de ses deux arêtes
+# verticales garde la bonne longueur — l'autre se prolonge le long du bord de
+# l'élément qui la recouvre. Valeurs mesurées sur la capture PMU du dépôt
+# (`tests/donnees/pmu_hero_tronque.png`) : rapport recalé 1,052 et boîte
+# couvrant 0,79 de la plus longue des deux arêtes.
+CUT_MIN_RATIO = 0.92     # en deçà, c'est un cadrage élargi, pas une coupure
+CUT_MAX_RATIO = 1.10     # rapport apparent maximal d'une carte coupée par le bas
+CUT_MIN_COVER = 0.60     # part de la plus longue arête que la boîte doit couvrir
+CUT_TOP_ALIGN = 0.06     # décalage toléré entre les deux arêtes, EN HAUT
+CUT_BACK_MIN = 32.0      # écart de couleur exigé entre le fond du haut et du bas
 
 
 @dataclass(frozen=True, slots=True)
@@ -347,6 +471,26 @@ def _looks_like_a_card(rgb: np.ndarray, edges: np.ndarray,
     return bool(core.size) and float(core.mean()) <= INNER_MAX
 
 
+def _covered_from_below(rgb: np.ndarray,
+                        box: tuple[int, int, int, int]) -> bool:
+    """Le bord BAS de la boîte est-il un élément posé dessus, pas la table ?
+
+    Une carte entière a le MÊME fond au-dessus et en dessous — la table — et
+    ses deux abords se ressemblent. Une carte coupée a la table au-dessus et
+    l'élément qui la recouvre en dessous. C'est la seule marque de la coupure
+    qui se mesure sans rien supposer de la position de la carte dans l'image,
+    et c'est elle qui écarte les avatars de siège : posés sur le feutre, ils
+    ont le même fond des deux côtés.
+    """
+    _, outside = _side_windows(box)
+    haut, bas = _rect(rgb, *outside[0]), _rect(rgb, *outside[1])
+    if haut.size == 0 or bas.size == 0:
+        return False
+    mh = np.median(haut.reshape(-1, 3), axis=0)
+    mb = np.median(bas.reshape(-1, 3), axis=0)
+    return float(np.sqrt(((mh - mb) ** 2).sum())) >= CUT_BACK_MIN
+
+
 def detect_card_boxes(image) -> list[CardBox]:
     """Localise les cartes d'une capture. Renvoie les boîtes, non triées.
 
@@ -372,10 +516,16 @@ def detect_card_boxes(image) -> list[CardBox]:
         return []
     seg = seg[np.argsort(seg[:, 0])]
     cols = seg[:, 0]
-    width_max = int(MAX_RATIO * (seg[:, 2] - seg[:, 1] + 1).max()) + 2
+    # La plus large des cartes possibles, rapportée à la plus haute arête.
+    # C'est CUT_MAX_RATIO et non MAX_RATIO qui borne ici : une carte coupée
+    # par le bas est plus large que haute, et sur une image où l'arête la plus
+    # longue est justement celle d'une carte coupée, la borne à MAX_RATIO
+    # excluait la bonne paire de colonnes avant même de l'examiner (mesuré :
+    # 121 px de large pour une fenêtre de 106).
+    width_max = int(CUT_MAX_RATIO * (seg[:, 2] - seg[:, 1] + 1).max()) + 2
 
     kept: list[tuple[int, int, int, int]] = []
-    seen: set[tuple[int, int, int, int]] = set()
+    seen: set[tuple[int, int, int, int, bool]] = set()
     for i in range(len(seg)):
         xl, top_l, bot_l = (int(v) for v in seg[i])
         hi = int(np.searchsorted(cols, xl + width_max, side="right"))
@@ -386,21 +536,51 @@ def detect_card_boxes(image) -> list[CardBox]:
                 continue
             y0, y1 = max(top_l, top_r), min(bot_l, bot_r)
             h = y1 - y0 + 1
-            # les deux côtés doivent couvrir la MÊME hauteur : sinon on
-            # apparie un bord de carte avec une arête de glyphe
-            if h < 14 or h < 0.85 * max(bot_l - top_l + 1, bot_r - top_r + 1):
+            if h < 14:
                 continue
+            span = max(bot_l - top_l + 1, bot_r - top_r + 1)
+            # Deux côtés qui couvrent la MÊME hauteur : carte ENTIÈRE. Sinon
+            # on apparie soit un bord de carte avec une arête de glyphe (à
+            # jeter), soit une carte COUPÉE par un élément d'interface, dont
+            # une seule arête se prolonge le long du bord de cet élément — ce
+            # cas-là continue, mais il devra se montrer trop trapu pour une
+            # carte entière (voir CUT_MAX_RATIO) pour être retenu.
+            entiere = h >= 0.85 * span
+            if not entiere:
+                # La coupure vient du BAS : le haut de la carte, lui, n'est
+                # pas recouvert, donc les deux arêtes partent du même bord et
+                # ne divergent que par le bas. Sans cette condition, le chemin
+                # appariait un bord de plaque avec une arête de glyphe et
+                # inventait une carte (mesuré : boîte 40 × 37 sur le tapis
+                # noir du banc, arêtes décalées de 5 px EN HAUT).
+                if abs(top_l - top_r) > max(2, round(CUT_TOP_ALIGN * h)):
+                    continue
+                if h < CUT_MIN_COVER * span:
+                    continue
             # Fenêtre volontairement large ici : la hauteur mesurée est celle
             # des segments, amputée du rayon des coins arrondis (~12 %). Le
-            # rapport définitif se juge après recalage, pas avant.
-            if not (0.45 <= w / h <= 1.05):
+            # rapport définitif se juge après recalage, pas avant. Une carte
+            # coupée est plus trapue, sa fenêtre d'avant recalage l'est aussi.
+            if not (0.45 <= w / h <= (1.05 if entiere else 1.40)):
                 continue
             box = _snap_to_edges(hm, (xl, y0, w + 1, h))
-            if box is None or box in seen:
+            if box is None or (*box, entiere) in seen:
                 continue
-            seen.add(box)
+            seen.add((*box, entiere))
             bw, bh = box[2], box[3]
-            if not (MIN_RATIO <= bw / bh <= MAX_RATIO):
+            ratio = bw / bh
+            if entiere:
+                if not (MIN_RATIO <= ratio <= MAX_RATIO):
+                    continue
+            # Un appariement bancal ne fabrique JAMAIS une carte entière : il
+            # ne sert qu'aux boîtes FRANCHEMENT trop trapues pour en être une
+            # (CUT_MIN_RATIO, pas MAX_RATIO — juste au-dessus, une boîte trop
+            # large est un cadrage élargi, pas une coupure), et encore faut-il
+            # que quelque chose les recouvre par le bas. Sans cette dernière
+            # condition, trois avatars de siège du banc entraient (boîtes
+            # 33 × 33 et 33 × 34, rapports 0,971 à 1,000).
+            elif not (CUT_MIN_RATIO <= ratio <= CUT_MAX_RATIO
+                      and _covered_from_below(rgb, box)):
                 continue
             if not (MIN_AREA_FRAC * area_img <= bw * bh <= MAX_AREA_FRAC * area_img):
                 continue
@@ -483,6 +663,13 @@ def read_table(image) -> TableRead:
     contiguë — et le board entier partait alors dans « autres ». Le
     regroupement n'accepte donc que des cartes de même échelle.
 
+    L'échelle du BOARD se compare à la LARGEUR du héros, pas à sa hauteur :
+    une carte du héros recouverte par le bas est plus courte que les autres
+    sans être plus petite. Sur les six tapis du banc, avec la main du héros
+    recouverte au quart, la comparaison sur la hauteur faisait tomber le board
+    entier dans « autres » (0/18) — le rapport des hauteurs vaut alors 1,315
+    pour une tolérance de 1,30.
+
     Parameters
     ----------
     image : str | PIL.Image | numpy.ndarray
@@ -511,7 +698,11 @@ def read_table(image) -> TableRead:
             continue
         if max(c.y + c.h for c in r) >= hero_bottom:
             continue
-        if not _same_scale(lowest.h, float(np.median([c.h for c in r]))):
+        # L'échelle se compare sur la LARGEUR, pas sur la hauteur : la hauteur
+        # d'une carte du héros recouverte par le bas est tronquée, la largeur
+        # non. Comparer les hauteurs faisait perdre son rôle au board dès que
+        # la main du héros était recouverte (mesuré : 0/18 sur les six tapis).
+        if not _same_scale(lowest.w, float(np.median([c.w for c in r]))):
             continue
         if not board_row or (len(r), -abs(_centre(r) - cx_img)) > (
                 len(board_row), -abs(_centre(board_row) - cx_img)):

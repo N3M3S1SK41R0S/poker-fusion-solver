@@ -39,6 +39,7 @@ import io
 import itertools
 import random
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
@@ -48,6 +49,7 @@ from pfs.vision import table_detector
 from pfs.vision.phash import _rgb_array
 from pfs.vision.synth_table import _SEATS, FELTS, TableSpec, _chip_stack, render_table
 from pfs.vision.table_detector import (
+    CUT_MAX_RATIO,
     INNER_MAX,
     MAX_RATIO,
     MIN_RATIO,
@@ -56,6 +58,8 @@ from pfs.vision.table_detector import (
     detect_card_boxes,
     read_table,
 )
+
+DONNEES = Path(__file__).resolve().parent / "donnees"
 
 RANKS = "23456789TJQKA"
 SUITS = "shdc"
@@ -588,6 +592,208 @@ class TestRoles(unittest.TestCase):
         for _, _, tr in self.reads:
             boxes = [b.box for b in tr.all]
             self.assertEqual(len(boxes), len(set(boxes)))
+
+
+class TestRealPmuCaptureWithACoveredHand(unittest.TestCase):
+    """La carte du héros que le client RECOUVRE par le bas.
+
+    `donnees/pmu_hero_tronque.png` est une découpe (600 × 270, 93 Ko) d'une
+    vraie capture PMU. Elle contient les deux cartes du héros — un habillage
+    « quatre couleurs à fond plein », vert pour le trèfle et rouge pour le
+    cœur, absent des gabarits — et le bandeau d'équité qui les coupe.
+
+    Ce que le diagnostic a mesuré sur cette capture, et qui contredit
+    l'explication attendue : le contraste n'est PAS le problème. Au bord
+    gauche de la carte verte posée sur le feutre vert, le gradient vaut 76 en
+    médiane et 54 au p10, contre un seuil d'arête de 13 (le bruit résiduel est
+    nul, l'image est un PNG) ; 98,1 % des lignes du bord le dépassent. Les
+    quatre bords sont francs, le liseré clair du pourtour y contribuant pour
+    moitié. Les segments verticaux sont trouvés, aux bonnes colonnes.
+
+    Ce qui perdait la carte, c'était sa GÉOMÉTRIE apparente : le bandeau la
+    coupe à 68 % de sa hauteur, sa boîte visible mesure 121 × 115 soit un
+    rapport de 1,05 là où une carte vaut 0,716 ; et l'arête verticale d'un
+    seul de ses deux bords se prolongeait le long du bandeau (126 px contre
+    100), ce qui faisait échouer l'appariement avant même le test de rapport.
+    """
+
+    CAPTURE = DONNEES / "pmu_hero_tronque.png"
+    # Partie VISIBLE des deux cartes, relevée à l'œil sur la capture.
+    HERO = ((136, 98, 121, 113), (262, 98, 121, 113))
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.read = read_table(str(cls.CAPTURE))
+
+    def test_the_two_hero_cards_are_located(self) -> None:
+        boxes = [b.box for b in self.read.all]
+        for g in self.HERO:
+            self.assertGreaterEqual(_best(g, boxes), 0.5,
+                                    f"carte {g} non localisée, boîtes {boxes}")
+
+    def test_they_carry_the_hero_role(self) -> None:
+        hero = [b.box for b in self.read.hero]
+        for g in self.HERO:
+            self.assertGreaterEqual(_best(g, hero), 0.5,
+                                    f"carte {g} localisée mais pas « hero »")
+
+    def test_nothing_else_is_announced(self) -> None:
+        """Le jeton « 1K », son montant et le pavé du joueur sont dans la
+        découpe : aucun ne doit devenir une carte."""
+        self.assertEqual(len(self.read.all), 2,
+                         f"{[b.box for b in self.read.all]}")
+
+    def test_the_boxes_are_too_squat_to_be_whole_cards(self) -> None:
+        """C'est bien le chemin « carte coupée » qui les trouve : leur rapport
+        mesuré vaut 1,096, très au-dessus de MAX_RATIO = 0,82. Ces boîtes
+        cadrent la partie VISIBLE de la carte, pas la carte."""
+        for b in self.read.all:
+            self.assertGreater(b.w / b.h, MAX_RATIO, f"{b.box}")
+            self.assertLessEqual(b.w / b.h, CUT_MAX_RATIO, f"{b.box}")
+
+    def test_without_the_cut_path_both_cards_are_lost(self) -> None:
+        """Ablation : CUT_MIN_COVER = 0,85 rend au module son comportement
+        d'avant — deux arêtes de longueurs différentes ne s'apparient plus —
+        et la capture ne rend plus aucune boîte."""
+        with patch.object(table_detector, "CUT_MIN_COVER", 0.85):
+            tr = read_table(str(self.CAPTURE))
+        boxes = [b.box for b in tr.all]
+        for g in self.HERO:
+            self.assertLess(_best(g, boxes), 0.5,
+                            f"l'ablation ne défait plus rien : {boxes}")
+
+
+class TestACoveredHandKeepsItsRole(unittest.TestCase):
+    """Le même défaut, reproduit sur une table synthétique décorée.
+
+    La capture réelle ne contient pas d'adversaire dans sa découpe ; c'est
+    ici qu'on vérifie ce qui compte le plus : une main du héros recouverte ne
+    doit ni disparaître, ni faire promouvoir un dos de carte adverse en carte
+    du héros. Le bandeau est peint exactement à la largeur de la PAIRE de
+    cartes, comme dans le client PMU : c'est cette géométrie-là qui prolonge
+    l'arête verticale extérieure de chaque carte et casse l'appariement.
+    """
+
+    # Géométrie du bandeau, calquée sur celle du client PMU : il mange le
+    # quart bas des cartes et dépasse d'un sixième de leur hauteur en dessous
+    # (sur la capture réelle : 32 % mangés, 25 px de dépassement pour 115 px
+    # de carte visible).
+    PART = 0.25
+    DEBORD = 0.16
+    # Le bleu vif du liseré haut du bandeau PMU. Il faut une couleur qui
+    # tranche sur les six tapis du banc : c'est la CONDITION du chemin coupé
+    # (`_covered_from_below`), et un bandeau de la teinte du tapis ferait
+    # échouer le test pour une raison qui n'a rien à voir avec la géométrie.
+    BANDEAU = (5, 139, 198)
+
+    @classmethod
+    def _cover(cls, st):
+        """Peint un bandeau opaque sur le bas des cartes du héros."""
+        img = st.image.copy()
+        x0 = min(b[0] for b in st.hero_boxes)
+        x1 = max(b[0] + b[2] for b in st.hero_boxes)
+        y1 = max(b[1] + b[3] for b in st.hero_boxes)
+        haut = st.hero_boxes[0][3]
+        y0 = y1 - int(cls.PART * haut)
+        ImageDraw.Draw(img).rectangle(
+            [x0, y0, x1 - 1, y1 + int(cls.DEBORD * haut)], fill=cls.BANDEAU)
+        return img, y0
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.cases = []
+        for felt in FELTS:
+            st = render_table(TableSpec(
+                hero=("Ah", "Kd"), board=("2c", "7s", "Td"), theme="pmu_solid",
+                felt=felt, villains=3, seed=21))
+            img, y0 = cls._cover(st)
+            # Vérité-terrain : la partie VISIBLE de chaque carte du héros.
+            visibles = [(x, y, w, y0 - y) for x, y, w, _ in st.hero_boxes]
+            cls.cases.append((st, visibles, read_table(img)))
+
+    def test_both_hero_cards_are_located(self) -> None:
+        manquantes = [(g, felt) for (_, vis, tr), felt in zip(self.cases, FELTS)
+                      for g in vis if _best(g, [b.box for b in tr.all]) < 0.5]
+        self.assertEqual(manquantes, [], f"{len(manquantes)}/{2 * len(FELTS)}")
+
+    def test_they_carry_the_hero_role(self) -> None:
+        for (_, vis, tr), felt in zip(self.cases, FELTS):
+            hero = [b.box for b in tr.hero]
+            for g in vis:
+                self.assertGreaterEqual(_best(g, hero), 0.5,
+                                        f"tapis « {felt} » : {g} pas « hero »")
+
+    def test_no_villain_back_is_promoted(self) -> None:
+        for st, _, tr in self.cases:
+            claimed = [b.box for b in tr.hero + tr.board]
+            for g in st.villain_boxes:
+                self.assertLess(_best(g, claimed), 0.5, f"dos {g} promu")
+
+    def test_the_cover_invents_no_card(self) -> None:
+        """Le bandeau lui-même est un rectangle plein : il ne doit pas devenir
+        une carte, et rien d'autre non plus."""
+        for st, vis, tr in self.cases:
+            vrai = list(st.every_card) + vis
+            for b in tr.all:
+                self.assertGreaterEqual(_best(b.box, vrai), 0.3,
+                                        f"boîte fantôme {b.box}")
+
+    def test_the_top_alignment_is_what_keeps_the_avatars_out(self) -> None:
+        """Ablation : sans CUT_TOP_ALIGN, le chemin apparie un bord de plaque
+        de siège avec une arête de glyphe et invente une carte.
+
+        Sur ces six tables : 1 fantôme, une boîte 40 × 37 de rapport 1,08
+        posée sur l'avatar du siège de droite, dont les deux arêtes sont
+        décalées de 5 px EN HAUT pour une hauteur de 32. Sur les 144 tables du
+        banc, la même ablation en fait entrer 39 — c'est de loin la plus utile
+        des trois conditions du chemin coupé.
+        """
+        with patch.object(table_detector, "CUT_TOP_ALIGN", 1.0):
+            lus = [read_table(self._cover(st)[0]) for st, _, _ in self.cases]
+        ghosts = [b.box for (st, vis, _), tr in zip(self.cases, lus)
+                  for b in tr.all if _best(b.box, list(st.every_card) + vis) < 0.3]
+        self.assertTrue(ghosts, "l'ablation ne défait plus rien : la condition "
+                                "d'alignement des bords hauts est à re-justifier")
+        avatars = _seat_avatars(self.cases[0][0].image.size)
+        for g in ghosts:
+            self.assertGreaterEqual(max(_iou(g, a) for a in avatars), 0.3,
+                                    f"{g} n'est pas posé sur un avatar de siège")
+
+    def test_the_board_keeps_its_role_under_a_covered_hand(self) -> None:
+        """Le rôle du board se compare à l'échelle du héros : une carte du
+        héros recouverte est plus COURTE, donc cette comparaison doit porter
+        sur la largeur. Sur la hauteur, le board perdait son rôle sur les six
+        tapis (0/18)."""
+        for (st, _, tr), felt in zip(self.cases, FELTS):
+            board = [b.box for b in tr.board]
+            for g in st.board_boxes:
+                self.assertGreaterEqual(_best(g, board), 0.5,
+                                        f"tapis « {felt} » : {g} pas « board »")
+
+    def test_the_cut_path_stays_marginal_on_an_uncovered_bench(self) -> None:
+        """Le prix du chemin coupé sur un banc où rien ne recouvre les cartes.
+
+        Une boîte née de ce chemin a forcément un rapport supérieur à
+        MAX_RATIO : c'est sa condition d'entrée. Le banc en contient 5 sur
+        986, toutes sur l'habillage classique et un tapis sombre, là où le
+        libellé de tapis sous les cartes du héros fait office de
+        recouvrement. Chacune est posée sur une VRAIE carte (IoU 0,66 à
+        0,72) : ce sont des cadrages élargis, pas des cartes inventées.
+
+        Le reste ne bouge pas — mesuré en relançant le banc entier avec
+        CUT_MIN_COVER = 0,85 : mêmes 664/672 localisées, 659/672 rôles,
+        0/986 fantômes, et le même nombre de boîtes sur chacune des cinq
+        tables concernées. Si ce compte s'envole, le chemin a cessé d'être
+        marginal et son prix est à re-chiffrer.
+        """
+        coupees = [(b.box, st) for _, st, tr in _reads() for b in tr.all
+                   if b.w / b.h > MAX_RATIO]
+        self.assertLessEqual(len(coupees), 8,
+                             f"{len(coupees)} boîtes tronquées sur un banc que "
+                             "rien ne recouvre")
+        for box, st in coupees:
+            self.assertGreaterEqual(_best(box, st.every_card), 0.5,
+                                    f"{box} ne recouvre aucune vraie carte")
 
 
 class TestCardBox(unittest.TestCase):
