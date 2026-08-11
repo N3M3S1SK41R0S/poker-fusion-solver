@@ -19,6 +19,9 @@ dev = [
     "hypothesis>=6.100",
     "ruff>=0.6",
     "mypy>=1.11",
+    # banc_couverture_parcours.py : mesure de référence. Le banc sait s'en
+    # passer (repli sys.settrace), mais coverage.py sert de témoin.
+    "coverage>=7.6",
 ]
 lab = [
     "cupy-cuda12x>=14.1.1",   # GPU côté Python — PAS JAX (aucune wheel Windows CUDA)

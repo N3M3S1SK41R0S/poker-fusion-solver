@@ -13,6 +13,8 @@ pas une carte.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 from PIL import Image, ImageDraw
@@ -129,6 +131,63 @@ def test_rien_qui_ne_soit_une_carte_n_est_lu() -> None:
         f"{[(m.carte, round(m.ecart_couleur, 1)) for m in lues[:5]]}")
 
 
+def test_une_carte_a_moitie_recouverte_est_refusee() -> None:
+    """Le fond d'une carte à fond plein est un APLAT — sinon on ne lit pas.
+
+    Défaut trouvé sur 57 captures réelles de deux tables : une carte saisie
+    en pleine animation de retournement, à moitié recouverte par son dos
+    brun. La médiane des pixels de fond mélangeait le vert du trèfle et le
+    brun du dos, et tombait près de l'ardoise du pique : le 6♣ était lu
+    « 6s », **affirmé**, à une distance de 94.
+
+    La mesure qui tranche, sur 315 découpes réelles :
+      * 199 vraies cartes lues « sure » : dispersion 0,0 — y compris au
+        maximum. Le client rend un aplat parfait ;
+      * 116 dos et décors : 20,2 à 72,4.
+    Séparation totale. Le seuil est posé à 12, dans le vide.
+
+    Le cas est testé sur les DEUX DÉCOUPES RÉELLES, versionnées dans
+    `tests/donnees/`. Une première version de ce test imitait le cas en
+    posant un rectangle de couleur sur un gabarit : il ne déclenchait rien,
+    parce que la couleur d'origine restait majoritaire et que la médiane des
+    écarts restait donc nulle. Les vrais retournements sont diagonaux et
+    proches de moitié-moitié. L'imitation était plus commode et ne prouvait
+    rien — d'où le passage aux vraies images.
+    """
+    dossier = Path(__file__).parent / "donnees"
+    cas = ("pmu_carte_retournee_6c.png", "pmu_carte_retournee_as.png")
+    presents = [dossier / n for n in cas if (dossier / n).exists()]
+    if not presents:
+        pytest.skip("découpes de cartes retournées absentes")
+
+    for chemin in presents:
+        lu = lire_carte_fond_plein(chemin)
+        assert lu.carte is None, (
+            f"{chemin.name} : carte à moitié retournée lue « {lu.carte} ». "
+            "C'est le faux positif que ce contrôle doit empêcher — le 6♣ "
+            "était lu « 6s », affirmé.")
+        assert "uniforme" in lu.motif, (
+            f"{chemin.name} : refusée, mais pas pour la bonne raison "
+            f"({lu.motif})")
+
+
+def test_la_dispersion_separe_les_deux_populations(gabarits) -> None:
+    """Le seuil doit rester dans un vide, comme celui des cartes.
+
+    Si les deux nuages se rapprochaient — autre habillage, capture
+    compressée — ce test le dirait avant que le précédent ne devienne un
+    tirage au sort.
+    """
+    from pfs.vision.lecteur_fond_plein import DISPERSION_MAX, couleur_dominante
+
+    dispersions = [couleur_dominante(p)[2]
+                   for p in sorted(gabarits.glob("*.png"))]
+    assert dispersions
+    assert max(dispersions) < DISPERSION_MAX, (
+        f"une vraie carte atteint une dispersion de {max(dispersions):.1f}, "
+        f"pour un seuil de {DISPERSION_MAX} : le seuil n'est plus protecteur")
+
+
 def test_la_lecture_survit_a_un_cadrage_approximatif(gabarits) -> None:
     """Élargir, resserrer ou décaler la découpe ne doit rien changer.
 
@@ -161,3 +220,4 @@ def test_la_lecture_survit_a_un_cadrage_approximatif(gabarits) -> None:
         if m.carte != "5c":
             ratés.append((nom, m.carte, m.motif))
     assert not ratés, f"cadrages perdus : {ratés}"
+

@@ -196,13 +196,16 @@ def icm_equities(
     # Les joueurs à zéro se partagent à parts égales les dernières places :
     # rien ne permet de les départager, et l'ordre de leur élimination n'est
     # pas dans les données.
+    #
+    # `vivants` ne peut pas être vide ici : les tapis sont validés positifs ou
+    # nuls, donc « aucun vivant » implique une somme nulle, que `_validate` a
+    # déjà refusée. Le code qui prétendait partager la dotation dans ce cas
+    # était inatteignable — un lecteur pouvait croire le cas traité alors que
+    # l'appel lève `IcmError`. Le test `test_icm_invariants.py` épingle ce
+    # comportement réel.
     vivants = [i for i, v in enumerate(s) if v > 0.0]
     if len(vivants) < len(s):
         out = np.zeros(len(s), dtype=np.float64)
-        if not vivants:
-            # Personne n'a de jeton : la dotation entière se partage.
-            out[:] = sum(p) / len(s)
-            return out
         restes = list(p[len(vivants):])
         if restes:
             morts = [i for i in range(len(s)) if i not in set(vivants)]
@@ -285,9 +288,31 @@ def bubble_factor(
 
     gain = ev_win - base
     loss = base - ev_lose
-    if gain <= 0.0:
+
+    # Le rapport est un 0/0 dès que la structure ne met plus rien en jeu : si
+    # tous les joueurs encore en lice touchent le même gain (satellite dont il
+    # ne reste que des places équivalentes), déplacer des jetons ne change
+    # aucune équité. `gain` et `loss` valent alors zéro EN THÉORIE, et ±1 ulp
+    # en pratique.
+    #
+    # Comparer `gain` à zéro exactement laissait donc passer le résidu, et le
+    # même cas dégénéré rendait deux réponses opposées au gré de l'arrondi :
+    # −1,0 sur ([1, 2, 3], [1, 1, 1]) — un facteur de bulle NÉGATIF, qui n'a
+    # aucun sens et faisait ensuite échouer `analyse_icm_spot` sur le message
+    # trompeur « bubble factor doit être > 0 » — et +inf sur
+    # ([10, 20, 30, 40], [7, 7, 7, 7]).
+    #
+    # Le garde-fou se compare donc à l'ÉCHELLE des $EV, pas à zéro. Le seuil
+    # 1e-12 est encadré par la mesure (banc_invariants_icm.py, section
+    # « seuils ») : le résidu d'arrondi du cas dégénéré pèse ~1e-16 en
+    # relatif, tandis que le plus petit gain LÉGITIME atteignable (heads-up à
+    # 1 jeton contre 1e9) pèse ~5e-10. Deux décades de marge de chaque côté.
+    echelle = max(abs(base), abs(ev_win), abs(ev_lose))
+    if gain <= 1e-12 * echelle:
         return math.inf
-    return float(loss / gain)
+    # L'équité ICM est croissante en jetons (invariant de monotonie) : perdre
+    # des jetons ne peut pas rapporter. Une perte négative est du bruit.
+    return float(max(loss, 0.0) / gain)
 
 
 def risk_premium(bf: float) -> float:
@@ -526,7 +551,15 @@ def analyse_pko_spot(spot: PkoSpot, hero_equity: float | None = None) -> PkoAnal
     ev_win = icm_dollar_ev(win_s, p, h)
     ev_lose = icm_dollar_ev(lose_s, p, h)
 
-    eliminated = s[v] <= 1e-12          # vilain à tapis : son stack est au pot
+    # Vilain à tapis : son stack est au pot, donc à zéro ici. Le seuil est
+    # RELATIF au total en jeu, parce qu'un seuil absolu rendait le verdict
+    # dépendant de l'UNITÉ dans laquelle on compte les jetons — alors que
+    # l'ICM, lui, est invariant d'échelle. Mesuré sur le même spot (héros 100,
+    # vilain 1 jeton restant) : exprimer les tapis en unités de 1e-12 jeton
+    # faisait basculer le vilain de « survit » à « éliminé », la prime de 0 à
+    # 41,61, et l'équité exigée de 60,0 % à 40,0 %. Même table, même décision,
+    # deux réponses.
+    eliminated = s[v] <= 1e-12 * sum(s)
     bv = (bounty_capture_value(win_s, h, spot.bounties[v])
           if eliminated else 0.0)
 

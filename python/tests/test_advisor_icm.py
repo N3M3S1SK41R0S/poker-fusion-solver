@@ -401,10 +401,20 @@ class TestAmputationDuBubbleFactor(unittest.TestCase):
 
         Avec deux joueurs, P(1er) = s/T et P(2e) = 1 − s/T : le $EV vaut
         π₂ + (π₁ − π₂)·s/T, affine en jetons. Le bubble factor vaut donc 1
-        exactement et l'équilibre ICM EST l'équilibre chipEV. Ce chemin
-        exigeait naguère l'amputation (2 gains pour 2 joueurs) ; il rend
-        maintenant la valeur théorique au chiffre près, ce qui est la
-        meilleure vérification possible du correctif.
+        exactement et l'équilibre ICM EST l'équilibre chipEV.
+
+        ATTENTION — CE TEST EST UNE IDENTITÉ ALGÉBRIQUE, PAS UNE VALIDATION.
+        À deux joueurs, 1,0 est la réponse de *toute* implémentation, y
+        compris d'une fonction qui renverrait ``1.0`` en dur. Il vérifie
+        qu'on n'a pas cassé une trivialité, rien de plus. Cette entrée a
+        d'abord été présentée comme « la valeur théorique retrouvée au
+        chiffre près, la meilleure vérification du correctif » : c'était
+        faux, et c'est le cousin exact du test tautologique qui a laissé
+        deux gabarits intervertis passer six semaines.
+
+        La non-dégénérescence se teste à n = 3, où le bubble factor dépend
+        vraiment de la structure — voir
+        `test_a_trois_le_facteur_depend_vraiment_de_la_structure`.
         """
         self.assertAlmostEqual(
             bubble_factor([10.0, 40.0], [65.0, 35.0], 0, 1, amount=10.0),

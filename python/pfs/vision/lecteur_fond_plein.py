@@ -95,6 +95,30 @@ _NORM = (24, 32)
 #: pas une carte à fond plein mais une zone claire (bandeau, texte, jeton).
 BLANC_MAX = 0.45
 
+#: Dispersion maximale des pixels de fond autour de leur médiane.
+#:
+#: Une carte à fond plein est un APLAT : le client la rend sans dégradé ni
+#: anti-crénelage à l'intérieur. Mesuré sur 315 découpes issues de 57 captures
+#: réelles de deux tables ::
+#:
+#:     199 vraies cartes lues « sure » : dispersion 0,0 — min, médiane,
+#:                                       p95 et MAXIMUM tous à zéro
+#:     116 dos et décors               : 20,2 à 72,4
+#:
+#: La séparation est totale, et c'est ce qui rend ce contrôle décisif.
+#:
+#: Il répond à un faux positif trouvé sur une vraie table : une carte saisie
+#: en pleine ANIMATION DE RETOURNEMENT, à moitié recouverte par son dos brun.
+#: La médiane des pixels de fond mélangeait alors deux populations — le vert
+#: du trèfle et le brun du dos — et tombait près de l'ardoise du pique. Le
+#: 6♣ était lu « 6s », affirmé, à une distance de 94. Une carte à moitié
+#: retournée ne doit pas être lue du tout ; c'est ce que la dispersion dit,
+#: là où la médiane seule ne pouvait pas le voir.
+#:
+#: Le seuil est posé bas dans le vide mesuré [0 ; 20], avec de la marge pour
+#: une éventuelle compression JPEG que ce banc ne contient pas.
+DISPERSION_MAX = 12.0
+
 
 @dataclass(frozen=True, slots=True)
 class CarteFondPlein:
@@ -144,20 +168,33 @@ def _rgb(image) -> np.ndarray:
     return a.astype(np.float64)
 
 
-def couleur_dominante(image) -> tuple[np.ndarray, float]:
-    """Teinte du fond et part de pixels blancs.
+def couleur_dominante(image) -> tuple[np.ndarray, float, float]:
+    """Teinte du fond, part de pixels blancs, et dispersion autour de la teinte.
 
     La médiane des pixels NON blancs est prise plutôt que la moyenne : un
     bord de carte, un liseré ou un morceau de feutre entrant dans la découpe
     déplacent une moyenne, pas une médiane.
+
+    Mais la médiane seule ne dit pas si la découpe est HOMOGÈNE. Une carte à
+    moitié recouverte — retournement en cours, jeton posé dessus — mélange
+    deux populations de couleurs, et sa médiane tombe entre les deux, sur une
+    teinte que la carte n'a nulle part. D'où la troisième valeur rendue.
+
+    Returns
+    -------
+    tuple
+        ``(teinte, part_blanche, dispersion)`` — la dispersion est l'écart
+        médian des pixels de fond à leur médiane, en distance RGB.
     """
     a = _rgb(image)
     pix = a.reshape(-1, 3)
     blanc = pix.min(axis=1) >= SEUIL_BLANC
     fond = pix[~blanc]
     if not len(fond):
-        return np.array([255.0, 255.0, 255.0]), 1.0
-    return np.median(fond, axis=0), float(blanc.mean())
+        return np.array([255.0, 255.0, 255.0]), 1.0, 0.0
+    med = np.median(fond, axis=0)
+    dispersion = float(np.median(np.linalg.norm(fond - med, axis=1)))
+    return med, float(blanc.mean()), dispersion
 
 
 def famille_de_couleur(couleur: np.ndarray) -> tuple[str | None, float]:
@@ -257,10 +294,20 @@ def lire_carte_fond_plein(image) -> CarteFondPlein:
         La carte lue, ou un refus motivé. Aucune carte n'est rendue sans que
         la teinte ET la forme du rang aient tranché.
     """
-    couleur, part_blanche = couleur_dominante(image)
+    couleur, part_blanche, dispersion = couleur_dominante(image)
     if part_blanche > BLANC_MAX:
         return CarteFondPlein(None, None, None, 0.0, 1.0, 0.0,
                               "trop clair pour une carte à fond plein")
+
+    # Le fond doit être un APLAT. Une carte à moitié retournée ou masquée
+    # mélange deux couleurs, et sa médiane désigne une famille qu'elle n'a
+    # pas — c'est ainsi qu'un 6♣ en cours de retournement a été lu « 6s »,
+    # affirmé. Mieux vaut ne rien lire qu'une carte à moitié visible.
+    if dispersion > DISPERSION_MAX:
+        return CarteFondPlein(
+            None, None, None, 0.0, 1.0, 0.0,
+            f"fond non uniforme (dispersion {dispersion:.0f}) — carte "
+            "partiellement recouverte ou en cours de retournement")
 
     famille, ecart_c = famille_de_couleur(couleur)
     if famille is None:
