@@ -978,9 +978,26 @@ class API:
 
         Payload : {"hero": "Ah Kd", "board": "Qs 7d 2c", "pot": 100,
                    "bet": 75, "stack": 300, "big_blind": 10,
-                   "position": "BTN", "villain": "moyenne", "players": 2}
+                   "position": "BTN", "villain": "moyenne", "players": 2,
+                   "stacks": "35, 125, 27", "payouts": "50, 30, 20",
+                   "ante": 0.1}
+
+        ``stacks`` et ``payouts`` font basculer le conseil en régime ICM.
+        Sans eux, le verdict est celui du chipEV : sur une bulle de tournoi,
+        les deux peuvent être OPPOSÉS. Ces deux champs étaient construits
+        puis **jetés** — le régime ICM, pourtant implémenté, documenté et
+        testé, était donc inatteignable depuis l'interface, qui rendait
+        silencieusement un verdict de cash game sur des spots de tournoi.
         """
         from pfs.analysis import Spot, advise as _advise
+
+        def _liste(v) -> str:
+            """Accepte « 35, 125, 27 » comme [35, 125, 27]."""
+            if v is None:
+                return ""
+            if isinstance(v, (list, tuple)):
+                return ", ".join(str(x) for x in v)
+            return str(v)
 
         a = _advise(Spot(
             hero=str(p.get("hero", "")),
@@ -992,11 +1009,16 @@ class API:
             position=str(p.get("position", "BTN")),
             villain=str(p.get("villain", "moyenne")),
             players=int(p.get("players", 2) or 2),
+            stacks=_liste(p.get("stacks")),
+            payouts=_liste(p.get("payouts")),
+            ante=float(p.get("ante", 0) or 0),
         ))
         return {
             "hand": a.hand, "action": a.action, "confidence": a.confidence,
             "regime": a.regime, "equity": a.equity, "required": a.required,
-            "mdf": a.mdf, "ev_bb": a.ev_bb, "reasons": a.reasons,
+            "mdf": a.mdf, "ev_bb": a.ev_bb, "ev_icm": a.ev_icm,
+            "bubble": a.bubble, "size": a.size, "frequency": a.frequency,
+            "reasons": a.reasons,
             "assumptions": a.assumptions, "explain": a.explain(),
         }
 

@@ -248,11 +248,16 @@ kbd{font:11px ui-monospace,monospace;background:#1a1a28;border:1px solid var(--l
       <div><label>Position</label>
         <select id="sp-pos"><option>BTN</option><option>SB</option><option>BB</option>
           <option>CO</option><option>MP</option><option>UTG</option></select></div>
+      <div><label>Tapis de la table (tournoi)</label>
+        <input id="sp-stacks" placeholder="35, 125, 27, 19"></div>
+      <div><label>Gains restants (tournoi)</label>
+        <input id="sp-payouts" placeholder="176, 124, 92, 70"></div>
     </div>
     <div class="row" style="margin-top:12px;align-items:center">
       <button class="cta" style="width:auto" onclick="adviseRun()">Que fallait-il faire ?</button>
-      <span class="hint">Préflop : laisse le board vide et renseigne ton tapis —
-        en tapis court, c'est l'équilibre de Nash qui tranche.</span>
+      <span class="hint"><b>En tournoi, renseigne les deux derniers champs.</b>
+        Sans eux le verdict est celui du cash game — et sur une bulle les deux
+        sont parfois opposés (mesuré : OUVRIR sans, FOLD avec).</span>
     </div>
   </div>
 
@@ -909,9 +914,13 @@ async function adviseRun(){
   const out=document.getElementById("sp-out");
   if(!g("sp-hero").trim()){out.innerHTML='<div class="skel">Entre d\'abord ta main.</div>';return;}
   out.innerHTML='<div class="skel">⟳ calcul en cours…</div>';
+  // Les tapis et les gains font basculer le conseil en régime ICM. Ils
+  // étaient jetés par la route : sur une bulle, le verdict rendu était
+  // celui du cash game, parfois l'inverse du bon.
   const r=await api("advise",{hero:g("sp-hero"),board:g("sp-board"),
     pot:+g("sp-pot")||0,bet:+g("sp-bet")||0,stack:+g("sp-stack")||0,
-    big_blind:+g("sp-bb")||1,position:g("sp-pos"),villain:g("sp-villain")});
+    big_blind:+g("sp-bb")||1,position:g("sp-pos"),villain:g("sp-villain"),
+    stacks:g("sp-stacks"),payouts:g("sp-payouts")});
   if(r.error){out.innerHTML=`<div class="warn"><b>Impossible de juger ce spot.</b><br>${r.error}</div>`;return;}
   const [cls,ico,word]=verdictClass(r.action);
   const certain=r.confidence==="certain";
@@ -1078,6 +1087,15 @@ async function majArchive(){
     <div class="muted" style="margin-top:4px">${a.dossier}</div>`;
 }
 
+/* Marque un champ comme SAISI par l'utilisateur. Sans cette distinction, une
+   valeur par défaut est indiscernable d'une valeur voulue — et c'est ainsi
+   qu'un verdict a pu être rendu sur un pot de 100 que personne n'avait
+   entré. */
+["sp-pot","sp-bet","sp-stack","sp-bb","sp-stacks","sp-payouts"].forEach(id=>{
+  const el=document.getElementById(id);
+  if(el)el.addEventListener("input",()=>{el.dataset.saisi="1";});
+});
+
 /* ═══════════ Calibration en direct ═══════════
    Affiche CE QUI A ÉTÉ LU, jamais ce qu'il faut faire. Aucune de ces
    fonctions n'appelle « advise », « simuler » ni aucune route de décision :
@@ -1198,8 +1216,26 @@ async function lireCaptureAuto(blob){
   log.insertAdjacentHTML("beforeend"," "+bilan+" "+detail);
   if(rates.length) majArchive();
 
-  // Le but de tout ceci : le verdict, sans un clic de plus.
-  if(shotHero.length===2) adviseRun();
+  // NE PAS juger tout seul : la capture ne donne QUE les cartes. Le pot, la
+  // mise et les tapis restent ceux du formulaire — des valeurs par défaut
+  // que l'utilisateur n'a pas saisies. Déclencher le verdict dessus rendait
+  // un conseil calculé sur des chiffres inventés, sans le dire. Les lire sur
+  // l'image est possible (pfs/vision/digit_ocr.py, 99,5 % d'exactitude sur
+  // son banc) mais pas encore branché : d'ici là, c'est à toi de confirmer.
+  if(shotHero.length===2){
+    const manquants=["sp-pot","sp-bet","sp-stack","sp-bb"]
+      .filter(id=>!document.getElementById(id).dataset.saisi);
+    if(manquants.length){
+      log.insertAdjacentHTML("beforeend",
+        ` <span class="chip amb">cartes lues — <b>vérifie le pot, la mise,
+          ton tapis et la blinde</b> avant de juger : ils ne sont pas lus sur
+          l'image</span>`);
+      document.getElementById("sp-pot").focus();
+      document.getElementById("sp-pot").select();
+    }else{
+      adviseRun();
+    }
+  }
 }
 
 function loadShot(blob){
