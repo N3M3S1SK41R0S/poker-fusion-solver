@@ -13,7 +13,7 @@ test de cette portée doit être MESURÉ, pas cru sur parole — et la seule
 mesure qui vaille est adverse : écrire les contournements, et vérifier qu'ils
 échouent.
 
-Ce banc écrit sept fuites réelles dans le dépôt, une par une, lance le
+Ce banc écrit huit fuites réelles dans le dépôt, une par une, lance le
 fichier de test, puis remet les sources d'origine. Chaque fuite est
 FONCTIONNELLE : `--montrer` affiche le verdict qu'elle fait effectivement
 sortir du mode live (« CALL (confortable) », « OUVRIR (relance) »,
@@ -31,6 +31,21 @@ C  autre route          PASSE  ← trou               ÉCHOUE (attrapé)
 D  appel HTTP           PASSE  ← trou               ÉCHOUE (attrapé)
 E  code dans le résumé  PASSE  ← trou               ÉCHOUE (attrapé)
 F  code dans le statut  PASSE  ← trou               ÉCHOUE (attrapé)
+=====================  ==========================  =====================
+
+Contre-mesure du 11 août 2026 (revue adverse)
+---------------------------------------------
+Un huitième contournement — G, le contournement F déplacé dans
+`card_recognizer` — passait au vert sur le test renforcé lui-même. Le
+recalcul censé vérifier chaque valeur empruntait la MÊME fonction que le
+chemin live : la fuite était recalculée à l'identique. Il est désormais
+attrapé par la vérité-terrain exigée sur toute la famille de tables.
+
+=====================  ==========================  =====================
+contournement          test renforcé (1re version) test + vérité-terrain
+=====================  ==========================  =====================
+G  code dans le
+   recogniseur          PASSE  ← trou               ÉCHOUE (attrapé)
 =====================  ==========================  =====================
 
 Sécurité du banc
@@ -61,7 +76,14 @@ PY = Path(__file__).resolve().parent
 RACINE = PY.parent
 LIVE = PY / "pfs" / "vision" / "live.py"
 SERVER = PY / "pfs" / "app" / "server.py"
+RECO = PY / "pfs" / "vision" / "card_recognizer.py"
 TEST = "tests/test_live_sans_conseil.py"
+
+#: Les sources que le banc a le droit de patcher — donc de sauvegarder et de
+#: restaurer. `card_recognizer.py` s'y trouve depuis le contournement G : la
+#: frontière à tenir est celle de la SORTIE du mode live, pas celle d'un
+#: fichier, et le recogniseur est en amont de cette sortie.
+PATCHABLES = (LIVE, SERVER, RECO)
 
 #: Les sauvegardes vivent à côté des sources, avec un suffixe reconnaissable :
 #: si le banc est tué, le fichier reste visible et le prochain lancement
@@ -244,6 +266,52 @@ def f_code_dans_statut(src: str) -> str:
     )
 
 
+def g_statut_dans_le_recogniseur(src: str) -> str:
+    """Le contournement F, déplacé d'un module vers le bas.
+
+    Même sémantique (« joue / ne joue pas » codé dans `statut`), mais posé
+    dans `card_recognizer.identify_card_autour` au lieu de `live.py`. C'est
+    le contournement qui a montré la limite du RECALCUL : les tests
+    recalculaient chaque valeur avec `identify_card_autour`, c'est-à-dire
+    avec la fonction même qu'emprunte le chemin live — la fuite était donc
+    recalculée à l'identique, et l'égalité tenait.
+
+    Il est conditionné aux rangs 7/6/5 : ABSENTS de la table de référence
+    (Ah Kd | Ts 4h 9d 2c Kh), PRÉSENTS dans la famille (7c 5d | 6h 2s Ad Qd).
+    Ce n'est donc pas une fuite « hors échantillon » : la famille l'exerce,
+    et il passait quand même. Ce qui l'attrape est la VÉRITÉ-TERRAIN de la
+    table synthétique, seule référence qui ne vienne pas du recogniseur.
+    """
+    src = src.replace(
+        "    direct = _lecture_fond_plein(image, (x, y, w, h))\n"
+        "    if direct is not None:\n"
+        "        return direct\n",
+        "    direct = _lecture_fond_plein(image, (x, y, w, h))\n"
+        "    if direct is not None:\n"
+        "        return _teinter(direct)\n",
+    )
+    src = src.replace(
+        "        m = identify_card(image.crop((xx, yy, xx + ww, yy + hh)), templates)\n"
+        '        if m.statut == "sure":\n'
+        "            return m\n",
+        "        m = identify_card(image.crop((xx, yy, xx + ww, yy + hh)), templates)\n"
+        '        if m.statut == "sure":\n'
+        "            return _teinter(m)\n",
+    )
+    return src.replace(
+        "def identify_card_autour(\n",
+        "def _teinter(m):\n"
+        "    # « propose » = ne joue pas. Domaine fini, aucun caractère en trop,\n"
+        "    # aucun mot du lexique, aucun import, aucun réseau.\n"
+        "    if m.card and m.card[0] in '765':\n"
+        "        from dataclasses import replace as _r\n"
+        "        return _r(m, statut='propose')\n"
+        "    return m\n"
+        "\n"
+        "\n"
+        "def identify_card_autour(\n", 1)
+
+
 CONTOURNEMENTS = {
     "TEMOIN_import_statique": (LIVE, temoin_import_statique),
     "A_import_dynamique": (LIVE, a_import_dynamique),
@@ -252,6 +320,7 @@ CONTOURNEMENTS = {
     "D_appel_http": (SERVER, d_appel_http),
     "E_code_dans_resume": (LIVE, e_code_dans_resume),
     "F_code_dans_statut": (LIVE, f_code_dans_statut),
+    "G_statut_dans_recogniseur": (RECO, g_statut_dans_le_recogniseur),
 }
 
 
@@ -323,7 +392,7 @@ def _empreinte(p: Path) -> str:
 def _sauvegarder() -> dict[Path, str]:
     """Copie les sources modifiables et rend leurs empreintes d'origine."""
     empreintes: dict[Path, str] = {}
-    for cible in (LIVE, SERVER):
+    for cible in PATCHABLES:
         sauvegarde = cible.with_suffix(cible.suffix + SUFFIXE)
         if sauvegarde.exists():
             raise SystemExit(
@@ -337,7 +406,7 @@ def _sauvegarder() -> dict[Path, str]:
 
 
 def _restaurer(empreintes: dict[Path, str]) -> None:
-    for cible in (LIVE, SERVER):
+    for cible in PATCHABLES:
         sauvegarde = cible.with_suffix(cible.suffix + SUFFIXE)
         if sauvegarde.exists():
             shutil.copy2(sauvegarde, cible)
@@ -346,7 +415,7 @@ def _restaurer(empreintes: dict[Path, str]) -> None:
 
 
 def _nettoyer() -> None:
-    for cible in (LIVE, SERVER):
+    for cible in PATCHABLES:
         sauvegarde = cible.with_suffix(cible.suffix + SUFFIXE)
         sauvegarde.unlink(missing_ok=True)
 

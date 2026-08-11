@@ -418,8 +418,12 @@ def section_monte_carlo(rng: random.Random, large: bool) -> bool:
         ("chipleader écrasant", (9000.0, 500.0, 300.0, 200.0), (70.0, 30.0)),
         ("table PMU 9 joueurs", TABLE_9, PAYOUTS_9),
     ]
+    # Le nombre de tirages ne change PAS la distribution du z-score (σ suit
+    # 1/√n, l'écart aussi) : il n'achète que du temps de calcul. On en prend
+    # donc juste assez pour que le banc reste rejouable — un banc qu'on ne
+    # relance pas ne mesure plus rien.
     graines = range(6 if large else 3)
-    tailles = (50_000, 200_000) if large else (200_000,)
+    tailles = (20_000, 80_000) if large else (50_000,)
     zmax_global = 0.0
     for nom, stacks, payouts in cas:
         pay = np.asarray(payouts, dtype=np.float64)

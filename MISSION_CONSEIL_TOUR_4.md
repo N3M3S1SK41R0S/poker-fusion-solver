@@ -1,3 +1,189 @@
+# Mission — conseil des modèles, tour 4
+
+*(GPT-5.6 Sol Thinking · Claude Opus 5 Thinking · Gemini 3.1 Pro Thinking)*
+
+---
+
+## 0. Cette fois le code est DANS ce message
+
+Trois tours, trois échecs d'accès. Dépôt privé au tour 1, archive mentionnée
+mais non jointe au tour 2, archive illisible par votre outillage au tour 3.
+Vous avez eu raison de refuser tout verdict à chaque fois, et l'axe A — la
+justesse des calculs — n'a **jamais** été traité.
+
+Vous avez donné la solution vous-mêmes : *« collez le contenu en texte brut,
+inline, dans le corps du message »*. C'est ce que fait ce message.
+
+Il ne contient qu'**un seul module**, `pfs/core/icm.py`, 681 lignes,
+intégralement. C'est celui que vous avez désigné comme prioritaire, c'est
+celui qui pilote les ranges push/fold en tournoi, et c'est celui où un
+correctif récent a introduit une branche de code. Les autres suivront au même
+format, un par tour, jusqu'à ce que l'axe A soit couvert.
+
+---
+
+## 1. Ce que vous nous avez fait corriger depuis le tour 3
+
+Vos objections ont porté. Trois d'entre elles nous ont fait retirer des
+affirmations publiées.
+
+**Le rapprochement des 31,7 % était fallacieux.** Vous avez démontré que
+31,7 % de lignes *traversées* implique 68,3 % *non* traversées — l'exact
+complément de ce que nous annoncions, pas une confirmation. Et le banc trouve
+20 modules jamais atteints là où le README en annonçait 12 : le recensement
+n'était pas confirmé, il était révisé à la hausse de 67 %. Retiré. Nous
+publions désormais trois nombres distincts, dont celui que vous avez nommé et
+que ni la couverture ni l'analyse statique ne voient : les lignes **atteintes
+mais causalement inertes**, dont le résultat est calculé puis jeté. C'est la
+catégorie qui contenait `/api/advise` jetant les tapis de tournoi.
+
+**Le « 95 % » de lecture des cartes n'est pas une exactitude.** Le
+dénominateur est conditionnel à la détection, il n'y a aucune vérité-terrain,
+et « non refusé » n'est pas « juste ». Votre indice chiffré était exact :
+108 boîtes héros sur 57 frames font 1,89 par frame au lieu de 2. Une
+annotation manuelle des 57 captures est en cours pour produire rappel,
+précision, et le seul chiffre qui compte vraiment — le nombre de lectures
+fausses affirmées.
+
+**Le seuil d'uniformité du fond repose sur une statistique qui sature.** Vous
+avez raison : min, médiane, p95 et maximum tous à exactement 0,0 sur
+199 mesures, ce n'est pas une mesure, c'est une saturation. Ré-encodage JPEG
+en cours pour trouver où elle casse, et test des contaminations homogènes
+contre lesquelles elle est aveugle.
+
+**Et le test que vous jugez le plus urgent tourne en ce moment** : le
+`bubble_factor` du joueur couvert, dont l'espérance en cas de perte est
+évaluée dans la branche « tapis nul » — donc un quotient entre deux régimes
+de code, où un écart absorbé par la conservation serait amplifié par la
+division. Avec la nuance que vous avez signalée et que nous n'aurions pas
+trouvée seuls : la continuité ne doit être exigée que pour **un seul** tapis
+nul, le cas multi-zéro étant authentiquement discontinu — `[100, ε, ε/2]`
+converge vers (30, 20), pas (25, 25).
+
+---
+
+## 2. Ce que nous vous demandons — l'axe A sur ce module
+
+Le code suit au §5. Nous attendons, pour chaque point, **CONFIRMÉ / RÉFUTÉ /
+NON VÉRIFIÉ**, avec valeur de référence, source et écart mesuré.
+
+1. **Le noyau Malmuth-Harville est-il correct ?** La récurrence, la
+   mémoïsation sur bitmask, le passage exact → Monte-Carlo à 12 joueurs.
+2. **La branche « tapis nul » est-elle juste ?** Elle a été écrite après un
+   `ZeroDivisionError`, puis corrigée une seconde fois parce que la première
+   version donnait zéro au joueur éliminé au lieu du dernier gain. Les quatre
+   cas discriminants que vous aviez proposés passent. **Cherchez le cinquième.**
+3. **`bubble_factor` et `risk_premium`** — la définition retenue, le
+   traitement du dénominateur, et le comportement au voisinage de zéro.
+4. **Le chemin PKO** — `bounty_capture_value`, `analyse_pko_spot`, et la
+   convention « ½ cash + ½ sur sa propre prime ». Cette convention est-elle
+   celle de l'industrie, et le calcul de la part qui reste sur sa propre tête
+   est-il correct ?
+5. **Le FGS léger** — l'érosion des blindes futures au premier ordre. Est-ce
+   une approximation défendable, et où casse-t-elle ?
+6. **Ce que le banc d'invariants ne teste pas.** Il déclare échelle,
+   permutation, conservation, monotonie, non-linéarité et concordance
+   exact ↔ Monte-Carlo. Vous avez déjà trouvé la continuité en zéro.
+   Qu'est-ce qui manque encore ?
+
+---
+
+## 3. Là où nous avons besoin de votre aide, pas de votre verdict
+
+Quatre problèmes ouverts. Nous n'avons pas de solution satisfaisante et votre
+raisonnement vaut ici plus que votre lecture de code.
+
+### 3.1 La propagation par intervalles — comment la construire sans tout casser
+
+Claude Opus 5 a proposé au tour 3 le seul mécanisme qui subsume tous nos cas
+de refus : propager chaque entrée comme un **intervalle** plutôt qu'un
+scalaire, et déclarer le verdict « fragile » dès qu'il n'est pas constant sur
+la boîte. Cela couvre d'un coup l'arrondi d'affichage des montants, le choix
+Harville contre Malmuth-Weitzman, l'hypothèse de range postflop, et
+l'incertitude statistique sur nos propres fréquences.
+
+Nous adoptons l'idée. Nous ne savons pas la réaliser proprement.
+
+- Faut-il une **arithmétique d'intervalles** partout, avec le risque
+  d'explosion de largeur bien connu, ou un **échantillonnage des sommets** de
+  la boîte, ou une propagation par **dérivées** autour du point nominal ?
+- Comment éviter que « fragile » ne devienne l'étiquette de tous les verdicts,
+  auquel cas l'information disparaît ?
+- Où placer la frontière : quelles entrées méritent un intervalle, et
+  lesquelles peuvent rester scalaires sans mentir ?
+- Que devient un seuil de bascule — aujourd'hui un scalaire — dans ce cadre ?
+
+### 3.2 L'ancrage des zones de montants
+
+Vous avez écarté le détecteur de texte, et écarté aussi l'ancrage sur le
+centre du board — instable puisque le board a de 0 à 5 cartes et n'existe pas
+préflop, précisément là où les verdicts sont « certains ». L'un de vous a
+suggéré l'ellipse du feutre plus les cartes du siège.
+
+- Comment estimer l'**échelle** de façon robuste à partir d'une seule capture,
+  sans dépendre d'un élément qui peut manquer ?
+- La conservation des pixels doit porter sur des **positions cumulées** et non
+  sur une largeur totale, ce que nous acceptons — mais comment la formuler
+  quand la police a des chasses variables, le « 1 » étant nettement plus
+  étroit que le « 8 » ?
+- Un point acquis, et c'est votre cadeau : **PMU affiche tout en blindes**,
+  donc un pot de 1 200 BB face à des tapis de 98 BB est impossible par
+  construction. Cette borne remplace-t-elle vraiment le veto de granularité
+  que l'affichage arrondi nous fait perdre, ou faut-il autre chose ?
+
+### 3.3 La dégénérescence DCFR
+
+L'un de vous signale que « α = β = γ = 1 donne CFR standard » est suspect,
+parce que **Linear CFR n'est pas Vanilla CFR**. Nous avons ce test de
+conformité dans le dépôt et nous ne savons pas s'il est juste.
+
+Quels sont les paramètres exacts qui rendent DCFR équivalent à Vanilla CFR,
+à CFR+, et à Linear CFR ? Dérivez-les depuis les équations plutôt que de
+citer, et dites-nous ce que notre test devrait affirmer.
+
+### 3.4 Comparer à Pluribus sans se mentir
+
+Nous avons téléchargé le corpus PHH de l'université de Toronto : **10 000
+mains de Pluribus** et 83 mains des WSOP, licence MIT. Un lecteur du format
+est en cours d'écriture, et nous rejouons chaque décision à travers notre
+conseiller pour la comparer à ce que le bot a réellement fait.
+
+Le problème est que Pluribus joue du **cash game 6-max sans ICM**, alors que
+l'utilisateur joue des **tournois**. Un taux d'accord sur du cash ne valide
+pas le conseil en tournoi, et nous ne voulons pas présenter l'un pour l'autre.
+
+- Quelle **partie** de notre conseiller cette comparaison valide-t-elle
+  légitimement — l'équité, les cotes du pot, les ranges d'ouverture ?
+- Comment distinguer un désaccord qui révèle **notre** défaut d'un désaccord
+  où Pluribus dévie volontairement pour exploiter ?
+- Un désaccord **systématique** sur une famille de spots est le livrable que
+  nous visons. Comment le caractériser sans tomber dans la pêche aux
+  corrélations sur 10 000 mains ?
+
+---
+
+## 4. Format, inchangé
+
+**CONFIRMÉ / RÉFUTÉ / NON VÉRIFIÉ**, pas de quatrième catégorie. Les deux
+sections restent obligatoires : **« ce que je n'ai pas pu vérifier »** et
+**« mon désaccord principal »**.
+
+Répondez séparément, sans vous concerter. Sur trois tours, la bonne réponse a
+été quatre fois celle d'un seul d'entre vous — le biais de Harville, le piège
+SAGE, l'erreur d'équité de Gemini, et la fausse coïncidence des 31,7 %. Nous
+ne l'aurions eue d'aucun avis unique.
+
+Deux cadrages qui ne changent pas : **le périmètre ne se rediscute pas**, et
+**la priorité est de faire marcher** — la chaîne s'arrête encore après la
+lecture des cartes, faute de lecture des montants.
+
+---
+
+## 5. Le code — `pfs/core/icm.py`, intégral
+
+```python
+# ═══ pfs/core/icm.py ═══ (681 lignes, intégral)
+
 """
 F14 — ICM : Independent Chip Model, bubble factor, $EV.
 
@@ -787,3 +973,28 @@ def fgs_bubble_factor(
         return static, math.inf
     fgs = bubble_factor(eroded.tolist(), payouts, hero, villain, **kw)
     return static, fgs
+
+```
+
+---
+
+## 6. Et le banc qui prétend le valider
+
+`banc_invariants_icm.py` déclare « TOUS LES INVARIANTS TIENNENT », avec des
+écarts de l'ordre de 1e-16. Il couvre : invariance d'échelle, invariance par
+permutation, conservation de la dotation, monotonie, non-linéarité,
+concordance exact ↔ Monte-Carlo, et les mêmes invariants étendus au chemin
+PKO.
+
+Il fait 622 lignes et n'est pas reproduit ici pour ne pas noyer le module
+lui-même. **Dites-nous ce qu'un tel banc doit contenir** et nous le
+compléterons — vous avez déjà trouvé la continuité en zéro, que six
+invariants globaux et algébriques ne pouvaient pas voir.
+
+La question qui nous intéresse le plus : **un banc d'invariants peut-il
+jamais attraper une erreur de modèle**, ou ne fait-il que vérifier la
+cohérence interne d'un calcul qui pourrait être faux de bout en bout ? Si la
+réponse est non, quelle est la seule chose qui puisse valider un ICM — et
+concorder avec ICMIZER ou HRC n'en est pas une, puisque cela ne prouverait
+que la reproduction fidèle d'un modèle que vous avez vous-mêmes qualifié de
+structurellement biaisé.

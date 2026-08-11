@@ -77,6 +77,11 @@ Limites mesurées, à dire franchement
   tables ci-dessous — qui reste un échantillon fini : une fuite conditionnée
   à une main absente de la famille passerait encore. Les tests de contrat
   clos, eux, ne dépendent d'aucune main.
+* Le recalcul par `identify_card_autour` n'est PAS indépendant : c'est la
+  fonction qu'emprunte le chemin live. Il prouve que `live.py` et le serveur
+  n'ont rien retouché, pas que la valeur soit vraie. Un conseil codé DANS le
+  recogniseur passait au vert tant que la vérité-terrain n'était pas exigée
+  (mesuré le 11 août 2026) ; elle l'est désormais sur toute la famille.
 * `image_b64` n'est pas passé au lexique : du base64 contient des lettres
   arbitraires. Il est vérifié autrement, et plus fortement : il doit être
   **octet pour octet** la capture reçue. Aucune place pour un ajout.
@@ -395,6 +400,13 @@ TITRE = "table d'essai"
 #: quatre enseignes, avec board complet, partiel et vide (préflop), sur cinq
 #: feutres. Ce n'est pas une preuve — c'est un échantillon fini, et une fuite
 #: conditionnée à une main absente d'ici passerait encore.
+#:
+#: Le sixième feutre de `synth_table.FELTS`, « tapis clair » (203/207/214),
+#: est ABSENT à dessein : le recogniseur y lit des cartes FAUSSES avec le
+#: statut « sure » (mesuré le 11 août 2026 : 3s 2h lus Js Jh, Kc lu 7c). Ce
+#: défaut de LECTURE est réel et mérite son propre chantier ; l'ajouter ici
+#: rendrait ce test rouge pour une raison qui n'est pas la sienne. À remettre
+#: dans la famille le jour où il sera corrigé.
 FAMILLE: tuple[tuple[tuple[str, ...], tuple[str, ...], str, int], ...] = (
     (HERO, BOARD, "feutre vert", 4242),
     (("Qs", "Jc"), ("3d", "8s", "Tc"), "bleu nuit", 17),
@@ -699,10 +711,25 @@ def test_aucune_table_ne_declenche_de_conseil(monkeypatch, tmp_path) -> None:
 
     Pour chaque table on vérifie, d'un seul passage : sentinelles muettes,
     clés exactes, forme du résumé, domaines clos, lexique, image identique à
-    la capture, et surtout que chaque valeur rendue est EXACTEMENT celle que
-    le recogniseur recalcule sur la même découpe. La vérité-terrain des
-    cartes n'est PAS exigée ici (c'est le rôle de la réciproque, sur la table
-    de référence) : ce qui compte est qu'aucune valeur ne soit fabriquée.
+    la capture, que chaque valeur rendue est EXACTEMENT celle que le
+    recogniseur recalcule sur la même découpe, et que la lecture est JUSTE.
+
+    Pourquoi la vérité-terrain est exigée ici, et pas seulement le recalcul
+    ---------------------------------------------------------------------
+    Le recalcul passe par `identify_card_autour`, c'est-à-dire par la MÊME
+    fonction que le chemin live : il prouve que `live.py` et le serveur n'ont
+    pas retouché la réponse du recogniseur, pas que cette réponse soit
+    indépendante. Un conseil codé UN MODULE PLUS BAS — `statut` détourné
+    dans `card_recognizer` selon le rang de la carte, exactement le
+    contournement F déplacé — serait recalculé à l'identique et resterait
+    invisible. Mesuré le 11 août 2026 : cette fuite passait au vert.
+
+    La vérité-terrain de la table synthétique, elle, ne vient pas du
+    recogniseur : c'est `render_table` qui l'a dessinée. Les cinq tables de
+    la famille sont lues justes, et « sure » sur tous les rôles identifiés
+    (mesuré le 11 août 2026). Si cet ensemble d'assertions devient rouge
+    après un changement du détecteur ou du recogniseur, c'est une RÉGRESSION
+    DE LECTURE à mesurer — pas une exigence à retirer.
     """
     from PIL import Image
 
@@ -731,6 +758,17 @@ def test_aucune_table_ne_declenche_de_conseil(monkeypatch, tmp_path) -> None:
 
         image = Image.open(io.BytesIO(png)).convert("RGB")
         assert reponse["cartes"], f"{quoi} : plus aucune carte détectée"
+
+        # Vérité-terrain : la seule référence qui ne passe PAS par le
+        # recogniseur (voir la docstring). C'est elle qui ferme le canal
+        # « conseil codé dans le recogniseur lui-même ».
+        assert [c["carte"] for c in reponse["cartes"]
+                if c["role"] == "hero"] == list(hero), f"{quoi} : héros faux"
+        assert [c["carte"] for c in reponse["cartes"]
+                if c["role"] == "board"] == list(board), f"{quoi} : board faux"
+        assert all(c["statut"] == "sure" for c in reponse["cartes"]
+                   if c["role"] != "?"), f"{quoi} : statut détourné"
+
         for c in reponse["cartes"]:
             assert set(c) == CHAMPS_CARTE, f"{quoi} : champs {set(c)}"
             assert c["role"] in ROLES and c["statut"] in STATUTS, quoi

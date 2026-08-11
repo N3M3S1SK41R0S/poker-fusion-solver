@@ -497,10 +497,10 @@ def test_le_monte_carlo_concorde_avec_l_exact(stacks, payouts, seed) -> None:
     """Deux chemins de calcul, une seule vérité — à l'échantillonnage près.
 
     L'écart est mesuré EN UNITÉS DE σ, et σ est calculée depuis les
-    probabilités exactes. Sur le banc (5 tables × 6 graines × 2 tailles), le
-    |z| maximal observé vaut 2,85 σ ; le seuil est posé à 5 σ, soit plus de
-    deux σ de marge. Un seuil « à vue » aurait été soit inutile, soit
-    fragile.
+    probabilités exactes. Sur le banc en mode ``--large`` (5 tables ×
+    6 graines × 2 tailles = 60 estimations), le |z| maximal observé vaut
+    **3,02 σ** ; le seuil est posé à 5 σ, soit près de deux σ de marge. Un
+    seuil « à vue » aurait été soit inutile, soit fragile.
     """
     pay = np.asarray(payouts, dtype=np.float64)
     exact = _finish_probs_exact(tuple(stacks), len(payouts))
@@ -589,6 +589,33 @@ def test_en_heads_up_le_bubble_factor_vaut_exactement_un(stacks, payouts) -> Non
         assert bubble_factor(stacks, payouts, h, v) == pytest.approx(1.0, abs=1e-9)
 
 
+def test_la_limite_du_garde_fou_bubble_factor_est_connue_et_bornee() -> None:
+    """La limite que le correctif introduit, épinglée plutôt que découverte.
+
+    Le garde-fou anti-0/0 de `bubble_factor` compare le gain à 1e-12 fois
+    l'échelle des $EV. Il mord donc un cas LÉGITIME : le heads-up dont les
+    tapis sont dans un rapport ≳ 1e12, où le gain vrai (3,3e-13 en relatif)
+    passe sous le seuil et où la fonction renvoie +inf au lieu de 1.
+
+    Ce n'est pas une perte de précision cachée sous le tapis : à ce rapport,
+    la soustraction de deux $EV voisins a déjà perdu tous ses chiffres. Le
+    banc le montre — dès un rapport de 1e11 la valeur rendue vaut 0,99996 au
+    lieu de 1. Répondre +inf (« je ne tranche pas, suppose la pression
+    maximale ») est prudent ; rendre un nombre plausible et faux serait pire.
+
+    Un tournoi réel ne dépasse pas un rapport de ~1e6, où l'égalité tient
+    encore à 3,6e-10 près. La borne est donc six ordres de grandeur au-delà
+    de tout usage — mais elle existe, et la voici.
+    """
+    for ratio in (1e6, 1e9, 1e11):
+        assert bubble_factor([ratio, 1.0], [60.0, 40.0], 0, 1) < math.inf, (
+            f"le garde-fou ne doit pas mordre au rapport 1:{ratio:.0e}")
+    for ratio in (1e12, 1e15):
+        assert math.isinf(bubble_factor([ratio, 1.0], [60.0, 40.0], 0, 1)), (
+            f"au rapport 1:{ratio:.0e} le calcul n'a plus de chiffres "
+            "significatifs : +inf est la réponse prudente")
+
+
 @pytest.mark.parametrize("stacks,payouts", [
     pytest.param((100.0, 200.0, 300.0), (50.0,), id="3-joueurs"),
     pytest.param((1.0, 2.0, 3.0, 4.0, 5.0, 6.0), (50.0,), id="6-joueurs"),
@@ -618,7 +645,9 @@ def test_le_bubble_factor_depasse_un_des_qu_il_y_a_plusieurs_gains(
 def test_le_bubble_factor_depasse_un_sur_un_balayage() -> None:
     """La propriété doit tenir partout, pas sur trois tables choisies.
 
-    Banc (2000 tirages) : minimum observé 1,0012.
+    Banc en mode ``--large`` (2000 tirages) : minimum observé **1,000093**,
+    sur une table à 3 joueurs. La marge au-dessus de 1 peut donc être
+    très mince — d'où l'intérêt de balayer plutôt que de choisir.
     """
     rng = random.Random(1234)
     mini = math.inf
