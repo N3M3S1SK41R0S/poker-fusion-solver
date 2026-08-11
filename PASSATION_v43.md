@@ -59,7 +59,7 @@ pas de l'estimation brute par joueur. Ne pas l'oublier en communiquant.
 317 mains, 2 comptes. **Sa fuite est unique et massive : il joue trop de
 mains, passivement.**
 
-| | Tagou | quadscold43 |
+| | compteA | compteB |
 |---|---|---|
 | Net | −375 bb | −364 bb |
 | VPIP | 63,1 % | **73,8 %** (sain : 28-50) |

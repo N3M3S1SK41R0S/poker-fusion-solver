@@ -6,7 +6,7 @@ Twister, tapis courts), puis sur les invariants structurels du format.
 La main de référence (session 5871660081, jeu 9033459660) :
   - OupsUnMissclick (bouton = SB) tapis 1 355, poste SB 20 puis pousse
     all-in (type 23, sum 1 355 = « raise to » de la rue) ;
-  - Tagou (BB) tapis 145, poste BB 40 puis paie all-in (type 7, sum 105
+  - compteA (BB) tapis 145, poste BB 40 puis paie all-in (type 7, sum 105
     = incrément) → total 145 = son tapis ;
   - sur-mise non suivie 1 355 − 145 = 1 210 rendue ; pot disputé 290 ;
     OupsUnMissclick gagne 290.
@@ -30,7 +30,7 @@ HAND_XML = """<?xml version="1.0" encoding="utf-8"?>
  <general>
   <mode>real</mode>
   <gametype>Holdem NL</gametype>
-  <nickname>Tagou</nickname>
+  <nickname>compteA</nickname>
   <tournamentcode>1194710255</tournamentcode>
   <tournamentname>Twister 10 EUR</tournamentname>
  </general>
@@ -39,19 +39,19 @@ HAND_XML = """<?xml version="1.0" encoding="utf-8"?>
    <smallblind>20</smallblind>
    <bigblind>40</bigblind>
    <players>
-    <player bet="145" chips="145" dealer="0" name="Tagou" seat="3" win="0"/>
+    <player bet="145" chips="145" dealer="0" name="compteA" seat="3" win="0"/>
     <player bet="1 355" chips="1 355" dealer="1" name="OupsUnMissclick" seat="10" win="290"/>
    </players>
   </general>
   <round no="0">
    <action no="1" player="OupsUnMissclick" sum="20" type="1"/>
-   <action no="2" player="Tagou" sum="40" type="2"/>
+   <action no="2" player="compteA" sum="40" type="2"/>
   </round>
   <round no="1">
-   <cards player="Tagou" type="Pocket">S5 S4</cards>
+   <cards player="compteA" type="Pocket">S5 S4</cards>
    <cards player="OupsUnMissclick" type="Pocket">HK S8</cards>
    <action no="3" player="OupsUnMissclick" sum="1 355" type="23"/>
-   <action no="4" player="Tagou" sum="105" type="7"/>
+   <action no="4" player="compteA" sum="105" type="7"/>
   </round>
   <round no="2"><cards type="Flop">D6 H2 CJ</cards></round>
   <round no="3"><cards type="Turn">H10</cards></round>
@@ -81,7 +81,7 @@ class TestIpokerHand(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.hands = parse_ipoker(HAND_XML)
         cls.h = cls.hands[0]
-        cls.hero = player_key("Tagou")
+        cls.hero = player_key("compteA")
         cls.villain = player_key("OupsUnMissclick")
 
     def test_one_hand(self) -> None:
