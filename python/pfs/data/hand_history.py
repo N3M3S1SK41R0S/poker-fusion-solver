@@ -272,10 +272,35 @@ _WNMX_COLLECT = re.compile(r"^(?P<name>.+?)\s+collected\s+(?P<amt>[\d.,]+)", re.
 _WNMX_SHOWN = re.compile(r"^Seat\s+(?P<seat>\d+):\s+(?P<name>.+?)\s+showed\s+\[(?P<cards>[^\]]+)\]")
 
 
+#: Tout ce qui n'est pas un chiffre dans un montant écrit par le client.
+#: Le symbole monétaire n'est pas décoratif : dans un tournoi à primes, les
+#: montants de la table (« 120€ ») cohabitent avec les jetons. Le client les
+#: écrit dans les mêmes champs.
+_NON_NUMERIQUE = re.compile(r"[^\d,.\-]")
+
+
 def _num(txt: str | None) -> float:
+    """Montant écrit par le client, en nombre.
+
+    Les séparateurs varient (espace fine insécable, virgule décimale) et,
+    dans les tournois à primes, le client suffixe certains montants de leur
+    devise : « 120€ ». Un `float()` direct levait alors `ValueError`, et
+    comme la lecture d'un fichier est un générateur, l'exception emportait
+    **toutes les mains suivantes du fichier** — sans le moindre message.
+    Constaté sur 5 fichiers d'une session réelle, dont un de 171 mains.
+
+    Un montant illisible rend 0.0 plutôt que de faire tomber la lecture :
+    perdre un champ vaut mieux que perdre la partie.
+    """
     if not txt:
         return 0.0
-    return float(txt.replace(",", ".").replace(" ", ""))
+    nettoye = _NON_NUMERIQUE.sub("", txt).replace(",", ".")
+    if not nettoye or nettoye in {".", "-", "-."}:
+        return 0.0
+    try:
+        return float(nettoye)
+    except ValueError:
+        return 0.0
 
 
 def _cards(txt: str) -> tuple[str, ...]:
@@ -649,10 +674,16 @@ def _ipoker_card(tok: str) -> str | None:
 
 
 def _ipoker_amount(txt: str | None) -> float:
-    """Montant iPoker : espaces = séparateurs de milliers (« 1 355 »)."""
-    if not txt:
-        return 0.0
-    return float(txt.replace(" ", "").replace(" ", "").replace(",", "."))
+    """Montant iPoker : espaces = séparateurs de milliers (« 1 355 »).
+
+    Sur les tournois à primes, le client écrit aussi des montants en devise
+    dans ces mêmes champs (« 120€ »). Un `float()` direct levait alors
+    `ValueError` ; la lecture d'un fichier étant un générateur, l'exception
+    emportait **toutes les mains suivantes**, sans le moindre message.
+    Mesuré sur une session réelle : 5 fichiers interrompus, dont un de
+    171 mains, et 427 mains récupérées au lieu de 721.
+    """
+    return _num(txt)
 
 
 def _parse_ipoker_game(
