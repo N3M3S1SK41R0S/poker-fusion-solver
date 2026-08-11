@@ -2,6 +2,74 @@
 
 ## Non publié — 11 août 2026
 
+### Les « zones saines » de la revue de session étaient de la littérature
+
+L'interface affichait « zone saine 28–50 % » pour le VPIP, « 8–24 % » pour le
+3-bet, « 25–40 % » pour le WTSD. Aucun de ces chiffres n'était mesuré : ni
+corpus, ni dénominateur, ni effectif. Ils sont remplacés par des valeurs
+**recalculées** sur `phh-dataset` (licence MIT, université de Toronto) avec le
+**même code de comptage** que celui qui mesure l'utilisateur
+(`ParsedHand.stat_observations`) — c'est ce partage qui rend la comparaison
+licite.
+
+Sur les 10 000 mains de Pluribus, restreintes aux positions d'une table à
+trois (30 000 mains-joueurs) :
+
+| statistique | repère mesuré | occasions | Q1 · méd · Q3 (14 joueurs) |
+|---|---|---|---|
+| VPIP | **32,19 %** | 30 000 | 29,1 · 32,5 · 34,1 |
+| PFR | **15,67 %** | 30 000 | 15,2 · 16,1 · 16,7 |
+| écart VPIP−PFR | **16,52 pt** | 30 000 | 12,5 · 16,7 · 17,9 |
+| 3-bet | **6,73 %** | 25 611 | 6,1 · 7,0 · 7,6 |
+| fold to c-bet | **47,25 %** | 2 823 | 41,4 · 47,4 · 52,5 |
+| WTSD | **14,69 %** | 16 014 | 13,5 · 14,8 · 15,6 |
+| AF postflop | **1,95** | 2 443 suivis | 1,8 · 1,9 · 2,2 |
+
+Sur la table à six complète (60 000 mains-joueurs) : VPIP 26,32 %, PFR
+17,55 %, écart 8,77 pt, 3-bet 4,37 %, fold-to-cbet 46,87 %, WTSD 10,62 %,
+AF 2,27.
+
+**Ce que ces chiffres ne sont pas.** Pluribus joue du **cash 6-max à 100 bb
+sans ante** : ce sont des repères d'**équilibre**, pas une moyenne de
+population, et surtout **pas des repères de tournoi**. Le seul tournoi du
+corpus — WSOP 2023 event #43 — ne contient que **18 mains de hold'em** sur 83
+(championnat mixte : les 65 autres sont refusées par le lecteur PHH, pas lues
+de travers), soit 90 mains-joueurs : l'intervalle de Wilson de son VPIP couvre
+23,5–42,4 %. Il est publié avec ses effectifs et marqué non concluant ; rien
+n'en est déduit.
+
+**Le WTSD n'est pas comparable d'un format à l'autre** et l'API le dit
+désormais champ par champ (`comparable: false` + la raison) : son dénominateur
+compte tous les joueurs assis dès qu'un flop tombe, couchés préflop compris —
+il baisse donc mécaniquement quand la table s'agrandit.
+
+### Ajouté
+
+- **`python/pfs/analysis/reperes.py`** — les repères mesurés, gelés dans le
+  code (le corpus vit hors du dépôt) et recalculables à la commande.
+  `situer()` place un profil face à un jeu et marque ce qui n'est pas
+  comparable ; `jeu_par_defaut()` choisit le mélange de positions d'après la
+  taille de table réellement jouée.
+- **`python/banc_reperes_corpus.py`** — le banc rejouable : `--verifier`
+  compare la table gelée au corpus champ par champ et sort en code 1 au
+  premier écart, `--situer` place le profil de l'utilisateur, `--geler`
+  réimprime le littéral. 17 s pour le rapport complet.
+- **`python/tests/test_reperes_corpus.py`** — 25 tests : le calcul sur des
+  mains PHH écrites à la main, la cohérence interne de la table gelée, le
+  refus de conclure sur les WSOP, et le parcours HTTP réel module → route
+  → page.
+- **Route `/api/reperes`** et son bouton « Voir les repères mesurés » dans
+  l'onglet *Mes sessions* : les repères sont consultables sans historiques,
+  avec leur source, leurs effectifs et leurs limites.
+- **AF postflop du héros** dans `HeroProfile` — la seule statistique de style
+  que les repères donnaient et que le profil ne mesurait pas.
+
+### Corrigé
+
+- `pfs/lexique.py` — les entrées VPIP, PFR et WTSD citaient des fourchettes de
+  manuel ; elles citent maintenant les repères mesurés et, pour le WTSD, la
+  réserve sur son dénominateur.
+
 ### Le « 95 % » de lecture des cartes était faux : le vrai taux est 76,7 %
 
 Le dépôt annonçait « 199 cartes lues sur 209, soit 95 % » sur 57 captures

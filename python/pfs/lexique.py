@@ -117,17 +117,24 @@ LEXIQUE: tuple[Terme, ...] = (
     _t("VPIP", "mesures",
        "Part des mains où tu mets volontairement de l'argent préflop "
        "(les blindes ne comptent pas).",
-       "L'indicateur n°1 de sélection. En format court, 28–50 % est sain. "
-       "Au-delà, tu joues trop de mains — c'est la fuite la plus coûteuse "
-       "et la plus fréquente."),
+       "L'indicateur n°1 de sélection. Repère MESURÉ, pas fourchette de "
+       "manuel : sur les 10 000 mains publiques de Pluribus restreintes aux "
+       "positions d'une table à trois, l'équilibre joue 32,2 % (30 000 "
+       "mains-joueurs) — et c'est une borne basse, à trois on ouvre plus "
+       "large qu'au bouton d'une table à six. Le double de ce chiffre est "
+       "la fuite la plus coûteuse et la plus fréquente."),
     _t("PFR", "mesures",
        "Part des mains où tu RELANCES préflop.",
-       "Comparé au VPIP, il dit si tu prends l'initiative ou si tu suis. Un "
-       "grand écart VPIP−PFR (au-delà de ~18 points) trahit un jeu passif."),
+       "Comparé au VPIP, il dit si tu prends l'initiative ou si tu suis. "
+       "L'écart VPIP−PFR de Pluribus vaut 16,5 points sur les positions "
+       "d'une table à trois, 8,8 sur les six : au-delà, tu suis au lieu de "
+       "relancer."),
     _t("WTSD", "mesures",
        "Part des mains vues au flop qui vont jusqu'à l'abattage.",
-       "Trop haut (>40 % en format court), tu paies trop pour voir ; trop "
-       "bas, tu te fais voler."),
+       "Attention au dénominateur : celui du logiciel compte tous les "
+       "joueurs assis quand un flop tombe, couchés préflop compris. Il "
+       "baisse donc mécaniquement quand la table s'agrandit, et un WTSD de "
+       "table courte ne se compare PAS à un repère 6-max."),
     _t("fold-to-cbet", "mesures",
        "Fréquence à laquelle tu te couches face à une mise de continuation.",
        "Au-delà de ~60 %, tu es exploitable : miser contre toi devient "

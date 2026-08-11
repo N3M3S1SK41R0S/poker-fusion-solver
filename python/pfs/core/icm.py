@@ -30,6 +30,7 @@ proportionnels sans remise, avec erreur-type rapportée.
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Sequence
@@ -44,14 +45,44 @@ __all__ = [
     "icm_required_equity",
     "IcmSpot",
     "analyse_icm_spot",
+    "IcmError",
+    "PayoutsTronques",
+    "IcmMesure",
+    "icm_equities_mesurees",
+    "erreur_type_exacte",
+    "stats_cache_harville",
+    "vider_cache_harville",
 ]
 
 EXACT_LIMIT = 12
 """Au-delà de 12 joueurs, bascule automatique en Monte-Carlo."""
 
+CACHE_HARVILLE = 4096
+"""Entrées du cache PARTAGÉ de `_finish_probs_exact`, clé = tapis triés.
+
+Une entrée pèse au plus 12 × 12 flottants (≈ 1,2 ko) : le cache saturé tient
+sous 5 Mo. À comparer aux 2¹² × 12 états que chaque appel non caché
+reconstruit puis jette.
+"""
+
 
 class IcmError(ValueError):
     pass
+
+
+class PayoutsTronques(UserWarning):
+    """Des places payées ont été retirées faute de joueurs pour les occuper.
+
+    La troncature elle-même est CORRECTE : à deux joueurs, la 3ᵉ place n'existe
+    plus, son gain a déjà été versé à quelqu'un d'éliminé, et la dotation
+    attribuable est ``sum(payouts[:len(stacks)])``. C'est le SILENCE qui était
+    le défaut : une table finale saisie à cinq joueurs au lieu de six perdait
+    une place sans que rien ne le dise, et toutes les équités sortaient fausses
+    d'un montant plausible.
+
+    Cet avertissement n'est émis que si la troncature retire un gain
+    STRICTEMENT positif — une grille complétée par des zéros ne perd rien.
+    """
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -71,6 +102,25 @@ def _validate(stacks: Sequence[float], payouts: Sequence[float]) -> tuple[tuple[
     if any(x < 0 for x in p):
         raise IcmError("payout négatif.")
     if len(p) > len(s):
+        # POURQUOI avertir plutôt que tronquer en silence : la troncature est
+        # la bonne opération (une place qui n'existe plus n'est versée à
+        # personne), mais elle est INDISCERNABLE d'une saisie incomplète des
+        # tapis. Les deux causes produisent la même entrée ; seule l'une des
+        # deux est voulue. L'avertissement rend le choix visible sans casser
+        # le cas légitime — c'est le seul point où un `raise` aurait refusé des
+        # tables parfaitement valides (deux joueurs restants sur une grille à
+        # trois places, mesuré dans `test_icm_invariants.py`).
+        perdus = p[len(s):]
+        if any(x > 0.0 for x in perdus):
+            warnings.warn(
+                f"grille de {len(p)} places pour {len(s)} joueur(s) : "
+                f"{len(perdus)} place(s) tronquée(s) "
+                f"({', '.join(f'{x:g}' for x in perdus)}). Dotation "
+                f"attribuable {sum(p[: len(s)]):g} au lieu de {sum(p):g}. "
+                f"C'est correct si ces places ont déjà été payées ; c'est une "
+                f"SAISIE INCOMPLÈTE des tapis si la table compte encore "
+                f"{len(p)} joueurs.",
+                PayoutsTronques, stacklevel=3)
         p = p[: len(s)]
     # Payouts décroissants : convention universelle (1re place d'abord).
     if any(p[i] < p[i + 1] for i in range(len(p) - 1)):
@@ -78,12 +128,25 @@ def _validate(stacks: Sequence[float], payouts: Sequence[float]) -> tuple[tuple[
     return s, p
 
 
-def _finish_probs_exact(stacks: tuple[float, ...], n_places: int) -> np.ndarray:
-    """P(joueur i termine à la place k), récurrence de Harville mémoïsée.
+@lru_cache(maxsize=CACHE_HARVILLE)
+def _finish_probs_tries(stacks: tuple[float, ...], n_places: int) -> np.ndarray:
+    """Cœur de Harville sur des tapis DÉJÀ TRIÉS — la seule entrée cachée.
 
-    La mémoïsation porte sur le **sous-ensemble de joueurs encore en course**
-    (bitmask) : chaque état n'est calculé qu'une fois, d'où O(2ⁿ·n²) au lieu
-    de O(n!).
+    POURQUOI un cache de module et pas les `lru_cache` d'origine : celles-ci
+    étaient posées sur des closures RECRÉÉES à chaque appel. Elles servaient
+    la récursion interne (2ⁿ états visités une fois) et ne survivaient pas à
+    la sortie de fonction — aucun bénéfice entre deux appels, alors que
+    `bubble_factor` appelle l'ICM TROIS fois de suite et `analyse_icm_spot`
+    lui redemande en plus la ligne de base sur les MÊMES tapis.
+
+    La clé est le tapis trié : les probabilités de Harville sont équivariantes
+    par permutation des joueurs, donc deux tables aux mêmes tapis dans un
+    ordre différent partagent une entrée. `_finish_probs_exact` remet la
+    permutation à l'endroit.
+
+    Le tableau rendu est marqué NON MODIFIABLE : il est partagé entre appels,
+    et une écriture en place corromprait silencieusement toutes les tables
+    suivantes.
     """
     n = len(stacks)
     probs = np.zeros((n, n_places), dtype=np.float64)
@@ -126,13 +189,64 @@ def _finish_probs_exact(stacks: tuple[float, ...], n_places: int) -> np.ndarray:
     full = (1 << n) - 1
     for k in range(min(n_places, n)):
         probs[:, k] = place_probs(full, k)
+    probs.flags.writeable = False
     return probs
+
+
+def _finish_probs_exact(stacks: tuple[float, ...], n_places: int) -> np.ndarray:
+    """P(joueur i termine à la place k), récurrence de Harville mémoïsée.
+
+    La mémoïsation porte sur le **sous-ensemble de joueurs encore en course**
+    (bitmask) : chaque état n'est calculé qu'une fois, d'où O(2ⁿ·n²) au lieu
+    de O(n!). Le résultat est en outre mis en cache ENTRE APPELS sur les
+    tapis triés (`_finish_probs_tries`).
+
+    Le tri est une canonicalisation exacte, pas une approximation : Harville
+    ne connaît les joueurs que par leur tapis, donc permuter les tapis permute
+    les lignes du résultat et rien d'autre — l'invariant de permutation que
+    `tests/test_icm_invariants.py` mesure déjà. Le tableau rendu est une copie
+    fraîche : l'appelant peut l'écrire sans toucher au cache.
+    """
+    ordre = sorted(range(len(stacks)), key=lambda i: (-stacks[i], i))
+    canonique = _finish_probs_tries(tuple(stacks[i] for i in ordre), n_places)
+    probs = np.empty_like(canonique)
+    probs[ordre] = canonique          # permutation inverse
+    return probs
+
+
+def stats_cache_harville() -> tuple[int, int, int]:
+    """(succès, échecs, entrées) du cache exact — pour mesurer, pas pour décider."""
+    info = _finish_probs_tries.cache_info()
+    return info.hits, info.misses, info.currsize
+
+
+def vider_cache_harville() -> None:
+    """Vide le cache exact. Utile aux bancs de mesure et aux tests de coût."""
+    _finish_probs_tries.cache_clear()
 
 
 def _finish_probs_mc(
     stacks: tuple[float, ...], n_places: int, n_sims: int, seed: int | None
-) -> tuple[np.ndarray, float]:
-    """Estimation Monte-Carlo : tirages successifs proportionnels aux stacks."""
+) -> tuple[np.ndarray, np.ndarray]:
+    r"""Estimation Monte-Carlo : tirages successifs proportionnels aux stacks.
+
+    Returns
+    -------
+    probs : numpy.ndarray, shape (n, n_places)
+        Fréquence estimée de « le joueur *i* finit à la place *k* ».
+    erreur_places : numpy.ndarray, même forme
+        Erreur-type MESURÉE de chacune de ces fréquences,
+        :math:`\sqrt{\hat p(1-\hat p)/n}` — la variance d'une proportion
+        binomiale, estimée sur l'échantillon lui-même.
+
+    POURQUOI ce n'est plus :math:`\sqrt{0{,}25/n}` : cette valeur est le
+    MAXIMUM de :math:`\sqrt{p(1-p)/n}`, atteint en p = 0,5 seulement. Sur une
+    table à 9 joueurs, les fréquences par place tournent autour de 1/9 ≈ 0,11,
+    où l'erreur-type réelle vaut 0,31 fois la borne — la borne surestime alors
+    l'incertitude d'un facteur ~3,2, et le chiffre était de toute façon jeté
+    par l'appelant (`probs, _ = ...`). Une largeur d'intervalle NATIVE, déjà
+    disponible, était produite puis perdue.
+    """
     rng = np.random.default_rng(seed)
     n = len(stacks)
     counts = np.zeros((n, n_places), dtype=np.float64)
@@ -148,8 +262,99 @@ def _finish_probs_mc(
             remaining = np.delete(remaining, j)
             alive = np.delete(alive, j)
     probs = counts / n_sims
-    se = float(np.sqrt(0.25 / n_sims))          # borne supérieure de l'erreur-type
-    return probs, se
+    erreur_places = np.sqrt(np.maximum(probs * (1.0 - probs), 0.0) / n_sims)
+    return probs, erreur_places
+
+
+def erreur_type_exacte(
+    probs: np.ndarray, payouts: np.ndarray, n_sims: int
+) -> np.ndarray:
+    r"""Erreur-type du $EV estimé par Monte-Carlo, joueur par joueur.
+
+    Le tirage répète ``n_sims`` fois la variable « gain encaissé par le
+    joueur *i* ». Les places sont MUTUELLEMENT EXCLUSIVES — un joueur en
+    occupe au plus une — donc cette variable vaut :math:`\pi_k` avec
+    probabilité :math:`p_{ik}` et zéro sinon, d'où
+
+    .. math:: \operatorname{Var}(X_i) = \sum_k p_{ik}\pi_k^2
+              - \Bigl(\sum_k p_{ik}\pi_k\Bigr)^2
+
+    et :math:`\sigma_i = \sqrt{\operatorname{Var}(X_i)/n}`. Ce n'est PAS la
+    somme des erreurs-types par place : celles-ci sont corrélées négativement,
+    et les additionner surestimerait la largeur.
+
+    Le ``max(·, 0)`` n'est pas cosmétique : sur des probabilités estimées, la
+    différence de deux quantités presque égales peut sortir à −1e-18.
+
+    Parameters
+    ----------
+    probs : numpy.ndarray, shape (n, k)
+        Probabilités de place — exactes ou estimées.
+    payouts : numpy.ndarray, shape (k,)
+        Gains par place.
+    n_sims : int
+        Nombre de tirages.
+
+    Examples
+    --------
+    Un seul gain et un seul joueur payé : la variable est constante, donc
+    d'erreur-type nulle quel que soit le nombre de tirages.
+
+    >>> import numpy as np
+    >>> float(erreur_type_exacte(np.array([[1.0]]), np.array([100.0]), 10)[0])
+    0.0
+    """
+    if n_sims < 1:
+        raise IcmError("n_sims >= 1 requis.")
+    esp = probs @ payouts
+    var = probs @ (payouts ** 2) - esp ** 2
+    return np.sqrt(np.maximum(var, 0.0) / n_sims)
+
+
+def _places_des_morts(
+    morts: list[int],
+    restes: list[float],
+    ordre: Sequence[int] | None,
+) -> dict[int, float]:
+    """Répartit les places restantes entre les joueurs à tapis nul.
+
+    Parameters
+    ----------
+    morts : list of int
+        Indices des joueurs sans jeton, dans l'ordre de la table.
+    restes : list of float
+        Gains encore à distribuer, du MEILLEUR au pire (``payouts`` privé des
+        places occupées par les vivants).
+    ordre : sequence of int or None
+        Éliminés dont l'ordre est CONNU, du premier sorti au dernier. Les
+        éliminés absents de cette liste sont réputés sortis AVANT tous ceux
+        qui y figurent, et se partagent à parts égales ce qui reste — la
+        convention d'ignorance, seule compatible avec l'invariance par
+        permutation.
+
+    Returns
+    -------
+    dict
+        Gain attribué à chaque mort. La somme égale ``sum(restes)`` : la
+        conservation de la dotation tient quelle que soit la déclaration.
+    """
+    # Autant de places que de morts : les places manquantes valent zéro (grille
+    # plus courte que la table), ce qui garde `sum(places) == sum(restes)`.
+    places = list(restes) + [0.0] * max(0, len(morts) - len(restes))
+    connus = list(ordre or ())
+    ensemble = set(connus)
+    inconnus = [i for i in morts if i not in ensemble]
+
+    out: dict[int, float] = {}
+    # Le DERNIER éliminé prend la meilleure place restante, l'avant-dernier la
+    # suivante, etc. — c'est la définition même de l'ordre d'élimination.
+    for rang, joueur in enumerate(reversed(connus)):
+        out[joueur] = places[rang] if rang < len(places) else 0.0
+    if inconnus:
+        part = sum(places[len(connus):]) / len(inconnus)
+        for joueur in inconnus:
+            out[joueur] = part
+    return out
 
 
 def icm_equities(
@@ -157,10 +362,33 @@ def icm_equities(
     payouts: Sequence[float],
     n_sims: int = 200_000,
     seed: int | None = 0,
+    *,
+    ordre_elimination: Sequence[int] | None = None,
 ) -> np.ndarray:
     r"""$EV de chaque joueur : :math:`\$EV_i = \sum_k P(i \text{ finit } k)\,\pi_k`.
 
     Exact (Harville mémoïsé) jusqu'à 12 joueurs, Monte-Carlo au-delà.
+
+    Parameters
+    ----------
+    ordre_elimination : sequence of int, optional
+        Joueurs à tapis nul dont l'ordre de sortie est CONNU, du premier
+        éliminé au dernier. Par défaut ``None`` : plus aucun ordre n'est
+        supposé et les morts se partagent les places restantes à parts égales.
+
+        Ce paramètre existe parce que le partage égal est FAUX quand l'ordre
+        est connu, et qu'il l'est justement là où ça compte. Dans
+        `bubble_factor`, l'état « le héros perd » met le héros à zéro : il est
+        PAR CONSTRUCTION le dernier éliminé, puisque tous les autres joueurs
+        à zéro l'étaient déjà avant la main. Le partage égal lui donnait la
+        moyenne des places restantes au lieu de la meilleure d'entre elles.
+
+        Ce n'est pas une convention parmi d'autres : c'est la LIMITE de la
+        récursion. Sur ``[100, 100, 100, 0]`` avec ``[50, 30, 20, 10]``, un
+        héros à ε jeton (l'autre mort restant à zéro exact) vaut 20,000000183
+        à ε = 1e-6 et 20,000000000 à ε = 1e-9 — la limite est 20, la place
+        immédiatement inférieure aux vivants. Le partage égal rendait 15,
+        soit 25 % de moins, et cette valeur-là est DISCONTINUE en zéro.
 
     Examples
     --------
@@ -176,8 +404,32 @@ def icm_equities(
     >>> eq = icm_equities([6000, 3000, 1000], [50, 30, 20])
     >>> float(eq[0]) < 60.0 and float(eq[2]) > 10.0
     True
+
+    Deux morts, ordre inconnu : partage égal (25 = (30+20)/2 chacun).
+
+    >>> icm_equities([100, 0, 0], [50, 30, 20]).round(6).tolist()
+    [50.0, 25.0, 25.0]
+
+    Le même spot en déclarant que le joueur 1 est sorti AVANT le joueur 2 :
+
+    >>> icm_equities([100, 0, 0], [50, 30, 20],
+    ...              ordre_elimination=[1, 2]).round(6).tolist()
+    [50.0, 20.0, 30.0]
     """
     s, p = _validate(stacks, payouts)
+    if ordre_elimination is not None:
+        vus: set[int] = set()
+        for i in ordre_elimination:
+            if not (0 <= i < len(s)):
+                raise IcmError(f"ordre_elimination : indice {i} hors table.")
+            if s[i] > 0.0:
+                raise IcmError(
+                    f"ordre_elimination : le joueur {i} a encore {s[i]:g} "
+                    f"jeton(s) — on ne peut pas ordonner l'élimination d'un "
+                    f"joueur vivant.")
+            if i in vus:
+                raise IcmError(f"ordre_elimination : joueur {i} en double.")
+            vus.add(i)
     if not p:
         return np.zeros(len(s))
 
@@ -193,9 +445,13 @@ def icm_equities(
     # face au gros tapis avec le zéro, 2,04 avec le dernier gain, soit une
     # équité exigée de 70,8 % au lieu de 67,1 %.
     #
-    # Les joueurs à zéro se partagent à parts égales les dernières places :
-    # rien ne permet de les départager, et l'ordre de leur élimination n'est
-    # pas dans les données.
+    # Les joueurs à zéro se partagent à parts égales les dernières places
+    # TANT QUE `ordre_elimination` ne dit rien : rien ne permet alors de les
+    # départager, et l'ordre de leur élimination n'est pas dans les données.
+    # Dès que l'appelant le connaît — et `bubble_factor` le connaît, puisque
+    # son héros vient de mourir APRÈS tout le monde — le partage égal est
+    # simplement faux, et discontinu par-dessus le marché (voir la docstring
+    # du paramètre).
     #
     # Cette branche est-elle la LIMITE de la récursion, ou seulement une
     # valeur voisine ? La question n'est pas rhétorique : `bubble_factor`
@@ -233,7 +489,9 @@ def icm_equities(
         restes = list(p[len(vivants):])
         if restes:
             morts = [i for i in range(len(s)) if i not in set(vivants)]
-            out[morts] = sum(restes) / len(morts)
+            for joueur, gain in _places_des_morts(
+                    morts, restes, ordre_elimination).items():
+                out[joueur] = gain
         haut = list(p[:len(vivants)])
         if haut:
             out[vivants] = icm_equities([s[i] for i in vivants], haut,
@@ -245,6 +503,107 @@ def icm_equities(
     else:
         probs, _ = _finish_probs_mc(s, len(p), n_sims, seed)
     return probs @ np.asarray(p, dtype=np.float64)
+
+
+@dataclass(frozen=True, slots=True)
+class IcmMesure:
+    """$EV par joueur ASSORTIS de leur incertitude — pas seulement le chiffre.
+
+    Attributes
+    ----------
+    equities : numpy.ndarray, shape (n,)
+        Les $EV, identiques à ceux d'`icm_equities` sur les mêmes arguments.
+    erreur_type : numpy.ndarray, shape (n,)
+        Erreur-type du $EV de chaque joueur. **Exactement zéro** sur le chemin
+        exact : la récurrence de Harville ne tire rien au sort, son incertitude
+        d'échantillonnage EST nulle (l'erreur de modèle, elle, n'est pas
+        mesurée ici — voir la limite ci-dessous).
+    erreur_places : numpy.ndarray, shape (n, k)
+        Erreur-type de chaque probabilité de place. Zéro sur le chemin exact.
+    exact : bool
+        Vrai si aucun tirage n'a été fait.
+    n_sims : int
+        Tirages effectivement demandés (0 si exact).
+
+    Limite à ne pas confondre
+    -------------------------
+    ``erreur_type`` mesure le BRUIT D'ÉCHANTILLONNAGE, pas la justesse du
+    modèle. Un ICM exact reste une approximation de la réalité du tournoi
+    (Harville suppose que la probabilité de finir devant est proportionnelle
+    aux tapis) : l'erreur de modèle est ailleurs, et elle ne devient pas nulle
+    parce que celle-ci l'est.
+    """
+
+    equities: np.ndarray
+    erreur_type: np.ndarray
+    erreur_places: np.ndarray
+    exact: bool
+    n_sims: int
+
+    @property
+    def demi_largeur_95(self) -> np.ndarray:
+        """Demi-largeur de l'intervalle à 95 % (normal, 1,96 σ)."""
+        return 1.959963984540054 * self.erreur_type
+
+
+def icm_equities_mesurees(
+    stacks: Sequence[float],
+    payouts: Sequence[float],
+    n_sims: int = 200_000,
+    seed: int | None = 0,
+    *,
+    ordre_elimination: Sequence[int] | None = None,
+) -> IcmMesure:
+    r"""`icm_equities`, mais l'incertitude n'est plus jetée.
+
+    Même calcul, mêmes chiffres — la seule différence est que la largeur
+    d'intervalle produite par le Monte-Carlo remonte à l'appelant au lieu
+    d'être perdue dans un ``probs, _ = ...``.
+
+    Qui porte l'erreur : seuls les joueurs dont le classement a été TIRÉ. Un
+    joueur à tapis nul reçoit sa place par la convention documentée dans
+    `icm_equities` (partage égal, ou ordre déclaré) : aucun tirage, donc
+    erreur-type nulle — et c'est vrai, pas une commodité.
+
+    Examples
+    --------
+    Chemin exact : incertitude d'échantillonnage nulle, par construction.
+
+    >>> m = icm_equities_mesurees([6000, 3000, 1000], [50, 30, 20])
+    >>> m.exact, float(m.erreur_type.max())
+    (True, 0.0)
+
+    Et les $EV sont bien les mêmes que ceux de l'API historique :
+
+    >>> import numpy as np
+    >>> bool(np.allclose(m.equities, icm_equities([6000, 3000, 1000],
+    ...                                           [50, 30, 20])))
+    True
+    """
+    equities = icm_equities(stacks, payouts, n_sims=n_sims, seed=seed,
+                            ordre_elimination=ordre_elimination)
+    s, p = _validate(stacks, payouts)
+    n, k = len(s), len(p)
+    erreur_places = np.zeros((n, k), dtype=np.float64)
+    erreur_type = np.zeros(n, dtype=np.float64)
+    if not p:
+        return IcmMesure(equities, erreur_type, erreur_places, True, 0)
+
+    # Le tirage ne porte JAMAIS sur la table entière : les joueurs à tapis nul
+    # sont servis par la branche de convention, sans hasard. C'est donc la
+    # taille du sous-problème VIVANT qui décide du chemin, exactement comme
+    # dans `icm_equities`.
+    vivants = [i for i, v in enumerate(s) if v > 0.0]
+    haut = p[: len(vivants)]
+    if len(vivants) <= EXACT_LIMIT or not haut:
+        return IcmMesure(equities, erreur_type, erreur_places, True, 0)
+
+    probs, err_places = _finish_probs_mc(
+        tuple(s[i] for i in vivants), len(haut), n_sims, seed)
+    pay = np.asarray(haut, dtype=np.float64)
+    erreur_places[np.ix_(vivants, range(len(haut)))] = err_places
+    erreur_type[vivants] = erreur_type_exacte(probs, pay, n_sims)
+    return IcmMesure(equities, erreur_type, erreur_places, False, n_sims)
 
 
 def icm_dollar_ev(
@@ -260,6 +619,17 @@ def icm_dollar_ev(
 # ═══════════════════════════════════════════════════════════════════════════
 # BUBBLE FACTOR & ÉQUITÉ REQUISE
 # ═══════════════════════════════════════════════════════════════════════════
+
+
+def _avec_ordre(kw: dict, etat: Sequence[float], sortant: int) -> dict:
+    """``kw`` enrichi de « ``sortant`` est le dernier éliminé », s'il l'est.
+
+    Si ``sortant`` a encore des jetons dans ``etat``, il n'est pas éliminé et
+    rien n'est déclaré : `icm_equities` refuserait d'ordonner un vivant.
+    """
+    if etat[sortant] > 0.0:
+        return kw
+    return {**kw, "ordre_elimination": (sortant,)}
 
 
 def bubble_factor(
@@ -286,7 +656,21 @@ def bubble_factor(
     amount
         Jetons disputés. Par défaut : all-in pour le tapis effectif
         ``min(stack_hero, stack_villain)`` — la définition standard.
+
+    Notes
+    -----
+    L'ordre d'élimination n'est PAS un paramètre : cette fonction le connaît
+    par construction et le déclare elle-même à `icm_equities`. Dans l'état
+    « le héros perd », le héros vient de sortir, donc APRÈS tous les joueurs
+    déjà à zéro ; dans l'état « le héros gagne » et s'il couvre, c'est le
+    vilain qui sort en dernier. Le lui passer serait une contradiction, d'où
+    le refus explicite plutôt qu'un écrasement silencieux.
     """
+    if "ordre_elimination" in kw:
+        raise IcmError(
+            "bubble_factor détermine lui-même l'ordre d'élimination : dans "
+            "l'état perdant, le héros est le dernier sorti. Le déclarer de "
+            "l'extérieur ne peut que le contredire.")
     s, p = _validate(stacks, payouts)
     if hero == villain:
         raise IcmError("hero et villain doivent différer.")
@@ -303,12 +687,17 @@ def bubble_factor(
     win = list(s)
     win[hero] += amt
     win[villain] -= amt
-    ev_win = icm_dollar_ev(win, p, hero, **kw)
+    # Gagner, c'est éliminer : le vilain qui tombe à zéro sort MAINTENANT,
+    # donc après les joueurs déjà éliminés. Sans effet sur le $EV du héros
+    # (les vivants se partagent `p[:len(vivants)]` quoi qu'il arrive), mais le
+    # vecteur rendu par `icm_equities` reste alors juste pour tout le monde.
+    ev_win = icm_dollar_ev(win, p, hero, **_avec_ordre(kw, win, villain))
 
     lose = list(s)
     lose[hero] -= amt
     lose[villain] += amt
-    ev_lose = icm_dollar_ev(lose, p, hero, **kw)
+    # LE terme qui compte : le héros vient de mourir, il est le dernier sorti.
+    ev_lose = icm_dollar_ev(lose, p, hero, **_avec_ordre(kw, lose, hero))
 
     gain = ev_win - base
     loss = base - ev_lose
@@ -497,6 +886,47 @@ class PkoSpot:
     pot: float          # pot total, mise adverse incluse
     bet: float          # montant à payer
 
+    villain_all_in: bool | None = None
+    """Le vilain est-il à tapis ET couvert par le héros ? (la prime est-elle
+    capturable ?)
+
+    ``None`` — le défaut — laisse `analyse_pko_spot` l'INFÉRER du tapis
+    résiduel, ce qui est fragile : la convention de `PkoSpot` veut les jetons
+    du vilain à tapis dans ``pot`` et son tapis à zéro, mais un résidu d'un
+    seul jeton (arrondi d'ante, tapis lu à l'écran, saisie) suffit à faire
+    disparaître la prime **en silence**. Mesuré sur une table finale de MTT
+    PKO réel (3 337 entrants × 5 000 jetons, 6 685 000 jetons en jeu) : un
+    résidu de 1 jeton — 0,0003 % du tapis du vilain — fait passer l'équité
+    exigée de 49,95 % à 53,59 %. Un chiffre faux et plausible, du côté du
+    fold.
+
+    Le déclarer coûte un booléen et supprime la classe entière de défauts.
+    `spot_pko_face_a_tapis` le renseigne toujours.
+    """
+
+    unite_jeton: float | None = None
+    """Valeur d'UN jeton, dans l'unité de ``stacks`` — repli d'inférence.
+
+    Quand ``villain_all_in`` vaut ``None`` et que celle-ci est donnée, le
+    vilain est réputé éliminé si son tapis résiduel est sous le demi-jeton.
+    C'est le seul seuil qui ait un sens physique : entre zéro et un jeton, il
+    n'existe rien à une table de poker.
+
+    ARBITRAGE ASSUMÉ : ce critère n'est PAS invariant d'échelle, et il ne peut
+    pas l'être. « Un jeton » est une grandeur dimensionnée ; exprimer les
+    tapis en blindes ou en millions change ce qu'il vaut. Les deux exigences
+    — invariance d'échelle et comparaison en jetons entiers — sont donc
+    incompatibles tant que l'unité n'accompagne pas les tapis. C'est
+    précisément ce que ce champ fournit : l'unité voyage AVEC les nombres,
+    et le couple (tapis, unite_jeton) redevient invariant d'échelle — doubler
+    les deux ne change aucun verdict. C'est l'invariance d'échelle qui prime,
+    à condition de la porter sur la bonne quantité.
+
+    Laissée à ``None`` sans ``villain_all_in``, l'inférence retombe sur le
+    seuil relatif historique ``1e-12 · Σ tapis``, qui ne signifie rien de plus
+    que « zéro exact, aux arrondis près ».
+    """
+
 
 @dataclass(frozen=True, slots=True)
 class PkoAnalysis:
@@ -509,17 +939,27 @@ class PkoAnalysis:
     required_with_bounty: float  # équité requise avec la prime
     discount_pts: float          # points d'équité offerts par la prime
     verdict: str
+    source_elimination: str = "seuil relatif"
+    """D'où vient ``villain_eliminated`` : déclaration, unité de jeton, ou
+    seuil relatif. Sans cette trace, impossible de savoir si la prime a été
+    décidée ou devinée."""
+    signaux: tuple[str, ...] = ()
+    """Anomalies EXPLICITES là où le code tronquait en silence (``min``/``max``
+    sur les équités requises). Vide dans le cas nominal."""
 
     def explain(self) -> str:
         lines = [
             f"$EV : fold {self.ev_fold:.2f} · gagne {self.ev_win:.2f}"
             f" · perd {self.ev_lose:.2f}",
             (f"prime capturable : {self.bounty_value:.2f} $"
+             f"  [{self.source_elimination}]"
              if self.villain_eliminated else
-             "le call ne couvre pas le vilain : pas de prime en jeu"),
+             "le call ne couvre pas le vilain : pas de prime en jeu"
+             f"  [{self.source_elimination}]"),
             f"équité requise : ICM {self.required_no_bounty * 100:.1f} %"
             f"  →  PKO {self.required_with_bounty * 100:.1f} %"
             f"  (−{self.discount_pts * 100:.1f} pts)",
+            *(f"⚠ {x}" for x in self.signaux),
             f"→ {self.verdict}",
         ]
         return "\n".join(lines)
@@ -548,6 +988,114 @@ def bounty_capture_value(
         raise IcmError("stacks ou indice héros invalides.")
     p_first = s[hero] / total
     return float(villain_bounty * (0.5 + 0.5 * p_first))
+
+
+TOLERANCE_EQUITE = 1e-12
+"""Bande de bruit autour de 0 et de 1 pour les équités requises.
+
+Sous l'ICM, ``0 ≤ r ≤ 1`` est un THÉORÈME et non un hasard : la monotonie
+donne ``$EV_perte ≤ $EV_fold ≤ $EV_gain`` (le héros a strictement moins de
+jetons quand il perd, strictement plus quand il gagne). Un dépassement de
+l'ordre de l'ulp est donc de l'arrondi, et on colle à la borne ; au-delà,
+c'est une information, et elle doit sortir.
+"""
+
+
+def _equite_requise(r: float, nom: str, signaux: list[str]) -> float:
+    """Rend ``r`` SANS troncature, en signalant ce qu'un clamp aurait masqué.
+
+    Les anciens ``min(max(r, 0.0), 1.0)`` faisaient disparaître deux
+    informations fortes :
+
+    * ``r < 0`` : payer est +EV même avec 0 % d'équité. Impossible dans le
+      modèle écrit ici (voir `TOLERANCE_EQUITE`) — donc si le nombre sort,
+      c'est que le modèle ou la saisie est en cause, et le taire est le pire
+      des choix. Ce sera aussi la valeur légitime le jour où la perte de sa
+      PROPRE prime sera modélisée : en PKO, buster coûte sa prime, ce qui
+      abaisse encore l'équité de neutralité.
+    * ``r > 1`` : aucune main ne peut payer. Sous ICM, gagner le pot ne peut
+      pas rapporter moins que le coucher, donc c'est une erreur de saisie —
+      typiquement des tapis qui ne cadrent pas avec ``pot``/``bet``.
+    """
+    if r < -TOLERANCE_EQUITE:
+        signaux.append(
+            f"{nom} : équité requise NÉGATIVE ({r:+.4%}). Payer serait +EV "
+            f"même avec 0 % d'équité — sous ce modèle c'est impossible "
+            f"(monotonie ICM), donc c'est le modèle ou la saisie qu'il faut "
+            f"regarder, pas la main.")
+        return float(r)
+    if r > 1.0 + TOLERANCE_EQUITE:
+        signaux.append(
+            f"{nom} : équité requise > 100 % ({r:.4%}). Gagner le pot "
+            f"rapporterait moins que le coucher, ce que l'ICM interdit : "
+            f"vérifie la cohérence entre `stacks`, `pot` et `bet`.")
+        return float(r)
+    return float(min(max(r, 0.0), 1.0))
+
+
+def _verdict_pko(r_pko: float, r_icm: float,
+                 hero_equity: float | None) -> str:
+    """Phrase de conclusion d'un call PKO.
+
+    Fonction séparée pour une raison mesurable : les deux premières branches
+    portent sur des équités requises HORS de [0, 1], et le chemin exact de
+    l'ICM ne peut pas les produire (0 ≤ r ≤ 1 est un théorème, cf.
+    `TOLERANCE_EQUITE` — vérifié sur 2 584 spots aléatoires, zéro sortie). Les
+    tester à travers `analyse_pko_spot` demanderait de fabriquer un ICM faux ;
+    les tester ici demande un appel. Le code n'est pas mort pour autant : le
+    chemin Monte-Carlo (> 12 joueurs) estime les trois $EV, et une estimation
+    n'est pas monotone.
+    """
+    if r_pko < 0.0:
+        return (f"CALL AUTOMATIQUE : l'équité requise est NÉGATIVE "
+                f"({r_pko * 100:.1f} %) — payer est +EV même avec 0 % "
+                f"d'équité.")
+    if r_pko > 1.0:
+        return (f"FOLD FORCÉ : l'équité requise dépasse 100 % "
+                f"({r_pko * 100:.1f} %) — aucune main ne peut payer. "
+                f"Vérifie la saisie : sous l'ICM, gagner le pot ne peut "
+                f"pas rapporter moins que le coucher.")
+    if hero_equity is None:
+        return (f"il faut {r_pko * 100:.1f} % d'équité pour payer "
+                f"(ICM pur : {r_icm * 100:.1f} %).")
+    if hero_equity >= r_pko:
+        extra = " — la prime fait basculer le call" if hero_equity < r_icm else ""
+        return f"CALL : {hero_equity * 100:.1f} % ≥ {r_pko * 100:.1f} %{extra}."
+    return f"FOLD : {hero_equity * 100:.1f} % < {r_pko * 100:.1f} %."
+
+
+def _vilain_elimine(spot: PkoSpot, s: tuple[float, ...],
+                    v: int) -> tuple[bool, str]:
+    """Le vilain est-il éliminable par ce call ? Et d'où vient la réponse ?
+
+    Trois régimes, du plus sûr au moins sûr :
+
+    1. ``spot.villain_all_in`` déclaré : on le croit, après avoir vérifié
+       qu'il ne contredit pas les tapis fournis. C'est le seul régime qui ne
+       dépende ni de l'unité ni de l'échelle.
+    2. ``spot.unite_jeton`` fourni : moins d'un demi-jeton = éliminé. Le
+       couple (tapis, unité) reste invariant d'échelle.
+    3. ni l'un ni l'autre : seuil relatif historique ``1e-12 · Σ tapis``, qui
+       ne dit rien de plus que « zéro exact aux arrondis près ». Sur une table
+       finale de MTT réel (6 685 000 jetons) il vaut 6,7e-6 jeton : tout
+       résidu réel, fût-il d'un millième de jeton, fait tomber la prime.
+    """
+    if spot.villain_all_in is not None:
+        seuil = 1e-12 * sum(s)
+        if spot.villain_all_in and s[v] > seuil:
+            raise IcmError(
+                f"villain_all_in=True mais le vilain garde {s[v]:g} jeton(s) "
+                f"dans `stacks`. `PkoSpot` attend les tapis APRÈS engagement : "
+                f"les jetons du vilain à tapis appartiennent à `pot`, pas à "
+                f"`stacks`. `spot_pko_face_a_tapis` fait la conversion depuis "
+                f"les tapis lus à l'écran.")
+        return bool(spot.villain_all_in), "déclaré par l'appelant"
+    if spot.unite_jeton is not None:
+        if spot.unite_jeton <= 0.0:
+            raise IcmError("unite_jeton doit être > 0.")
+        return (s[v] < 0.5 * spot.unite_jeton,
+                f"unité de jeton ({spot.unite_jeton:g})")
+    return s[v] <= 1e-12 * sum(s), "seuil relatif (≈ zéro exact)"
 
 
 def analyse_pko_spot(spot: PkoSpot, hero_equity: float | None = None) -> PkoAnalysis:
@@ -581,18 +1129,14 @@ def analyse_pko_spot(spot: PkoSpot, hero_equity: float | None = None) -> PkoAnal
     lose_s = list(s); lose_s[h] -= spot.bet; lose_s[v] += spot.pot + spot.bet
 
     ev_fold = icm_dollar_ev(fold_s, p, h)
-    ev_win = icm_dollar_ev(win_s, p, h)
-    ev_lose = icm_dollar_ev(lose_s, p, h)
+    # Gagner élimine le vilain, perdre élimine le héros — et dans les deux cas
+    # le sortant sort APRÈS ceux qui étaient déjà à zéro. Sans cette
+    # déclaration, `icm_equities` partagerait les places restantes à parts
+    # égales et sous-estimerait $EV_perte (voir `ordre_elimination`).
+    ev_win = icm_dollar_ev(win_s, p, h, **_avec_ordre({}, win_s, v))
+    ev_lose = icm_dollar_ev(lose_s, p, h, **_avec_ordre({}, lose_s, h))
 
-    # Vilain à tapis : son stack est au pot, donc à zéro ici. Le seuil est
-    # RELATIF au total en jeu, parce qu'un seuil absolu rendait le verdict
-    # dépendant de l'UNITÉ dans laquelle on compte les jetons — alors que
-    # l'ICM, lui, est invariant d'échelle. Mesuré sur le même spot (héros 100,
-    # vilain 1 jeton restant) : exprimer les tapis en unités de 1e-12 jeton
-    # faisait basculer le vilain de « survit » à « éliminé », la prime de 0 à
-    # 41,61, et l'équité exigée de 60,0 % à 40,0 %. Même table, même décision,
-    # deux réponses.
-    eliminated = s[v] <= 1e-12 * sum(s)
+    eliminated, source = _vilain_elimine(spot, s, v)
     bv = (bounty_capture_value(win_s, h, spot.bounties[v])
           if eliminated else 0.0)
 
@@ -600,22 +1144,18 @@ def analyse_pko_spot(spot: PkoSpot, hero_equity: float | None = None) -> PkoAnal
     denom_pko = ev_win + bv - ev_lose
     if denom_icm <= 0 or denom_pko <= 0:
         raise IcmError("spot dégénéré : gagner ne rapporte rien.")
-    r_icm = (ev_fold - ev_lose) / denom_icm
-    r_pko = (ev_fold - ev_lose) / denom_pko
-    r_icm = min(max(r_icm, 0.0), 1.0)
-    r_pko = min(max(r_pko, 0.0), 1.0)
 
-    if hero_equity is None:
-        verdict = (f"il faut {r_pko * 100:.1f} % d'équité pour payer "
-                   f"(ICM pur : {r_icm * 100:.1f} %).")
-    elif hero_equity >= r_pko:
-        extra = " — la prime fait basculer le call" if hero_equity < r_icm else ""
-        verdict = f"CALL : {hero_equity * 100:.1f} % ≥ {r_pko * 100:.1f} %{extra}."
-    else:
-        verdict = f"FOLD : {hero_equity * 100:.1f} % < {r_pko * 100:.1f} %."
+    signaux: list[str] = []
+    r_icm = _equite_requise(
+        (ev_fold - ev_lose) / denom_icm, "ICM pur", signaux)
+    r_pko = _equite_requise(
+        (ev_fold - ev_lose) / denom_pko, "PKO", signaux)
+
+    verdict = _verdict_pko(r_pko, r_icm, hero_equity)
 
     return PkoAnalysis(ev_fold, ev_win, ev_lose, bv, eliminated,
-                       r_icm, r_pko, r_icm - r_pko, verdict)
+                       r_icm, r_pko, r_icm - r_pko, verdict,
+                       source, tuple(signaux))
 
 
 def spot_pko_face_a_tapis(
@@ -685,9 +1225,15 @@ def spot_pko_face_a_tapis(
     if bet <= 0:
         raise IcmError("rien à payer : le vilain n'engage pas plus que "
                        "ce que le héros a déjà posé.")
+    # Cette fonction SAIT qui couvre qui : elle vient de le calculer. Le
+    # déclarer supprime toute inférence en aval — c'est le correctif du défaut
+    # que la docstring ci-dessus raconte, poussé jusqu'au bout. Le laisser à
+    # `None` reviendrait à re-deviner depuis un tapis résiduel ce qu'on a sous
+    # la main exactement.
     return PkoSpot(stacks=apres, payouts=list(payouts),
                    bounties=list(primes), hero=hero, villain=villain,
-                   pot=pot, bet=bet)
+                   pot=pot, bet=bet,
+                   villain_all_in=float(tapis[villain]) <= float(tapis[hero]))
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -771,9 +1317,24 @@ def fgs_equities(
             path.append(list(cur))
             eqs.append(list(icm_equities(cur, p, **kw)))
             continue
-        # rotation : SB = suivant du bouton parmi les vivants, BB = suivant
-        order = sorted(alive, key=lambda i: ((i - btn - 1) % n))
-        sb_i, bb_i = order[0], order[1]
+        # `suivants` = les vivants rangés par distance de SIÈGE au bouton, le
+        # bouton EXCLU. La distance est prise modulo le nombre de sièges et non
+        # modulo le nombre de vivants : les places vides sont sautées sans que
+        # l'ancrage dérive, ce que `test_icm_fgs_blindes.py` mesure sur une
+        # orbite complète après élimination.
+        suivants = sorted(alive, key=lambda i: ((i - btn - 1) % n))
+        if len(alive) == 2:
+            # HEADS-UP : le bouton EST la small blind (règle universelle, TDA
+            # 2022 §33). Appliquer la règle à trois joueurs et plus — « SB =
+            # suivant du bouton » — inverse les deux derniers joueurs du
+            # tournoi, c'est-à-dire exactement les deux places dont l'écart de
+            # gain est le plus grand. Le bouton est ici le premier vivant à
+            # partir du bouton INCLUS : quand le bouton meurt, son siège reste
+            # l'ancre mais ne peut plus poster.
+            sb_i = sorted(alive, key=lambda i: ((i - btn) % n))[0]
+            bb_i = suivants[0] if suivants[0] != sb_i else suivants[1]
+        else:
+            sb_i, bb_i = suivants[0], suivants[1]
         pot = 0.0
         pay_sb = min(cur[sb_i], sb)
         cur[sb_i] -= pay_sb
@@ -784,7 +1345,13 @@ def fgs_equities(
                 cur[i] -= a
                 pot += a
         cur[bb_i] += pot                  # walk : la BB ramasse tout
-        btn = sb_i                        # le bouton avance d'un cran
+        # Le bouton avance d'UN SIÈGE VIVANT, toujours. À trois joueurs et plus
+        # ce siège est celui de la SB (`suivants[0] == sb_i`), ce qui redonne
+        # la règle usuelle « le bouton passe à l'ancienne small blind ». En
+        # heads-up c'est celui de la BB, et c'est la seule écriture qui fait
+        # alterner les deux joueurs : `btn = sb_i` y figeait le bouton sur le
+        # même siège, donc le même joueur payait la SB à toutes les mains.
+        btn = suivants[0]
         path.append(list(cur))
         eqs.append(list(icm_equities(cur, p, **kw)))
 

@@ -7,6 +7,16 @@ solveur — l'étude a posteriori de ses propres décisions, seul levier de
 progression qui ne touche pas à l'équité des parties en cours.
 """
 
+from pfs.analysis.reperes import (
+    REPERES,
+    Ecart,
+    JeuDeReperes,
+    Repere,
+    ReperesError,
+    calculer_jeu,
+    jeu_par_defaut,
+    situer,
+)
 from pfs.analysis.pushfold_review import (
     PushFoldReview,
     ShoveSpot,
@@ -36,4 +46,12 @@ __all__ = [
     "Advice",
     "advise",
     "parse_cards",
+    "REPERES",
+    "Ecart",
+    "JeuDeReperes",
+    "Repere",
+    "ReperesError",
+    "calculer_jeu",
+    "jeu_par_defaut",
+    "situer",
 ]

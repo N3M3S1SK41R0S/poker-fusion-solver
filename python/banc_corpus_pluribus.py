@@ -47,6 +47,19 @@ comparaison équité / cotes du pot répond « payer ou coucher », pas « payer
 relancer ». Le détail complet verdict × action jouée est imprimé sous chaque
 famille, pour que l'agrégat ne cache pas ce qu'il résume.
 
+Les taux sont rendus **par régime**, jamais en un seul chiffre : préflop tapis
+court (< 15 bb effectifs), préflop profond, puis postflop **rue par rue**
+(flop, turn, river). Un taux global moyennerait des moteurs différents — chart
+d'ouverture, Nash push/fold, équité à 990 runouts, équité exacte — et ne
+dirait rien. Le total « tous régimes confondus » n'est imprimé que pour la
+comptabilité, avec la réserve écrite à côté.
+
+Chaque régime et chaque famille marquée sont ensuite CARACTÉRISÉS sur quatre
+axes comptés séparément — position, profondeur, texture de board
+(appariement, couleur, connexité) et type de main. Séparément, et non
+croisés : le croisement ferait des cases de dix spots, où le hasard fabrique
+n'importe quel motif.
+
 Ce que le banc NE mesure PAS — à lire avant de citer un chiffre
 ---------------------------------------------------------------
 1. **Pluribus joue du CASH GAME six-max, sans ICM.** L'utilisateur joue des
@@ -78,11 +91,13 @@ défaut. Deux exécutions rendent les mêmes chiffres.
 from __future__ import annotations
 
 import argparse
+import itertools
 import math
 import re
 import sys
 import time
 from collections import Counter, defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -91,7 +106,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np  # noqa: E402
 
 from pfs.analysis.spot_advisor import Advice, Spot, advise, parse_cards  # noqa: E402
-from pfs.core.equity import evaluate7  # noqa: E402
+from pfs.core.equity import evaluate5, evaluate7, hand_category  # noqa: E402
 from pfs.core.range_model import GTO_PRESETS, parse_range  # noqa: E402
 from pfs.data.hand_history import (  # noqa: E402
     ActionType,
@@ -133,6 +148,47 @@ diverge plus souvent qu'on ne s'accorde ».
 SEUIL_MARQUE = 0.25
 """Second palier, plus bas : « désaccord marqué ». Un quart de divergence sur
 une famille nombreuse mérite d'être lu, sans mériter le mot systématique."""
+
+N_MIN_AXE = 50
+"""Effectif minimal de CHAQUE côté pour qu'un axe de caractérisation parle.
+
+Les axes (texture de board, type de main, position, profondeur) découpent une
+famille déjà découpée : leurs cases sont petites, et c'est exactement là que
+la pêche aux corrélations attrape des motifs de hasard. Le banc n'annonce un
+écart d'axe que si les deux côtés comparés atteignent ce seuil ET que leurs
+intervalles de Wilson à 95 % sont DISJOINTS — un critère plus dur que « les
+taux diffèrent ».
+"""
+
+SEUIL_TAPIS_COURT_BB = 15.0
+"""Frontière entre « préflop tapis court » et « préflop profond », en bb.
+
+C'est l'axe demandé par la question posée au banc, et il ne coïncide PAS avec
+la bascule interne du conseiller : ``advise()`` ne passe en Nash push/fold
+qu'à ``players == 2`` et sous ``MAX_PUSHFOLD_BB`` (25 bb). Un spot à 12 bb
+effectifs à cinq joueurs est donc « tapis court » pour ce rapport et traité
+par la chart d'ouverture par le conseiller. Le rapport imprime les deux
+lectures — le régime par profondeur (section 2) et le moteur réellement
+sollicité (« quel moteur a répondu ») — pour que l'écart soit visible plutôt
+que déduit.
+"""
+
+REGIME_COURT = f"préflop · tapis court (< {SEUIL_TAPIS_COURT_BB:.0f} bb)"
+REGIME_PROFOND = f"préflop · profond (≥ {SEUIL_TAPIS_COURT_BB:.0f} bb)"
+
+ORDRE_REGIMES: tuple[str, ...] = (
+    REGIME_COURT,
+    REGIME_PROFOND,
+    "postflop · flop",
+    "postflop · turn",
+    "postflop · river",
+)
+"""Ordre d'affichage des régimes.
+
+Explicite plutôt qu'alphabétique : l'ordre alphabétique intercalerait la
+river entre le flop et le turn, et un lecteur qui parcourt la colonne des
+taux lirait une progression par rue qui n'existe pas.
+"""
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -231,6 +287,26 @@ class Famille:
     erreurs: int = 0
     croise: Counter = field(default_factory=Counter)
     couts_modele: list[float] = field(default_factory=list)
+    #: axe → valeur → [accords, désaccords]. Ne compte QUE les spots tranchés,
+    #: pour la même raison que le taux : un « je ne sais pas » rangé d'un côté
+    #: fabriquerait l'écart qu'on cherche à mesurer.
+    axes: dict[str, dict[str, list[int]]] = field(
+        default_factory=lambda: defaultdict(lambda: defaultdict(
+            lambda: [0, 0])))
+
+    def compter_axes(self, axes: dict[str, str], accord: bool) -> None:
+        """Enregistre un spot TRANCHÉ dans chacun de ses axes."""
+        for nom, valeur in axes.items():
+            self.axes[nom][valeur][0 if accord else 1] += 1
+
+    def fusionner_axes(self, autre: "Famille") -> None:
+        """Ajoute les comptes d'axes de ``autre`` — pour la ligne « tous
+        régimes confondus », qui doit porter les mêmes axes que ses parties."""
+        for nom, valeurs in autre.axes.items():
+            for valeur, (a, d) in valeurs.items():
+                cible = self.axes[nom][valeur]
+                cible[0] += a
+                cible[1] += d
 
     @property
     def tranches(self) -> int:
@@ -333,21 +409,199 @@ def intention_joueur(d: Decision) -> str:
     return "AGRESSER"
 
 
-def famille_du_spot(d: Decision, limpeurs: int) -> tuple[str, str]:
+def profondeur_bb(d: Decision, main: ParsedHand) -> float:
+    """Tapis effectif de la décision, en big blinds, à CET instant.
+
+    ``stack_effectif`` et non ``stack`` : ce qui décide du régime est ce qui
+    peut encore être misé face à quelqu'un, pas ce que le joueur a devant lui.
+    Un tapis de 200 bb en face d'un adversaire à 8 bb est un spot de 8 bb.
+
+    Rend ``math.inf`` si la big blind est nulle — le fichier serait alors
+    illisible en bb, et classer un tel spot « tapis court » sur un quotient
+    indéfini fabriquerait le régime le plus intéressant du rapport.
+    """
+    bb = main.big_blind
+    return d.stack_effectif / bb if bb > 0 else math.inf
+
+
+def regime_du_spot(d: Decision, prof_bb: float) -> str:
+    """Régime d'un spot : préflop court / préflop profond / postflop par rue.
+
+    Découpage imposé par la question posée : un taux global mélangerait le
+    push/fold, l'ouverture à 100 bb et trois rues postflop, qui ne sollicitent
+    pas les mêmes moteurs et n'ont aucune raison d'avoir le même taux
+    d'accord. La rue est portée par le régime lui-même, et non reléguée dans
+    la famille, parce que le flop, le turn et la river sont trois modèles
+    différents chez nous (équité à 990 runouts, à 44, exacte).
+    """
+    if d.street is Street.PREFLOP:
+        return REGIME_COURT if prof_bb < SEUIL_TAPIS_COURT_BB else REGIME_PROFOND
+    return f"postflop · {d.street.value}"
+
+
+def famille_du_spot(d: Decision, limpeurs: int,
+                    prof_bb: float) -> tuple[str, str]:
     """(régime, famille détaillée) d'une décision.
 
     Le régime est l'agrégat que demande le rapport ; la famille est la maille
     où un défaut se voit — c'est elle qui porte le test « systématique ».
+
+    ``prof_bb`` est obligatoire, sans valeur par défaut : une profondeur
+    implicite classerait silencieusement tout un corpus de tapis courts en
+    « profond », et le régime le plus sensible du rapport serait vide sans
+    que rien ne tombe.
     """
+    regime = regime_du_spot(d, prof_bb)
     if d.street is Street.PREFLOP:
         if d.relances_avant >= 1:
-            return ("préflop profond", "préflop · face à une relance")
+            return (regime, "préflop · face à une relance")
         if limpeurs > 0:
-            return ("préflop profond", "préflop · ouverture après limp")
-        return ("préflop profond", f"préflop · ouverture propre · {d.position}")
+            return (regime, "préflop · ouverture après limp")
+        return (regime, f"préflop · ouverture propre · {d.position}")
     face = "face à une mise" if d.to_call > 0 else "sans mise"
     table = "heads-up" if d.actifs == 2 else f"{d.actifs} joueurs"
-    return ("postflop", f"postflop · {face} · {table} · {d.street.value}")
+    return (regime, f"postflop · {face} · {table} · {d.street.value}")
+
+
+# ── caractérisation : texture du board, type de main, position, profondeur ──
+
+
+def texture_board(board: Sequence[str]) -> dict[str, str]:
+    """Trois axes indépendants décrivant les cartes communes visibles.
+
+    Trois axes SÉPARÉS et non un libellé unique : croiser appariement ×
+    couleur × connexité donnerait huit cases par famille, soit une dizaine de
+    spots chacune sur les familles les plus nombreuses de ce corpus — un
+    effectif où le hasard fabrique n'importe quel motif. Chaque axe garde
+    ainsi tout l'effectif de la famille.
+
+    L'as compte comme haute ET comme basse pour la connexité : sans ça, A-2-9
+    passerait pour un board déconnecté alors que la roue s'y tire.
+
+    « Connecté » veut dire : deux rangs distincts séparés d'au plus deux crans.
+    Le seuil est choisi pour que l'axe DÉCOUPE la population — une valeur qui
+    écrase l'autre ne caractérise rien. Sur les 22 100 flops possibles,
+    énumérés : **14 960 connectés (67,69 %) contre 7 140 secs (32,31 %)** ;
+    à rangs strictement adjacents on aurait 8 944 / 22 100 (40,47 %), qui
+    découpe aussi, mais laisserait les tirages ventraux du côté « sec ».
+
+    Pouvoir de coupe des deux autres axes, mesuré de la même façon sur les
+    mêmes 22 100 flops : appariement 3 796 / 18 304 (17,18 % appairés),
+    couleur 1 144 / 20 956 (5,18 % à trois assorties). **L'axe couleur est
+    donc déséquilibré** : sur un régime de 2 000 spots il n'y aura qu'une
+    centaine de flops monotones, tout juste de quoi atteindre
+    :data:`N_MIN_AXE`. C'est une limite de cet axe, pas un défaut du corpus —
+    le rapport l'affiche avec son intervalle, qui sera large.
+
+    Ces trois comptes sont épinglés par
+    ``test_le_seuil_decoupe_vraiment_la_population``.
+
+    >>> t = texture_board(("Ah", "Kh", "Qh"))
+    >>> t["appariement"], t["couleur"], t["connexité"]
+    ('non appairé', '3+ assorties', 'connecté')
+    >>> texture_board(("2c", "7d", "Kh"))["connexité"]
+    'sec'
+    >>> texture_board(("Ac", "2d", "9h"))["connexité"]
+    'connecté'
+    >>> texture_board(("8c", "8d", "Kh"))["appariement"]
+    'appairé'
+    """
+    cartes = parse_cards(" ".join(board))
+    rangs = [c >> 2 for c in cartes]
+    couleurs = [c & 3 for c in cartes]
+    # 12 = as, 0 = deux : l'ordre naturel pour mesurer un écart.
+    valeurs = sorted({12 - r for r in rangs})
+    if 12 in valeurs:
+        valeurs = [-1, *valeurs]
+    return {
+        "appariement": ("appairé" if len(set(rangs)) < len(rangs)
+                        else "non appairé"),
+        "couleur": ("3+ assorties"
+                    if max(Counter(couleurs).values()) >= 3
+                    else "2 assorties au plus"),
+        "connexité": ("connecté"
+                      if any(b - a <= 2 for a, b in zip(valeurs, valeurs[1:]))
+                      else "sec"),
+    }
+
+
+def _code_meilleure_main(cartes: list[int]) -> int:
+    """Force de la meilleure main de 5 cartes tirée de ``cartes`` (5 à 7).
+
+    ``evaluate7`` ne prend que sept cartes ; au flop il n'y en a que cinq et
+    au turn six. Énumérer les sous-mains de cinq avec ``evaluate5`` — l'oracle
+    scalaire du projet — coûte au plus 21 évaluations et évite d'inventer des
+    cartes pour compléter.
+    """
+    if len(cartes) == 7:
+        return int(evaluate7(np.asarray([cartes], dtype=np.int64))[0])
+    sous = np.asarray(list(itertools.combinations(cartes, 5)), dtype=np.int64)
+    return int(evaluate5(sous).max())
+
+
+def type_de_main(cards: Sequence[str], board: Sequence[str]) -> str:
+    """Type de la main du héros, sur l'axe qui a un sens à cette rue.
+
+    Préflop, ce qui décide est la forme des deux cartes ; postflop, ce qui
+    décide est la main FAITE contre ce board. Trois paliers de chaque côté :
+    au-delà, les cases deviennent trop petites pour que le banc conclue.
+
+    Les tirages ne sont PAS distingués ici : une main à tirage couleur nu est
+    comptée « hauteur ». C'est une limite assumée de cet axe — il caractérise
+    la main faite, pas son potentiel, et une famille où le désaccord viendrait
+    des tirages apparaîtrait donc sous « hauteur » sans être expliquée.
+
+    >>> type_de_main(("As", "Ad"), ())
+    'paire servie'
+    >>> type_de_main(("As", "Kd"), ())
+    'dépareillée'
+    >>> type_de_main(("As", "Ks"), ())
+    'assortie'
+    >>> type_de_main(("As", "Kd"), ("Ah", "7c", "2d"))
+    'une paire'
+    >>> type_de_main(("As", "Kd"), ("Qh", "7c", "2d"))
+    'hauteur'
+    >>> type_de_main(("As", "Kd"), ("Ah", "Kc", "2d"))
+    'deux paires ou mieux'
+    """
+    if not board:
+        cartes = parse_cards(" ".join(cards))
+        if len(cartes) != 2:
+            return "?"
+        if cartes[0] >> 2 == cartes[1] >> 2:
+            return "paire servie"
+        return "assortie" if cartes[0] & 3 == cartes[1] & 3 else "dépareillée"
+    cartes = parse_cards(" ".join(cards)) + parse_cards(" ".join(board))
+    if not (5 <= len(cartes) <= 7):
+        return "?"
+    categorie = hand_category(_code_meilleure_main(cartes))
+    if categorie == "hauteur":
+        return "hauteur"
+    return "une paire" if categorie == "paire" else "deux paires ou mieux"
+
+
+def axes_du_spot(d: Decision, prof_bb: float) -> dict[str, str]:
+    """Les axes de caractérisation d'un spot, prêts à être comptés.
+
+    Ce sont eux que la question posée exige de chiffrer : position,
+    profondeur, texture de board, type de main. Ils sont comptés séparément
+    pour chaque famille ET pour chaque régime — c'est au niveau du régime que
+    l'effectif est assez gros pour que la comparaison entre deux valeurs d'un
+    axe ait une chance de trancher.
+    """
+    axes = {
+        "position": d.position or "?",
+        "profondeur": (f"< {SEUIL_TAPIS_COURT_BB:.0f} bb"
+                       if prof_bb < SEUIL_TAPIS_COURT_BB
+                       else f"≥ {SEUIL_TAPIS_COURT_BB:.0f} bb"),
+        "type de main": type_de_main(d.cards, d.board),
+        "joueurs actifs": ("heads-up" if d.actifs == 2
+                           else f"{d.actifs} joueurs"),
+    }
+    if d.board:
+        for nom, valeur in texture_board(d.board).items():
+            axes[f"board · {nom}"] = valeur
+    return axes
 
 
 def construire_spot(d: Decision, main: ParsedHand, villain: str,
@@ -417,6 +671,12 @@ class Resultat:
     moteurs: Counter = field(default_factory=Counter)
     secondes: float = 0.0
     refus_exemples: Counter = field(default_factory=Counter)
+    #: (catégorie du non-verdict, moteur consulté) → nombre de spots. C'est la
+    #: réponse chiffrée à « pourquoi le conseiller ne conclut-il pas ? ».
+    motifs_sans_verdict: Counter = field(default_factory=Counter)
+    #: profondeurs effectives préflop réellement rencontrées, en bb : le
+    #: rapport ne DÉDUIT pas que le corpus est à 100 bb, il le mesure.
+    profondeurs_preflop: list[float] = field(default_factory=list)
 
 
 def _famille(table: dict[str, Famille], cle: str) -> Famille:
@@ -525,7 +785,10 @@ def rejouer(corpus: Path, joueur: str | None, mains_max: int, villain: str,
                 continue
             res.spots += 1
 
-            regime, nom_famille = famille_du_spot(d, limp_avant)
+            prof = profondeur_bb(d, main)
+            if d.street is Street.PREFLOP and math.isfinite(prof):
+                res.profondeurs_preflop.append(prof)
+            regime, nom_famille = famille_du_spot(d, limp_avant, prof)
             fam = _famille(res.familles, nom_famille)
             reg = _famille(res.regimes, regime)
             fam.n += 1
@@ -559,14 +822,19 @@ def rejouer(corpus: Path, joueur: str | None, mains_max: int, villain: str,
                 cible = "refus" if vu == "REFUS" else "indecis"
                 setattr(fam, cible, getattr(fam, cible) + 1)
                 setattr(reg, cible, getattr(reg, cible) + 1)
-            elif verdict:
-                fam.accord += 1
-                reg.accord += 1
+                res.motifs_sans_verdict[(vu, _moteur(conseil.regime))] += 1
             else:
-                fam.desaccord += 1
-                reg.desaccord += 1
-                if conseil.ev_bb is not None and d.to_call > 0:
-                    fam.couts_modele.append(abs(conseil.ev_bb))
+                caracteres = axes_du_spot(d, prof)
+                fam.compter_axes(caracteres, verdict)
+                reg.compter_axes(caracteres, verdict)
+                if verdict:
+                    fam.accord += 1
+                    reg.accord += 1
+                else:
+                    fam.desaccord += 1
+                    reg.desaccord += 1
+                    if conseil.ev_bb is not None and d.to_call > 0:
+                        fam.couts_modele.append(abs(conseil.ev_bb))
 
             exact = cout_realise_river(d, main)
             if exact is not None:
@@ -636,6 +904,128 @@ def _croise(f: Famille, indent: str = "        ") -> None:
               f"({k / total * 100:4.1f} %)")
 
 
+#: (motif dans ``Advice.regime``, composant du conseiller, ce que la
+#: comparaison vaut pour lui). **L'ordre compte** : le premier motif reconnu
+#: gagne, et les motifs se recouvrent — « équité exacte au flop vs cotes du
+#: pot (ICM) » contient les trois. Sans priorité, un même spot serait compté
+#: dans trois composants et le total dépasserait le nombre de spots.
+COMPOSANTS: tuple[tuple[str, str, str], ...] = (
+    ("push/fold ICM", "Nash push/fold ICM + bubble factor",
+     "hors d'atteinte : cash game, aucune structure de gains"),
+    ("(ICM)", "correction ICM des cotes du pot postflop",
+     "hors d'atteinte : cash game, aucune structure de gains"),
+    ("Nash push/fold", "Nash push/fold chipEV",
+     "hors d'atteinte : ce corpus n'a aucun tapis court"),
+    ("chart d'ouverture", "ranges d'ouverture (GTO_PRESETS)",
+     "CONFRONTÉ, à un bot d'équilibre 6-max 100 bb — le régime nominal des "
+     "charts"),
+    ("pas de chart", "aveu d'absence de chart",
+     "compté en section 4 : c'est un refus honnête, pas une erreur"),
+    ("solveur CFR", "solveur CFR à la river",
+     "sollicité seulement avec --budget-river > 0, désactivé par défaut"),
+    ("vs cotes du pot", "équité exacte postflop vs cotes du pot",
+     "CONFRONTÉ, mais sous une range adverse SUPPOSÉE : la range est testée "
+     "autant que le calcul"),
+    ("équité exacte", "équité exacte postflop sans mise à payer",
+     "CONFRONTÉ, même réserve, et sur un seuil de 55 % qui est une "
+     "convention d'affichage, pas un solve"),
+)
+
+
+def _classer_moteur(moteur: str) -> str:
+    """Composant du conseiller derrière un nom de régime. Premier motif gagne.
+
+    Rend ``« non classé »`` plutôt que de ranger un régime inconnu dans un
+    composant plausible : un moteur neuf doit être VISIBLE dans le rapport,
+    pas absorbé.
+
+    >>> _classer_moteur("équité exacte au flop vs cotes du pot (ICM)")
+    'correction ICM des cotes du pot postflop'
+    >>> _classer_moteur("équité exacte au flop vs cotes du pot")
+    'équité exacte postflop vs cotes du pot'
+    >>> _classer_moteur("équité exacte au turn")
+    'équité exacte postflop sans mise à payer'
+    >>> _classer_moteur("moteur inventé demain")
+    '« non classé »'
+    """
+    for motif, nom, _ in COMPOSANTS:
+        if motif in moteur:
+            return nom
+    return "« non classé »"
+
+
+def _composants_sollicites(moteurs: Counter) -> list[tuple[str, int, str]]:
+    """(composant, spots mesurés, portée) — compté, jamais supposé.
+
+    Un composant peut afficher 0 : c'est le résultat qui compte le plus dans
+    ce rapport, parce qu'il dit précisément ce que la comparaison NE valide
+    pas. Les lignes ICM sont celles qui intéressent l'utilisateur, qui joue
+    des tournois.
+    """
+    par_composant: Counter = Counter()
+    for moteur, k in moteurs.items():
+        par_composant[_classer_moteur(moteur)] += k
+    sortie = [(nom, par_composant.pop(nom, 0), portee)
+              for _, nom, portee in COMPOSANTS]
+    for reste, k in sorted(par_composant.items()):
+        sortie.append((reste, k, "MOTEUR INCONNU DE CE BANC — à classer avant "
+                                 "de citer le rapport"))
+    return sortie
+
+
+def _disjoints(k1: int, n1: int, k2: int, n2: int) -> bool:
+    """Les deux intervalles de Wilson à 95 % sont-ils DISJOINTS ?
+
+    Critère volontairement plus dur que « les taux diffèrent » : sur un corpus
+    de 10 000 mains découpé en régimes puis en axes, comparer des taux bruts
+    ferait apparaître des écarts partout. Deux intervalles disjoints est une
+    condition suffisante pour rejeter l'égalité au seuil de 5 % (elle est même
+    conservatrice : elle rate des écarts réels, ce qui est le bon sens de
+    l'erreur ici).
+
+    >>> _disjoints(90, 100, 10, 100)
+    True
+    >>> _disjoints(52, 100, 48, 100)
+    False
+    """
+    b1, h1 = wilson(k1, n1)
+    b2, h2 = wilson(k2, n2)
+    return h1 < b2 or h2 < b1
+
+
+def _axes(f: Famille, indent: str = "        ") -> None:
+    """Caractérisation d'une famille : où le désaccord se concentre-t-il ?
+
+    Pour chaque axe, chaque valeur est comparée au RESTE de l'axe (toutes les
+    autres valeurs poolées), et non à sa voisine : comparer deux à deux
+    multiplierait les tests, donc les faux positifs. Une valeur n'est marquée
+    que si elle et son complément atteignent :data:`N_MIN_AXE` et que leurs
+    intervalles de Wilson sont disjoints.
+    """
+    if not f.axes:
+        return
+    for nom in sorted(f.axes):
+        valeurs = f.axes[nom]
+        total_n = sum(a + d for a, d in valeurs.values())
+        total_k = sum(d for _, d in valeurs.values())
+        if total_n == 0 or len(valeurs) < 2:
+            continue
+        print(f"{indent}axe « {nom} » :")
+        for valeur, (a, d) in sorted(valeurs.items(),
+                                     key=lambda kv: -(kv[1][0] + kv[1][1])):
+            n = a + d
+            reste_n, reste_k = total_n - n, total_k - d
+            bas, haut = wilson(d, n)
+            marque = ""
+            if (n >= N_MIN_AXE and reste_n >= N_MIN_AXE
+                    and _disjoints(d, n, reste_k, reste_n)):
+                marque = ("  ⇐ ÉCART (vs reste de l'axe : "
+                          f"{reste_k / reste_n * 100:.1f} %)")
+            print(f"{indent}  {valeur:<24} {n:>5} tranchés · désaccord "
+                  f"{d / n * 100:5.1f} % [{bas * 100:4.1f} ; {haut * 100:4.1f}]"
+                  f"{marque}")
+
+
 def rapport(res: Resultat, args: argparse.Namespace) -> None:
     joueur = args.joueur
     seul_pop = bool(getattr(args, "population", False))
@@ -679,7 +1069,14 @@ def rapport(res: Resultat, args: argparse.Namespace) -> None:
     print("  l'autre fabriquerait le résultat.")
     print()
     total = Famille()
-    for nom, f in sorted(res.regimes.items()):
+    # Les régimes attendus sont imprimés MÊME VIDES : un régime absent du
+    # rapport se lirait « pas mesuré », un régime à zéro spot se lit « ce
+    # corpus n'en contient pas », et c'est une information.
+    for nom in ORDRE_REGIMES:
+        f = res.regimes.get(nom)
+        if f is None:
+            print(f"  {nom:<46}     0 spot — absent de ce corpus")
+            continue
         _ligne_famille(nom, f)
         total.n += f.n
         total.accord += f.accord
@@ -688,20 +1085,36 @@ def rapport(res: Resultat, args: argparse.Namespace) -> None:
         total.refus += f.refus
         total.erreurs += f.erreurs
         total.croise.update(f.croise)
+        total.fusionner_axes(f)
+    inattendus = [n for n in res.regimes if n not in ORDRE_REGIMES]
+    for nom in sorted(inattendus):
+        _ligne_famille(f"{nom} (hors nomenclature)", res.regimes[nom])
     print()
     _ligne_famille("TOUS RÉGIMES CONFONDUS", total)
+    print("  Ce total est donné pour la comptabilité, PAS pour être cité : il")
+    print("  moyenne des régimes qui n'ont ni le même moteur ni le même")
+    print("  effectif. Les lignes au-dessus sont le résultat.")
     print()
     print("  QUEL MOTEUR A RÉPONDU (compté, pas supposé) :")
     for moteur, k in res.moteurs.most_common():
         print(f"    {k:>6}  {moteur}")
     court = sum(k for m, k in res.moteurs.items() if "push/fold" in m)
+    n_court = res.regimes[REGIME_COURT].n if REGIME_COURT in res.regimes else 0
     print()
-    print(f"  Régime « préflop tapis court » : {court} spot(s). Les tapis")
-    print("  valent 100 bb à chaque main de ce corpus (10 000 jetons, blindes")
-    print("  50/100, remis à niveau entre les mains) et le conseiller ne passe")
-    print("  en Nash push/fold qu'à deux joueurs sous 25 bb effectifs. Le")
-    print("  solveur qui sert en Twister n'est donc JAMAIS sollicité ici :")
-    print("  ce banc ne dit rien de lui, ni en bien ni en mal.")
+    print(f"  Régime « préflop tapis court » : {n_court} spot(s) par la")
+    print(f"  profondeur, {court} spot(s) par le moteur (Nash push/fold).")
+    if res.profondeurs_preflop:
+        p = sorted(res.profondeurs_preflop)
+        print(f"  Profondeur effective préflop MESURÉE sur {len(p)} spots : "
+              f"min {p[0]:.1f} bb ·")
+        print(f"  médiane {p[len(p) // 2]:.1f} bb · max {p[-1]:.1f} bb. Le "
+              "corpus est donc")
+        print("  bien à tapis constants — c'est mesuré ici, pas supposé.")
+    print("  Le conseiller ne passe en Nash push/fold qu'à deux joueurs sous")
+    print("  25 bb effectifs : les deux comptes ci-dessus peuvent différer, et")
+    print("  l'écart dirait qu'un spot court est traité par la chart. Le")
+    print("  solveur qui sert en Twister n'est pas sollicité ici : ce banc ne")
+    print("  dit rien de lui, ni en bien ni en mal.")
 
     _titre("3. FAMILLES DE SPOTS — le livrable principal")
     print("  Fait STRUCTUREL, vrai indépendamment des chiffres ci-dessous :")
@@ -757,8 +1170,28 @@ def rapport(res: Resultat, args: argparse.Namespace) -> None:
             vus = True
             print(f"\n    {nom} ({f.n} spots)")
             _croise(f)
+            print("      caractérisation :")
+            _axes(f, indent="        ")
     if not vus:
         print("    aucune.")
+
+    _titre("3 bis. CARACTÉRISATION PAR RÉGIME "
+           "(position, profondeur, board, main)")
+    print("  Le découpage en familles épuise vite l'effectif ; les axes sont")
+    print("  donc aussi comptés au niveau du RÉGIME, où il reste assez de")
+    print("  spots pour que la comparaison ait une chance de trancher.")
+    print()
+    print("  Une valeur n'est marquée « ÉCART » que si elle ET le reste de")
+    print(f"  son axe comptent ≥ {N_MIN_AXE} spots tranchés, et que leurs")
+    print("  intervalles de Wilson à 95 % sont DISJOINTS. Sur 10 000 mains,")
+    print("  comparer des taux bruts ferait apparaître des motifs partout :")
+    print("  ce critère en rate volontairement pour n'en inventer aucun.")
+    for nom in ORDRE_REGIMES:
+        f = res.regimes.get(nom)
+        if f is None or f.tranches == 0:
+            continue
+        print(f"\n    {nom} ({f.tranches} spots tranchés sur {f.n})")
+        _axes(f, indent="      ")
 
     _titre("4. QUAND LE CONSEILLER REFUSE DE CONCLURE")
     print(f"  sans aucun modèle (« — »)        : {total.refus:>6}"
@@ -767,10 +1200,31 @@ def rapport(res: Resultat, args: argparse.Namespace) -> None:
           f"  ({total.indecis / max(total.n, 1) * 100:.1f} %)")
     print(f"  spots illisibles par le conseiller: {total.erreurs:>6}")
     print()
+    print("  POURQUOI, compté et non raconté — (catégorie, moteur consulté) :")
+    if res.motifs_sans_verdict:
+        for (categorie, moteur), k in res.motifs_sans_verdict.most_common():
+            print(f"    {k:>6}  {categorie:<8} · {moteur}")
+    else:
+        print("    aucun : le conseiller a tranché tous les spots rejoués.")
+    print()
+    print("  PAR RÉGIME :")
+    for nom in ORDRE_REGIMES:
+        f = res.regimes.get(nom)
+        if f is None or f.n == 0:
+            continue
+        sans = f.refus + f.indecis
+        print(f"    {nom:<40} {sans:>5} / {f.n:>5} spots "
+              f"({sans / f.n * 100:5.1f} %) sans verdict")
+    print()
     print("  Un « — » signale une position sans chart (la big blind). Un")
     print("  « MIXTE » est une réponse en fréquence : elle a du sens sur mille")
     print("  mains, pas sur celle-ci. Un « MARGINAL » dit que l'équité est à")
     print("  moins de 4 points de la cote — l'erreur y coûte presque rien.")
+    print("  Ces trois-là sont des refus HONNÊTES. Ce qui manque au conseiller")
+    print("  est ailleurs : il ne refuse PAS les spots hors de son domaine")
+    print("  (défense face à un open, pot multiway), il y répond quand même.")
+    print("  Le compte ci-dessus est donc un plancher, pas le total de ce que")
+    print("  le conseiller ne sait pas faire.")
 
     _titre("5. COÛT EN BB DES DÉSACCORDS")
     couts = [c for f in res.familles.values() for c in f.couts_modele]
@@ -907,7 +1361,27 @@ def rapport(res: Resultat, args: argparse.Namespace) -> None:
         print(f"  {pos:<10}{n:>8}{v / n * 100:8.1f} %{p / n * 100:8.1f} %"
               f"{(v - p) / n * 100:8.1f} pt")
 
-    _titre("9. LIMITES — à lire avant de citer un chiffre de ce rapport")
+    _titre("9. CE QUE CETTE COMPARAISON VALIDE — ET CE QU'ELLE NE TOUCHE PAS")
+    print("  Composant par composant du conseiller, avec le nombre de spots")
+    print("  où il a RÉELLEMENT répondu (compté dans Advice.regime, pas")
+    print("  supposé). Un zéro n'est pas un manque du banc : c'est la mesure")
+    print("  de ce que ce corpus ne peut pas dire.")
+    print()
+    for nom, k, portee in _composants_sollicites(res.moteurs):
+        etat = f"{k:>6} spots" if k else "     — jamais sollicité"
+        print(f"    {nom:<42}{etat}")
+        print(f"      {portee}")
+    print()
+    print("  Il manque un composant à cette liste parce qu'il n'existe pas :")
+    print("  la DÉFENSE face à une ouverture. Le conseiller y répond avec la")
+    print("  chart d'ouverture de la position, qui suppose un pot non ouvert.")
+    print("  Les spots correspondants sont donc comptés dans la ligne")
+    print("  « ranges d'ouverture » ci-dessus alors qu'ils posent une autre")
+    print("  question — c'est la famille la plus nombreuse d'un corpus 6-max,")
+    print("  et le désaccord qu'on y mesure ne dit pas que la chart est")
+    print("  fausse : il dit qu'on l'applique là où elle n'a rien à faire.")
+
+    _titre("9 bis. LIMITES — à lire avant de citer un chiffre de ce rapport")
     for ligne in (
         "Cash game 6-max sans ICM. AUCUN chiffre ci-dessus ne valide le",
         "conseil en tournoi : ni l'ICM, ni le bubble factor, ni le push/fold.",

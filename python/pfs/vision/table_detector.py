@@ -295,14 +295,43 @@ BRIDGE = 9               # comble les coupures d'arête (liseré clair traversan
 SIDE_COVER = 0.72        # part de la largeur couverte par l'arête haute/basse
 SIDE_CONTRAST = 16.0     # écart de couleur dedans/dehors, par côté
 QUIET_MAX = 0.25         # densité d'arêtes tolérée dans un abord « calme »
-# Nombre d'abords calmes exigés sur 4. C'est LA constante qui coûte le plus
-# cher sur de vraies captures : elle rejette 45 des 60 cartes perdues du banc
-# de vérité-terrain, dont les deux cartes du héros sur presque toute la table
-# 7-max, parce qu'un décor lumineux borde le siège. Posée à 2, le rappel réel
-# passe de 76,7 % à 96,9 % sans produire une seule carte inventée — mais elle
-# fait entrer 1,9 % de boîtes fantômes sur les 144 tables synthétiques. Voir
-# la docstring du module : les deux mesures s'opposent, et seule la seconde
-# existait quand la valeur a été choisie.
+# Nombre d'abords calmes exigés sur 4.
+#
+# C'était LA constante qui coûtait le plus cher sur de vraies captures. À 3,
+# elle rejetait 45 des 60 cartes perdues du banc de vérité-terrain — dont les
+# deux cartes du héros sur presque toute la table 7-max, parce qu'un décor
+# lumineux borde le siège et qu'une pastille de prime se pose sur la carte de
+# gauche. Deux abords bruyants suffisaient à écarter la carte.
+#
+# LE PASSAGE À 2 A ÉTÉ TENTÉ, MESURÉ, ET ANNULÉ. L'épisode mérite d'être
+# écrit, parce que l'erreur de méthode est plus instructive que le réglage.
+#
+# Le gain sur les captures réelles est considérable et il est réel :
+#
+#     QUIET_SIDES                3           2
+#     RÉEL (57 captures annotées, 258 cartes)
+#       rappel de lecture      76,7 %      96,9 %
+#       dont bon rôle          65,1 %      96,9 %
+#       précision             100,0 %     100,0 %
+#
+# Un banc maison (`banc_localisation.py --large`, 5 configurations à pleine
+# échelle) annonçait un coût de DEUX boîtes fantômes sur 262. Sur cette base,
+# la valeur a été passée à 2 — puis la suite de tests a rejeté le changement
+# avec DOUZE échecs, dont `test_no_phantom_box` : **8 boîtes fantômes pour
+# 56 cartes** là où l'on en attend zéro.
+#
+# Les deux mesures ne se contredisaient pas, elles ne comptaient pas la même
+# chose : le banc maison comparait les boîtes à TOUTES les cartes du tableau,
+# dos adverses compris, donc une boîte posée sur un dos n'y était pas un
+# fantôme. La suite de tests, elle, mesure sur des tables SANS adversaire, où
+# toute boîte surnuméraire en est un.
+#
+# La leçon, qui est celle de tout ce module : deux chiffres obtenus sur des
+# bancs différents ne se comparent pas, et un gain mesuré sur un banc ne
+# justifie pas un réglage tant que l'autre n'a pas été rejoué. Le rappel de
+# 76,7 % reste un vrai défaut ; sa correction passe par une règle qui
+# distingue un décor lumineux d'un vrai bord de carte, pas par un
+# assouplissement global de celle-ci.
 QUIET_SIDES = 3
 INNER_MAX = 0.72         # densité d'arêtes tolérée dans le carton (jetons : 0,83)
 NMS_COVER = 0.55         # recouvrement relatif au-delà duquel on ne garde qu'une

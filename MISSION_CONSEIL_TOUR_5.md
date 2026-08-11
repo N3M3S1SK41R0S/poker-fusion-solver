@@ -148,7 +148,44 @@ cohérente avec notre positionnement — admettre l'ignorance — mais elle
 suppose que les basculements soient rares. S'ils sont fréquents, elle
 paralyse l'outil.
 
-### 3.3 « Faire mieux » que les pros — la formulation est-elle la bonne ?
+### 3.3 Deux bancs qui ne comptent pas la même chose — comment s'en prémunir ?
+
+Un épisode d'aujourd'hui, à chaud, parce qu'il illustre exactement le travers
+que vous nous corrigez depuis quatre tours.
+
+Le détecteur de cartes exige que **3 des 4 abords** d'un rectangle soient
+« calmes » pour l'accepter comme carte. Cette règle rejetait 45 des 60 cartes
+manquées sur les captures réelles — l'habillage d'une table borde le siège
+d'un rail lumineux et pose une pastille de prime sur la carte de gauche.
+
+Mesure du passage à 2, sur notre banc maison (5 configurations, pleine
+échelle) : **2 boîtes fantômes de plus sur 262**, sans perdre un point de
+localisation. Gain réel : rappel de **76,7 % → 96,9 %**, rôle correct de
+**65,1 % → 96,9 %**. Décision prise, valeur changée.
+
+La suite de tests a rejeté le changement avec **douze échecs**, dont
+`test_no_phantom_box` : **8 boîtes fantômes pour 56 cartes** là où on en
+attend zéro. Retour en arrière immédiat.
+
+Les deux mesures ne se contredisaient pas — **elles ne comptaient pas la même
+chose**. Le banc maison comparait les boîtes à *toutes* les cartes du
+tableau, dos adverses compris : une boîte posée sur un dos n'y était pas un
+fantôme. La suite de tests mesure sur des tables *sans adversaire*, où toute
+boîte surnuméraire en est un.
+
+Trois questions :
+
+1. **Comment attrape-t-on ce défaut avant de changer un réglage ?** Un test
+   qui compare les définitions de deux bancs ? Une convention qui interdit
+   d'introduire une seconde métrique portant le même nom ?
+2. Le problème de fond demeure : **un décor lumineux borde la carte**. Quelle
+   règle distinguerait un rail d'interface d'un vrai bord de carte, sans
+   assouplir globalement le critère ?
+3. Plus généralement : ce projet accumule des bancs maison (`banc_*.py`) à
+   côté d'une suite de tests. Est-ce une bonne architecture, ou faut-il que
+   tout banc devienne un test — au risque d'une suite qui met une heure ?
+
+### 3.4 « Faire mieux » que les pros — la formulation est-elle la bonne ?
 
 Le commanditaire veut que le logiciel fasse mieux que ce qui a été joué dans
 les mains des WSOP. Nous avons refusé la formulation naïve : on ne peut pas

@@ -719,7 +719,13 @@ class API:
                 "three_bet": round(pr.three_bet, 1), "three_bet_opp": pr.three_bet_opp,
                 "fold_to_cbet": round(pr.fold_to_cbet, 1), "fold_cbet_opp": pr.fold_cbet_opp,
                 "wtsd": round(pr.wtsd, 1), "wtsd_opp": pr.wtsd_opp,
+                "af_postflop": round(pr.af_postflop, 2),
+                "af_opp": pr.calls_postflop,
+                "sieges_median": pr.sieges_median,
             },
+            # Les bornes affichées par l'interface : MESURÉES sur corpus
+            # public, plus jamais des fourchettes de manuel.
+            "reperes": API._reperes_json(rep.jeu_de_reperes(), rep.ecarts()),
             "allin": {
                 "measured": rep.n_allin_measured,
                 "total": rep.n_allin_total,
@@ -731,6 +737,79 @@ class API:
             },
             "explain": rep.explain(),
         }
+
+
+    # ── Repères mesurés sur corpus public ────────────────────────────────
+    @staticmethod
+    def _reperes_json(jeu, ecarts=()) -> dict:
+        """Sérialise un jeu de repères et, s'il y en a, les écarts du héros.
+
+        Chaque repère part avec son dénominateur, son intervalle de Wilson et
+        la dispersion inter-joueurs : l'interface n'a pas le droit d'afficher
+        une borne sans dire sur quoi elle a été mesurée.
+        """
+        return {
+            "cle": jeu.cle,
+            "source": jeu.source,
+            "n_mains": jeu.n_mains,
+            "n_mains_joueurs": jeu.n_mains_joueurs,
+            "positions": list(jeu.positions),
+            "concluant": jeu.concluant,
+            "limites": list(jeu.limites),
+            "stats": {
+                stat: {
+                    "valeur": round(r.valeur, 2),
+                    "occasions": r.occasions,
+                    "succes": r.succes,
+                    "ic_bas": round(r.ic_bas, 2),
+                    "ic_haut": round(r.ic_haut, 2),
+                    "q1": round(r.q1, 2),
+                    "mediane": round(r.mediane, 2),
+                    "q3": round(r.q3, 2),
+                    "n_joueurs": r.n_joueurs,
+                    "unite": r.unite,
+                }
+                for stat, r in jeu.reperes.items()
+            },
+            "ecarts": [
+                {
+                    "stat": e.stat,
+                    "valeur": round(e.valeur, 2),
+                    "repere": round(e.repere, 2),
+                    "ecart": round(e.ecart, 2),
+                    "unite": e.unite,
+                    "occasions": e.occasions_utilisateur,
+                    "comparable": e.comparable,
+                    "pourquoi": e.pourquoi,
+                }
+                for e in ecarts
+            ],
+        }
+
+    @staticmethod
+    def reperes(p: dict) -> dict:
+        """Les repères mesurés sur corpus, sans avoir besoin d'historiques.
+
+        Payload : ``{}`` pour tous les jeux, ou ``{"jeu": "pluribus_6max"}``
+        pour un seul, ou ``{"sieges": 3}`` pour celui qui convient à une table
+        de cette taille. Aucune lecture de disque : la table est gelée dans
+        ``pfs/analysis/reperes.py`` et vérifiée par ``banc_reperes_corpus.py
+        --verifier``.
+        """
+        from pfs.analysis.reperes import REPERES, jeu_par_defaut
+
+        cle = str(p.get("jeu", "")).strip()
+        if not cle and p.get("sieges"):
+            cle = jeu_par_defaut(int(p["sieges"]))
+        if cle:
+            if cle not in REPERES:
+                raise ValueError(
+                    f"jeu de repères inconnu : « {cle} ». "
+                    f"Disponibles : {sorted(REPERES)}.")
+            return {"jeux": [API._reperes_json(REPERES[cle])],
+                    "defaut": cle}
+        return {"jeux": [API._reperes_json(j) for j in REPERES.values()],
+                "defaut": jeu_par_defaut(3)}
 
 
     # ── Revue shove/fold : décisions préflop face au Nash jam/fold ───────
@@ -1099,6 +1178,7 @@ ROUTES: dict[str, Callable[[dict], dict]] = {
     "resolve": API.resolve,
     "review": API.review,
     "review/pushfold": API.review_pushfold,
+    "reperes": API.reperes,
     "advise": API.advise,
     "recognize": API.recognize,
     "simuler": API.simuler,

@@ -30,6 +30,14 @@ from typing import Sequence
 
 import numpy as np
 
+from pfs.analysis.reperes import (
+    REPERES,
+    Ecart,
+    JeuDeReperes,
+    compter_agression,
+    jeu_par_defaut,
+    situer,
+)
 from pfs.core.equity import equity_vs_range
 from pfs.core.range_model import RANKS, SUITS, Range, combo_index
 from pfs.data.hand_history import (
@@ -52,6 +60,17 @@ _STREET_BOARD = {
     Street.FLOP: 3,
     Street.TURN: 4,
     Street.RIVER: 5,
+}
+
+#: Noms lisibles des statistiques comparées aux repères.
+_LIBELLES = {
+    "vpip": "VPIP",
+    "pfr": "PFR",
+    "ecart_vpip_pfr": "écart VPIP−PFR",
+    "three_bet": "3-bet",
+    "fold_to_cbet": "fold to c-bet",
+    "wtsd": "WTSD",
+    "af_postflop": "AF postflop",
 }
 
 
@@ -116,6 +135,14 @@ class HeroProfile:
     wtsd_opp: int = 0
     wtsd_yes: int = 0
     net_bb: float = 0.0
+    #: Actions agressives et suivis du héros APRÈS le préflop — de quoi
+    #: calculer l'AF, la seule statistique de style que les repères de corpus
+    #: donnent et que le profil ne mesurait pas.
+    aggr_postflop: int = 0
+    calls_postflop: int = 0
+    #: Nombre de mains par taille de table. Sert à choisir le jeu de repères :
+    #: un joueur de table à trois ne se compare pas à un agrégat 6-max.
+    tables: dict[int, int] = field(default_factory=dict)
 
     @staticmethod
     def _pct(yes: int, opp: int) -> float:
@@ -140,6 +167,52 @@ class HeroProfile:
     @property
     def wtsd(self) -> float:
         return self._pct(self.wtsd_yes, self.wtsd_opp)
+
+    @property
+    def af_postflop(self) -> float:
+        """(mises + relances + tapis) / suivis, après le préflop.
+
+        0.0 quand le héros n'a jamais suivi postflop : le ratio n'existe pas,
+        et rendre l'infini ferait afficher un « très agressif » qui n'a été
+        mesuré sur rien. ``calls_postflop`` dit toujours sur quoi il porte.
+        """
+        return self.aggr_postflop / self.calls_postflop if self.calls_postflop else 0.0
+
+    @property
+    def sieges_median(self) -> int:
+        """Taille de table médiane des mains jouées (0 si aucune main).
+
+        Médiane et non moyenne : un joueur de table à trois qui a joué
+        quelques mains à six ne doit pas basculer sur le repère 6-max.
+        """
+        if not self.tables:
+            return 0
+        rangs = sorted(n for n, k in self.tables.items() for _ in range(k))
+        return rangs[len(rangs) // 2]
+
+    def mesures(self) -> dict[str, float]:
+        """Le profil sous la forme qu'attend :func:`pfs.analysis.reperes.situer`."""
+        return {
+            "vpip": self.vpip,
+            "pfr": self.pfr,
+            "ecart_vpip_pfr": self.vpip - self.pfr,
+            "three_bet": self.three_bet,
+            "fold_to_cbet": self.fold_to_cbet,
+            "wtsd": self.wtsd,
+            "af_postflop": self.af_postflop,
+        }
+
+    def occasions(self) -> dict[str, int]:
+        """Les dénominateurs correspondants, dans le même vocabulaire."""
+        return {
+            "vpip": self.vpip_opp,
+            "pfr": self.pfr_opp,
+            "ecart_vpip_pfr": self.vpip_opp,
+            "three_bet": self.three_bet_opp,
+            "fold_to_cbet": self.fold_cbet_opp,
+            "wtsd": self.wtsd_opp,
+            "af_postflop": self.calls_postflop,
+        }
 
 
 @dataclass(slots=True)
@@ -172,6 +245,21 @@ class SessionReport:
             return 0.0
         return 100.0 * sum(s.equity for s in self.allin_spots) / len(self.allin_spots)
 
+    # ── confrontation aux repères mesurés sur corpus ─────────────────────
+    def jeu_de_reperes(self) -> JeuDeReperes:
+        """Le jeu de repères adapté à la taille de table réellement jouée.
+
+        Une table à trois se compare au mélange de positions d'une table à
+        trois, pas à un agrégat 6-max qui inclut l'UTG et le MP — voir
+        :mod:`pfs.analysis.reperes`.
+        """
+        return REPERES[jeu_par_defaut(self.profile.sieges_median or 6)]
+
+    def ecarts(self) -> list[Ecart]:
+        """Écarts du héros aux repères, le plus grand comparable en tête."""
+        return situer(self.profile.mesures(), self.jeu_de_reperes(),
+                      self.profile.occasions())
+
     def explain(self) -> str:
         p = self.profile
         lines = [
@@ -203,6 +291,24 @@ class SessionReport:
                 lines.append("    → tu as gagné PLUS que ton équité (variance favorable).")
             elif self.luck_bb < 0:
                 lines.append("    → tu as gagné MOINS que ton équité (variance défavorable).")
+
+        jeu = self.jeu_de_reperes()
+        lines += [
+            "",
+            f"  Face aux repères MESURÉS « {jeu.cle} »",
+            f"    ({jeu.n_mains} mains, {jeu.n_mains_joueurs} mains-joueurs) :",
+        ]
+        for e in self.ecarts():
+            unite = e.unite or ""
+            drapeau = "" if e.comparable else "  ⚠ non comparable"
+            lines.append(
+                f"    {_LIBELLES.get(e.stat, e.stat):<16}"
+                f"{e.valeur:6.1f}{unite:<2} vs {e.repere:5.1f}{unite:<2}"
+                f"  écart {e.ecart:+6.1f}{drapeau}")
+            if not e.comparable:
+                lines.append(f"       ({e.pourquoi})")
+        for lim in jeu.limites:
+            lines.append(f"    · {lim}")
         lines.append("══════════════════════════════════════════════════════════")
         return "\n".join(lines)
 
@@ -269,6 +375,11 @@ def review_hands(hands: Sequence[ParsedHand], hero: str | None = None) -> Sessio
         if hero is None or not any(s.player == hero for s in h.seats):
             continue
         profile.n_hands += 1
+        n_sieges = len(h.seats)
+        profile.tables[n_sieges] = profile.tables.get(n_sieges, 0) + 1
+        agr, sui = compter_agression(h, hero)
+        profile.aggr_postflop += agr
+        profile.calls_postflop += sui
 
         # résultat net en bb (gain − mises), normalisé par la bb de la main
         if h.big_blind > 0:

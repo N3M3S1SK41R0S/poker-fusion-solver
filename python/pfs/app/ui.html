@@ -311,6 +311,20 @@ kbd{font:11px ui-monospace,monospace;background:#1a1a28;border:1px solid var(--l
   </div>
 
   <div id="rv-out"><div class="skel">Indique un dossier d'historiques pour lancer la revue.</div></div>
+
+  <div class="card" style="border-left:3px solid var(--g)">
+    <b>D'où viennent les bornes auxquelles tu es comparé ?</b>
+    <div class="hint" style="margin-top:6px">
+      Elles ne sortent pas d'un manuel. Elles sont recalculées sur un corpus
+      public sous licence MIT — 10 000 mains de <b>Pluribus</b> (le bot
+      surhumain 6-max de Carnegie Mellon) et les 18 mains de hold'em publiées
+      des <b>WSOP 2023</b> — avec exactement le même code de comptage que
+      celui qui te mesure. Banc rejouable :
+      <span class="mono">python banc_reperes_corpus.py --verifier</span>.
+    </div>
+    <button style="width:auto;margin-top:8px" onclick="reperesRun()">Voir les repères mesurés</button>
+    <div id="rp-out"></div>
+  </div>
 </section>
 
 <!-- ══════════ CALIBRATION — lire l'écran, sans jamais conseiller ══════════ -->
@@ -1367,24 +1381,80 @@ function loadShot(blob){
 })();
 
 // ══ MES SESSIONS ════════════════════════════════════════════════════════
-// Une statistique n'a de sens qu'avec son nombre d'occasions et sa zone
-// saine : on affiche les trois ensemble, jamais le pourcentage seul.
-function statRow(label,val,opp,lo,hi,note){
-  const inZone=val>=lo&&val<=hi;
-  const col=opp<20?"var(--dim)":(inZone?"var(--g)":"var(--o)");
-  const pct=Math.max(0,Math.min(100,val));
+// Une statistique n'a de sens qu'avec son dénominateur ET le corpus sur
+// lequel sa borne a été mesurée : on affiche les trois ensemble. La bande
+// verte ne vient plus d'un manuel — c'est l'intervalle interquartile MESURÉ
+// entre les joueurs du corpus (Q1–Q3), ou l'intervalle de Wilson du taux
+// poolé quand le corpus est trop petit pour une dispersion inter-joueurs.
+const STAT_LIB={vpip:"VPIP — mains jouées",pfr:"PFR — relances préflop",
+  ecart_vpip_pfr:"Écart VPIP−PFR — passivité",three_bet:"3-bet",
+  fold_to_cbet:"Fold to c-bet",wtsd:"WTSD — va à l'abattage",
+  af_postflop:"AF postflop — agressivité"};
+
+function statRow(ec,rep,note){
+  const lo=rep.n_joueurs?rep.q1:rep.ic_bas, hi=rep.n_joueurs?rep.q3:rep.ic_haut;
+  const bande=rep.n_joueurs?`Q1–Q3 de ${rep.n_joueurs} joueurs`
+                           :`IC 95 % du taux poolé`;
+  const dedans=ec.valeur>=lo&&ec.valeur<=hi;
+  const col=!ec.comparable?"var(--dim)"
+           :(ec.occasions<20?"var(--dim)":(dedans?"var(--g)":"var(--o)"));
+  // L'AF est un ratio (0–5 environ) : la barre le remet à l'échelle des
+  // pourcentages pour rester lisible à côté des autres lignes.
+  const ech=(x)=>Math.max(0,Math.min(100,ec.stat==="af_postflop"?x*20:x));
+  const u=ec.unite;
   return `<tr>
-    <td>${label}${note?`<div class="muted">${note}</div>`:""}</td>
-    <td class="num" style="color:${col};font-weight:700">${val.toFixed(1)} %</td>
+    <td>${STAT_LIB[ec.stat]||ec.stat}${note?`<div class="muted">${note}</div>`:""}
+      ${ec.comparable?"":`<div class="muted" style="color:var(--am)">⚠ non comparable :
+        ${ec.pourquoi}</div>`}</td>
+    <td class="num" style="color:${col};font-weight:700">${ec.valeur.toFixed(1)}${u}</td>
     <td style="width:45%">
       <div class="bar" style="height:9px;position:relative">
-        <i style="width:${pct}%;background:${col}"></i>
-        <span style="position:absolute;top:-2px;bottom:-2px;left:${lo}%;width:${hi-lo}%;
+        <i style="width:${ech(ec.valeur)}%;background:${col}"></i>
+        <span style="position:absolute;top:-2px;bottom:-2px;left:${ech(lo)}%;
+          width:${Math.max(0.5,ech(hi)-ech(lo))}%;
           background:#22c55e18;border-left:1px solid #22c55e66;border-right:1px solid #22c55e66"></span>
       </div>
-      <div class="muted" style="margin-top:2px">zone saine ${lo}–${hi} %</div>
+      <div class="muted" style="margin-top:2px">repère mesuré
+        <b>${rep.valeur.toFixed(1)}${u}</b> · bande ${lo.toFixed(1)}–${hi.toFixed(1)}${u}
+        (${bande}) · ${rep.occasions} occ. de corpus</div>
     </td>
-    <td class="num muted">${opp} occ.</td></tr>`;
+    <td class="num muted">${ec.occasions} occ.<div class="muted"
+      style="color:${col}">${ec.ecart>=0?"+":""}${ec.ecart.toFixed(1)}${u}</div></td></tr>`;
+}
+
+// Rend un jeu de repères : sa source, ses effectifs, ses limites. Servi tel
+// quel par /api/reperes comme par /api/review — jamais reformulé côté page.
+function reperesCard(j){
+  return `<div class="card">
+    <h2 style="margin-top:0">Repères « ${j.cle} »${j.concluant?"":
+      ' <span class="pill y">effectif insuffisant</span>'}</h2>
+    <div class="muted">${j.source}</div>
+    <div class="muted">${j.n_mains} mains · ${j.n_mains_joueurs} mains-joueurs${
+      j.positions.length?" · positions "+j.positions.join("/"):""}</div>
+    <table style="margin-top:8px"><thead><tr><th>statistique</th>
+      <th style="text-align:right">repère</th><th style="text-align:right">occasions</th>
+      <th style="text-align:right">IC 95 %</th><th style="text-align:right">Q1 · méd · Q3</th>
+      </tr></thead><tbody>
+      ${Object.entries(j.stats).map(([s,r])=>`<tr>
+        <td>${STAT_LIB[s]||s}</td>
+        <td class="num" style="text-align:right;font-weight:700">${r.valeur.toFixed(2)}${r.unite}</td>
+        <td class="num" style="text-align:right">${r.occasions}</td>
+        <td class="num" style="text-align:right">${r.ic_bas===r.ic_haut?"—":
+          r.ic_bas.toFixed(1)+" – "+r.ic_haut.toFixed(1)}</td>
+        <td class="num" style="text-align:right">${r.n_joueurs?
+          r.q1.toFixed(1)+" · "+r.mediane.toFixed(1)+" · "+r.q3.toFixed(1)
+          +" ("+r.n_joueurs+" j.)":"—"}</td></tr>`).join("")}
+      </tbody></table>
+    ${j.limites.map(l=>`<div class="muted" style="margin-top:4px">· ${l}</div>`).join("")}
+  </div>`;
+}
+
+async function reperesRun(){
+  const out=document.getElementById("rp-out");
+  out.innerHTML='<div class="skel">⟳ lecture de la table gelée…</div>';
+  const r=await api("reperes",{});
+  if(r.error){out.innerHTML=`<div class="warn">${r.error}</div>`;return;}
+  out.innerHTML=r.jeux.map(reperesCard).join("");
 }
 
 async function reviewRun(){
@@ -1394,7 +1464,7 @@ async function reviewRun(){
   out.innerHTML='<div class="skel">⟳ lecture des mains et calcul des équités…</div>';
   const r=await api("review",{path});
   if(r.error){out.innerHTML=`<div class="warn"><b>Lecture impossible.</b><br>${r.error}</div>`;return;}
-  const p=r.profile,a=r.allin;
+  const p=r.profile,a=r.allin,rp=r.reperes;
   const luckGood=a.luck_bb>=0;
   out.innerHTML=`
     <div class="row">
@@ -1404,18 +1474,21 @@ async function reviewRun(){
       <div class="kpi col"><div class="v" style="color:${luckGood?"#22c55e":"#ef4444"}">${luckGood?"+":""}${a.luck_bb}</div><div class="l">part de chance (bb)</div></div>
     </div>
     <div class="card">
-      <h2 style="margin-top:0">Ton profil</h2>
+      <h2 style="margin-top:0">Ton profil, face aux repères mesurés</h2>
       <table><tbody>
-        ${statRow("VPIP — mains jouées",p.vpip,p.vpip_opp,28,50)}
-        ${statRow("PFR — relances préflop",p.pfr,p.pfr_opp,28,45)}
-        ${statRow("Écart VPIP−PFR — passivité",p.vpip-p.pfr,p.vpip_opp,0,18,"plus l'écart est grand, plus tu suis au lieu de relancer")}
-        ${statRow("3-bet",p.three_bet,p.three_bet_opp,8,24)}
-        ${statRow("Fold to c-bet",p.fold_to_cbet,p.fold_cbet_opp,40,60)}
-        ${statRow("WTSD — va à l'abattage",p.wtsd,p.wtsd_opp,25,40)}
+        ${rp.ecarts.map(e=>statRow(e,rp.stats[e.stat],
+          e.stat==="ecart_vpip_pfr"?"plus l'écart est grand, plus tu suis au lieu de relancer":"")
+        ).join("")}
       </tbody></table>
-      <div class="muted" style="margin-top:8px">Les zones saines valent pour le format
-      court (3-max / heads-up). Sous 20 occasions, une fréquence est une indication,
-      pas une mesure — la valeur reste grise.</div>
+      <div class="muted" style="margin-top:8px">
+        Bornes <b>mesurées</b>, pas tirées d'un manuel : ${rp.source}.
+        Jeu retenu « ${rp.cle} » ${rp.positions.length?
+          "(positions "+rp.positions.join("/")+", le mélange d'une table à trois)":""}
+        — ${rp.n_mains} mains, ${rp.n_mains_joueurs} mains-joueurs.
+        Sous 20 occasions chez toi, une fréquence est une indication, pas une
+        mesure : la valeur reste grise.
+      </div>
+      ${rp.limites.map(l=>`<div class="muted" style="margin-top:4px">· ${l}</div>`).join("")}
     </div>
     <div class="${luckGood?"ok":"warn"}">
       <b>Aux tapis : ${a.measured} confrontations mesurées sur ${a.total}</b>

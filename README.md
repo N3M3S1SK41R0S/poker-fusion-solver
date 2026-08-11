@@ -169,7 +169,8 @@ adossé aux solveurs du cœur, donc chaque verdict est calculé, pas énoncé.
 | Module | Ce qu'il fait | Route API |
 |---|---|---|
 | `data/hand_history.parse_ipoker` | parse le XML PMU/iPoker (N mains/session), all-in exact via `@bet`, conservation des jetons vérifiée | — |
-| `analysis/session_review` | profil VPIP/PFR/3-bet/fold-cbet/WTSD + équité des tapis « all-in adjusted » | `/api/review` |
+| `analysis/session_review` | profil VPIP/PFR/3-bet/fold-cbet/WTSD/AF + équité des tapis « all-in adjusted », confronté aux repères mesurés | `/api/review` |
+| `analysis/reperes` | repères **mesurés** sur corpus public (10 000 mains Pluribus, 18 mains WSOP 2023) à la place des fourchettes de manuel ; banc `banc_reperes_corpus.py --verifier` | `/api/reperes` |
 | `analysis/pushfold_review` | décisions préflop tapis court vs Nash jam/fold, écart en bb | `/api/review/pushfold` |
 | `analysis/spot_advisor` | « que fallait-il faire ? » depuis un spot (cartes, board, pot, mise) | `/api/advise` |
 | `vision/card_recognizer` | reconnaît les cartes d'une image (pHash sur le deck PMU) | `/api/recognize` |
