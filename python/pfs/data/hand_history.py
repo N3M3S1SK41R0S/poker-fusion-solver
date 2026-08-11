@@ -49,6 +49,9 @@ class Room(str, Enum):
     WINAMAX = "winamax"
     POKERSTARS = "pokerstars"
     IPOKER = "ipoker"
+    #: PHH — pas une room mais le format d'échange des corpus publics de
+    #: recherche (Pluribus, WSOP 2023…), lu par :mod:`pfs.data.phh`.
+    PHH = "phh"
     UNKNOWN = "unknown"
 
 
@@ -887,6 +890,13 @@ def parse_ipoker(text: str, salt: str = "") -> list[ParsedHand]:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+#: Signature PHH : du TOML qui déclare une variante ET une liste d'actions.
+#: Les deux clés sont exigées ensemble parce que « variant = » seul pourrait
+#: apparaître dans n'importe quel fichier de configuration.
+_PHH_SIGNATURE = re.compile(r"^\s*variant\s*=", re.MULTILINE)
+_PHH_ACTIONS = re.compile(r"^\s*actions\s*=\s*\[", re.MULTILINE)
+
+
 def detect_room(text: str) -> Room:
     head = text[:600].lower()
     if "winamax" in head:
@@ -896,6 +906,11 @@ def detect_room(text: str) -> Room:
     # iPoker : XML <session> (gametype « Holdem NL »), pas de bannière texte
     if "<session" in head or "ipoker" in head or "<gametype>" in head:
         return Room.IPOKER
+    # PHH : TOML de recherche. Fenêtre plus large que les autres, le fichier
+    # commençant souvent par plusieurs lignes de commentaires.
+    tete = text[:4000]
+    if _PHH_SIGNATURE.search(tete) and _PHH_ACTIONS.search(tete):
+        return Room.PHH
     return Room.UNKNOWN
 
 
@@ -910,6 +925,11 @@ def parse_text(text: str, salt: str = "") -> ParsedHand:
         return parse_winamax(text, salt)
     if room is Room.POKERSTARS:
         return parse_pokerstars(text, salt)
+    if room is Room.PHH:
+        # Import local : pfs.data.phh importe ce module, l'importer en tête
+        # ferait un cycle.
+        from pfs.data.phh import parse_phh
+        return parse_phh(text, salt)
     if room is Room.IPOKER:
         hands = parse_ipoker(text, salt)
         if not hands:
@@ -926,9 +946,18 @@ def iter_hands(text: str, salt: str = "") -> Iterator[ParsedHand]:
     jamais échouer le fichier : elle est ignorée — sur des millions de
     mains, un format aberrant finit toujours par apparaître.
     """
-    if detect_room(text) is Room.IPOKER:
+    room = detect_room(text)
+    if room is Room.IPOKER:
         try:
             yield from parse_ipoker(text, salt)
+        except HandHistoryError:
+            return
+        return
+    if room is Room.PHH:
+        # Un fichier PHH = une main, et le découpage texte ci-dessous
+        # (blocs séparés par une ligne vide) le couperait en morceaux.
+        try:
+            yield parse_text(text, salt)
         except HandHistoryError:
             return
         return

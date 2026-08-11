@@ -548,14 +548,37 @@ def _lecture_fond_plein(image, boite) -> "CardMatch | None":
 
     Renvoie ``None`` — et non un refus — quand l'habillage n'est pas à fond
     plein : l'appelant enchaîne alors sur le hachage, qui couvre les jeux
-    classiques. Un refus franc du lecteur (teinte d'aucune famille) rend
-    aussi ``None``, pour la même raison : ce n'est pas à lui de conclure sur
-    une carte qui n'est pas de son ressort.
+    classiques. Une teinte d'aucune famille rend aussi ``None``, pour la même
+    raison : ce n'est pas à lui de conclure sur une carte qui n'est pas de son
+    ressort.
+
+    UNE exception, et elle est la raison d'être de cette fonction : quand la
+    teinte EST celle d'une famille de ce jeu mais que le fond n'est pas un
+    aplat, la découpe est une carte de ce jeu **partiellement recouverte** —
+    retournement en cours, jeton posé dessus. Elle n'est lisible par personne,
+    et surtout pas par le hachage, qui compare une image mixte à des gabarits
+    entiers. Le refus est alors FRANC : on ne passe pas la main.
+
+    Sans ce refus franc, mesuré le 11 août 2026 par `banc_verite_captures.py`
+    sur les 57 captures réelles : le 6♣ du flop de `300_7-max_KO/0003`, saisi
+    en pleine animation de retournement, ressortait « Kc » avec le statut
+    « sure » (écart 616, marge 33). Le contrôle de dispersion existait déjà et
+    refusait bien la découpe — mais son refus était muet, et les 40 cadrages
+    du hachage finissaient par en trouver un sous le seuil. Un garde-fou qu'on
+    peut contourner en changeant de chemin n'en est pas un.
     """
     from pfs.vision.lecteur_fond_plein import lire_carte_fond_plein
 
     x, y, w, h = boite
     lu = lire_carte_fond_plein(image.crop((x, y, x + w, y + h)))
+    if lu.carte is None and lu.du_jeu and "uniforme" in lu.motif:
+        # Refus franc : la carte est de ce jeu et n'est pas entièrement
+        # visible. `distance` et `margin` prennent les valeurs qui expriment
+        # exactement cela dans le vocabulaire des seuils du module — au-delà
+        # du plausible, aucune marge.
+        return CardMatch(card=None, distance=MAX_ACCEPT_DISTANCE + 1,
+                         margin=0, confidence=0.0, runner_up=None,
+                         best_guess=None, statut="refus")
     if lu.carte is None or lu.marge_rang < MARGE_RANG_MIN:
         return None
     # Les échelles diffèrent : l'écart de forme vaut entre 0 et 1, là où le

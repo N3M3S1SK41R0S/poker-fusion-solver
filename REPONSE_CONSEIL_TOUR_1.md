@@ -311,6 +311,16 @@ appels JS, code exécuté à l'import. Nous publierons la couverture réelle
 mesurée par le parcours complet. Dites-nous si notre méthode de comptage vous
 paraît sonner juste, et ce qu'elle manque.
 
+*Suite donnée le 11 août 2026.* Nous avons mesuré, et nous en avons d'abord
+tiré une conclusion fausse — « le même 31,7 %, obtenu par une méthode
+entièrement différente » — retirée depuis : un taux de lignes traversées ne
+peut pas valider un taux de code mort, il en est le complément. Trois mesures
+séparées les remplacent, chacune avec son banc rejouable (README,
+§ « Trois nombres, trois méthodes ») : `banc_atteignabilite_statique.py`,
+`banc_couverture_parcours.py`, `banc_inertie_causale.py`. La troisième cherche
+ce que les deux autres ne peuvent pas voir — le code traversé dont le résultat
+n'atteint jamais la sortie, la catégorie où vivait le défaut n°1.
+
 ### Priorité 5 — Aller devant, concurrent par concurrent
 
 Question inchangée, mais désormais avec le code : **GTO Wizard, PioSOLVER,

@@ -118,7 +118,8 @@ Chiffres au 11 août 2026, mesurés :
 | Sonde Rust | 4 fichiers, 348 lignes |
 | Routes serveur exposées | 32, dont **4 jamais appelées** par l'interface |
 | Modules exécutés lors d'une décision complète | **14 sur 61** |
-| Modules inatteignables par toute action utilisateur | **12, soit 6 124 lignes = 31,7 % du code** |
+| Modules qu'aucun `import` ne relie à `python -m pfs` | **17 sur 62, soit 2 313 lignes = 24,5 % du code** |
+| Lignes jamais traversées par un parcours utilisateur réel | **6 515 sur 9 428 = 69,1 %**, dont 21 modules à zéro |
 
 ### Ce qui est mesuré et tient
 
@@ -155,16 +156,24 @@ donne une idée du taux de défauts restants :
    « amputation » (évaluer la perte sur 99,9999999 % du tapis). Corrigé
    exactement ; les valeurs de référence sont retrouvées au dernier chiffre.
 
-### Les 12 modules morts
+### Les 17 modules qu'aucun `import` ne charge
 
-Aucun n'est atteignable par une action de l'utilisateur ; chacun a pourtant
-ses tests au vert.
+Ce recensement était fait à la main et annonçait 12 modules ; le banc
+`python banc_atteignabilite_statique.py` en trouve **17**. Aucun n'est
+chargeable par une action de l'utilisateur ; chacun a pourtant ses tests au
+vert.
 
 `digit_ocr` (lecture des montants sur capture, 99,5 % d'exactitude sur son
 banc — jamais appelé), `eqr` (modèle de feuille postflop), `bunching`
 (repondération multiway), `abstraction` + `isomorphism` (accélération du
 solveur), `inference_check`, `solver_registry`, `gate`, `meanfield`,
-`timing`, `topology`, `leak_drills`.
+`timing`, `topology`, `leak_drills`, `population`, `synth_table`, plus les
+paquets vides `bench/`, `compliance/`, `perception/`.
+
+Attention à la lecture : `synth_table` est mort pour l'application et couvert
+à 95,0 % par le banc de couverture, parce que ce sont les **tests** qui
+l'importent. Un module peut être mort d'un côté et vivant de l'autre — c'est
+pourquoi les trois nombres du README ne se rapprochent pas.
 
 **Cas particulier — la chaîne de fusion.** `pfs/engine.py::FusionEngine.decide()`,
 dont la docstring annonce « là où les 13 fusions deviennent une seule
@@ -210,7 +219,12 @@ ou **non vérifié**. Pas de quatrième catégorie.
 
 ### Axe B — Qu'est-ce qui est calculé mais jamais utilisé ?
 
-L'audit interne a trouvé 31,7 % de code mort. **La décision est prise : tout
+L'audit interne publie trois mesures distinctes, chacune avec son banc :
+17 modules sur 62 qu'aucun `import` ne relie au point d'entrée, 69,1 % de
+lignes qu'aucun parcours utilisateur ne traverse, et une troisième mesure par
+perturbation pour les calculs traversés dont le résultat n'atteint jamais la
+sortie. Le README (§ « Trois nombres, trois méthodes ») dit pourquoi ces trois
+nombres ne se valident pas l'un l'autre. **La décision est prise : tout
 ce qui sert la décision de jeu sera branché, rien ne sera supprimé pour
 simplifier.** Ce que nous attendons de vous, c'est le *comment* et l'*ordre*.
 

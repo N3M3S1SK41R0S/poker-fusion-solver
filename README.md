@@ -14,12 +14,25 @@ Assistant poker personnel : **analyse a posteriori** de ses propres mains,
 >
 > **Ce qui marche et se mesure :** la lecture des historiques PMU (721 mains
 > réelles récupérées sur 62 tournois), la revue de session avec séparation
-> variance / jeu, la revue push/fold contre Nash, la reconnaissance des
-> cartes sur capture réelle, le simulateur, les drills.
+> variance / jeu, la revue push/fold contre Nash, le simulateur, les drills.
 >
-> **Ce qui existe mais ne s'exécute jamais :** **12 modules, soit 31,7 % du
-> code de production**, ne sont atteignables par aucune action de
-> l'utilisateur. En particulier :
+> **Ce qui marche À MOITIÉ, et le chiffre honnête :** la lecture des cartes
+> sur capture réelle lit **76,7 % des cartes réellement présentes**
+> (198/258 sur 57 captures PMU annotées à la main), dont **65,1 % avec le bon
+> rôle**. Ce que le recogniseur affirme est juste — précision 199/199, zéro
+> lecture fausse affirmée — mais **60 cartes ne sont jamais vues**, dont les
+> deux cartes du héros sur presque toute une des deux tables. Le README a
+> longtemps annoncé « 95 % » : ce chiffre était calculé sur les seules cartes
+> que le détecteur avait bien voulu trouver, sans vérité-terrain. Voir
+> [Reconnaissance de cartes](#reconnaissance-de-cartes-pfsvision).
+>
+> **Ce qui existe mais ne s'exécute jamais :** **17 modules sur 62 ne sont
+> importés par aucune chaîne partant de `python -m pfs`** (2 313 lignes sur
+> 9 428), et **21 modules ne sont traversés par aucun parcours utilisateur**.
+> Les deux nombres sont différents parce qu'ils mesurent deux choses
+> différentes — le détail et les bancs sont dans
+> [« Trois nombres, trois méthodes »](#trois-nombres-trois-méthodes).
+> En particulier :
 > * la **chaîne de fusion** (`pfs/fusion/`, 13 modules) —
 >   `FusionEngine.decide()` n'est appelée que par `demo.py` et les tests.
 >   Les fusions ne participent à **aucune** décision rendue à l'utilisateur ;
@@ -227,6 +240,105 @@ P(tilt) de 5,4 % à 24,1 % — ×4,8.
 
 ---
 
+## Trois nombres, trois méthodes
+
+Une version antérieure de ce README rapprochait deux chiffres : 31,7 % de code
+mort par recensement, 31,7 % de couverture par `coverage.py`, « obtenus par
+deux méthodes entièrement différentes ». **Ce rapprochement était faux, et il
+est retiré.**
+
+Il l'était pour deux raisons, l'une arithmétique et l'autre factuelle.
+
+* **Arithmétique.** 31,7 % de lignes *traversées* implique 68,3 % de lignes
+  *non traversées*. Pour qu'une couverture confirme un taux de mortalité de
+  31,7 %, il aurait fallu lire **68,3 %** de couverture. Le chiffre obtenu
+  était l'exact **complément** de celui qu'il était censé confirmer : les deux
+  31,7 % ne pointaient pas le même ensemble de lignes, ils pointaient les deux
+  moitiés complémentaires du fichier.
+* **Factuelle.** Le banc de couverture trouve **20 modules jamais atteints sur
+  61** (21 sur 62 à la dernière mesure) là où le recensement à la main en
+  annonçait 12. La couverture ne confirmait pas le recensement : elle le
+  **révisait à la hausse de 67 %**.
+
+C'est le même travers que le « 97 % des pertes viennent des décisions » déjà
+corrigé ici : une conclusion plus forte que la mesure qui la porte. À la
+place, trois nombres, trois bancs, trois questions distinctes.
+
+| | question | banc rejouable | mesure du 11 août 2026 |
+|---|---|---|---|
+| **(a)** | quels modules **aucun `import`** ne relie au point d'entrée ? | `python banc_atteignabilite_statique.py` | **17 modules sur 62** · 2 313 lignes sur 9 428 (**24,5 %**) |
+| **(b)** | quelles lignes un **parcours utilisateur réel** ne traverse pas ? | `python banc_couverture_parcours.py` | **6 515 lignes non traversées sur 9 428 (69,1 %)** · 21 modules à zéro |
+| **(c)** | quels calculs sont **traversés mais sans effet** sur la sortie ? | `python banc_inertie_causale.py` | **0 symbole inerte sur 13** (réponse entière) · **7 sur 13** si l'on n'observe que le verdict |
+
+**Ces trois nombres ne sont ni égaux, ni comparables, et aucun ne valide les
+autres.** Ils ne portent même pas sur les mêmes objets : (a) et (b) comptent
+des lignes, (c) compte des symboles. Chacun est un minorant du gaspillage,
+mesuré sous une hypothèse différente.
+
+Les valeurs absolues bougent à chaque commit — le dépôt a gagné un module
+pendant la rédaction de cette section, et les trois nombres ont bougé avec.
+**C'est le banc qui fait foi, pas ce tableau** : rejouez-le.
+
+**(a) n'est pas contenu dans (b), et l'écart se mesure.** On croise les deux
+ensembles avec :
+
+```bash
+cd python
+python banc_couverture_parcours.py --json couverture.json
+python banc_atteignabilite_statique.py --croiser couverture.json
+```
+
+Croisement du 11 août 2026 : **13 modules dans les deux ensembles**, **1 dans
+(a) seulement**, **8 dans (b) seulement**. Chacun déborde de l'autre, **dans
+les deux sens** — ce qu'aucune confirmation mutuelle ne pourrait produire.
+
+* **(b) seulement — chargé, jamais exécuté.** `pfs/engine.py` : le serveur
+  l'importe dans la route `resolve`, donc le banc statique le déclare vivant ;
+  mais l'import est **différé** dans le corps de la route, et rien ne le charge
+  tant que personne n'appelle `/api/resolve`. Le parcours ne le traverse pas
+  d'une ligne (0 sur 200). Charger n'est pas exécuter, et (a) ne sait pas faire
+  la différence.
+* **(a) seulement — mort pour l'application, vivant pour la mesure.**
+  `pfs/vision/synth_table.py` : aucune chaîne d'import partant de
+  `python -m pfs` ne le charge, et il ressort couvert à 95,0 %, parce que ce
+  sont les **tests** qui l'importent pour fabriquer des tables synthétiques.
+
+Chaque banc a raison sur sa question ; c'est le rapprochement qui aurait tort.
+
+**(c) est la catégorie que ni (a) ni (b) ne voient.** Un calcul peut être
+importé, traversé, couvert — et son résultat jeté. C'était le cas de
+`/api/advise`, qui construisait `stacks` et `payouts` puis les abandonnait :
+le régime ICM devenait inatteignable et le verdict rendu sur une bulle était
+l'**inverse** du bon, sous une couverture verte. Ni l'analyse statique ni la
+couverture ne peuvent voir ce défaut : elles mesurent le passage, pas la
+causalité. `banc_inertie_causale.py` le mesure par **perturbation** — on
+modifie une entrée, et si la sortie ne bouge pas, le calcul qui la consommait
+est inerte.
+
+Preuve que ce banc n'est pas décoratif : `--defaut stacks` réinstalle le
+défaut d'origine, et le banc classe alors **3 champs sur 12** causalement
+inertes (`stacks`, `payouts`, `ante`) au lieu de 0. Sans le défaut, aucun
+champ du formulaire n'est inerte.
+
+**La sortie observée fait partie de la mesure.** `--sortie action` ne compare
+que le verdict, pas l'explication : sous cette lecture, **7 symboles sur 13**
+sont inertes — perturber le bubble factor déplace le texte du conseil sans
+renverser la décision sur ces six spots. Ce n'est pas un défaut du code, c'est
+la distance des spots à leur seuil de bascule ; le nombre mesure la batterie
+autant que le logiciel, et se cite avec elle.
+
+**Ce que (c) ne dit pas :** il ne rend aucun pourcentage de lignes, ne couvre
+qu'une route sur 32, et son verdict « inerte » vaut pour la batterie de six
+spots utilisée — une absence d'effet observée n'est pas une preuve d'absence
+d'effet. Il a d'ailleurs commencé par se tromper lui-même : la mémoïsation
+`lru_cache` masquait deux symboles, rapportés « jamais appelés » alors qu'ils
+sont au cœur du chemin. Les limites complètes sont dans le docstring du banc.
+
+`python/tests/test_trois_nombres_distincts.py` échoue si ce README réaffirme
+une équivalence entre ces trois nombres.
+
+---
+
 ## Golden tests
 
 `python -m pfs --selftest` rejoue les valeurs qui lient le plan au code :
@@ -259,9 +371,66 @@ vérifiées). Mesuré : auto-reconnaissance 52/52, séparation ≥ 30 bits entre
 distinctes, robuste à l'échelle (×3/×5/×8 : 52/52) et au bruit. Re-calibrage sur un
 autre thème : `build_templates(dossier)` sur des `<carte>.png`.
 
-**Ce qui reste à caler** : les **coordonnées des régions d'intérêt** (où sont les
-cartes sur la table) dépendent de la room et de la résolution — à mesurer une fois
-sur une vraie capture. Le recogniseur, lui, est prêt et robuste.
+### Ce que la chaîne lit vraiment, sur de vraies captures
+
+Les chiffres ci-dessus sont ceux du **recogniseur seul**, sur des découpes déjà
+cadrées. Ils ne disent rien de la chaîne complète. Celle-ci est mesurée contre une
+**vérité-terrain relevée à la main** sur 57 captures de deux tables PMU
+(`python/tests/donnees/verite_captures.json`, 263 cartes) :
+
+```bash
+cd python
+python banc_verite_captures.py                  # les vrais chiffres
+python banc_verite_captures.py --detail         # une ligne par capture
+python banc_verite_captures.py --quiet-sides 2  # ablation, voir plus bas
+python banc_mutations_verite.py                 # les tests tombent-ils ?
+```
+
+| mesure | valeur | ce qu'elle veut dire |
+|---|---|---|
+| cartes réellement présentes | **258** | 112 héros + 146 board (+ 5 en transition) |
+| **rappel de localisation** | **76,7 %** (198/258) | ce que le détecteur voit |
+| **rappel de lecture** | **76,7 %** (198/258) | lu, juste, et affirmé — **le taux à annoncer** |
+| dont **bon rôle** | **65,1 %** (168/258) | héros/board correctement distingués |
+| **précision** | **100 %** (199/199) | ce qui est affirmé est juste |
+| abstention | 38,8 % (126/325 boîtes) | refus assumés |
+| **lectures fausses affirmées** | **0** | le chiffre qui doit rester nul |
+| cartes jamais localisées | **60** | l'information qui manquait |
+| **rôles faux affirmés** | **30** | défaut ouvert (voir ci-dessous) |
+
+**Le README a annoncé « 199 cartes lues sur 209, soit 95 % ». Ce chiffre était
+faux deux fois** : le dénominateur ne comptait que les cartes que le détecteur
+avait trouvées (le rappel n'existait pas), et « lue avec certitude » voulait dire
+« non refusée » (une lecture fausse et affirmée comptait comme un succès).
+
+**Où sont les 60 cartes perdues**, mesuré et non supposé :
+
+* **45 cartes du héros**, presque toutes sur la table 7-max. Ce n'est ni une
+  occultation ni un siège vide : la carte est parfaitement visible, ses deux
+  arêtes verticales sont trouvées, le recalage donne le bon rapport (1,017). C'est
+  la règle « **3 abords calmes sur 4** » (`table_detector.QUIET_SIDES`) qui les
+  rejette — l'habillage « KO » de cette table pose un rail lumineux juste à côté du
+  siège, et une pastille de prime « 2,25 € » à cheval sur la carte de gauche. Cette
+  règle avait été calibrée sur des tables **synthétiques**, au feutre uni ;
+* **15 cartes du board** (5♠ ×11, 9♣ ×4) : la pile de jetons du pot est posée sur
+  leur bas, le recalage part sur une mauvaise arête horizontale et le rapport sort
+  des bornes.
+
+**Les 30 rôles faux en découlent** : `read_table` prend la rangée la plus basse
+pour la main du héros ; quand le siège n'est pas détecté, c'est le board qui hérite
+du rôle. Pour un solveur, une carte du board présentée comme carte du héros vaut
+une carte fausse.
+
+**L'ablation qui chiffre l'enjeu**, `--quiet-sides 2` sur les mêmes captures :
+rappel **76,7 % → 96,9 %**, rôles justes **65,1 % → 96,9 %**, **zéro carte
+inventée**, 8 cartes encore perdues (celles sous les jetons). Sur les 144 tables
+synthétiques de `test_table_detector.py`, la même ablation coûtait 1,9 % de boîtes
+fantômes. Le desserrement n'est **pas** appliqué : il demande son propre chantier,
+mesuré sur les deux bancs à la fois.
+
+**Ce qui reste à caler** : les **coordonnées des régions d'intérêt** pour le mode
+`reconnaitre.py --rois` dépendent de la room et de la résolution. Le détecteur
+automatique (`read_table`) s'en passe, au prix mesuré ci-dessus.
 
 ## Phase 1 — perception (capture temps réel)
 

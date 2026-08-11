@@ -51,6 +51,17 @@ Les nombres absolus bougent au fil du code — mesurés à deux heures d'écart 
 même jour, ils avaient déjà glissé de deux lignes ; c'est le **rapport** qui
 se relit, et il faut rejouer le banc plutôt que citer ce paragraphe.
 
+Ce chiffre ne dit RIEN du code mort
+-----------------------------------
+31,7 % de lignes *traversées*, c'est 68,3 % de lignes *non traversées* — le
+**complément**, jamais la confirmation, d'un taux de code mort de 31,7 %. Le
+README a publié ce rapprochement ; il est retiré, et
+``tests/test_trois_nombres_distincts.py`` échoue s'il revient. Ce banc-ci
+répond à une question, et à une seule ; les deux autres questions ont leur
+propre banc : ``banc_atteignabilite_statique.py`` (qu'aucun ``import`` ne
+relie au point d'entrée) et ``banc_inertie_causale.py`` (traversé mais sans
+effet sur la sortie).
+
 Les modules les mieux traversés sont ceux de la chaîne :
 ``vision/synth_table`` 95,0 %, ``vision/table_detector`` 91,7 %,
 ``vision/lecteur_fond_plein`` 90,8 %, ``vision/phash`` 81,0 %,

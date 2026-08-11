@@ -226,11 +226,42 @@ Limites assumées, chiffrées :
   · un rectangle uni au rapport ET à la taille d'une carte reste indiscernable
     d'une carte à ce stade ; c'est la reconnaissance (`card_recognizer`) qui
     tranche ensuite ;
-  · tous les TAUX sont mesurés sur des tables SYNTHÉTIQUES : pas de dégradé
-    de feutre, pas d'ombre portée, un seul jeu de gabarits de cartes. Ces
-    chiffres valident la logique, pas la tolérance au rendu d'un vrai client.
-    Le dépôt ne contient qu'UNE capture réelle, et une capture ne fait pas un
-    taux : elle vérifie qu'un cas précis est traité, rien de plus ;
+  · **SUR DE VRAIES CAPTURES, LA LOCALISATION TOMBE À 76,7 %.** Tous les taux
+    ci-dessus sont mesurés sur des tables SYNTHÉTIQUES : pas de dégradé de
+    feutre, pas d'ombre portée, pas de décor lumineux, un seul jeu de
+    gabarits. Mesuré le 11 août 2026 contre la vérité-terrain de 57 captures
+    PMU (`banc_verite_captures.py`, `tests/donnees/verite_captures.json`) :
+    **198 cartes localisées sur 258 réellement présentes**, et 30 cartes du
+    board promues « hero » faute d'avoir trouvé le siège. Les 60 cartes
+    perdues se répartissent ainsi :
+
+      - **45 cartes du HÉROS**, dont les 42 de la table 7-max (24 captures
+        sur 25). La carte est parfaitement visible, ses deux arêtes
+        verticales sont trouvées aux bonnes colonnes, `_snap_to_edges` rend
+        (839, 924, 117, 115) soit un rapport de 1,017 — dans la plage
+        « carte coupée » — et `_covered_from_below` répond True. C'est
+        `_looks_like_a_card` qui refuse, et précisément **QUIET_SIDES** :
+        seuls 2 abords sur 4 sont calmes (haut 0,00 / bas 0,22 / gauche 0,52
+        / droite 0,77). L'habillage « KO » de cette table pose un rail
+        lumineux horizontal juste à côté du siège, et une pastille de prime
+        « 2,25 € » à cheval sur la carte de gauche. Instrumenté sur la
+        capture `300_7-max_KO/0014` : 8 candidates bien cadrées meurent sur
+        ce seul test, contre 19 GARDÉES pour la même carte sur la table
+        6-max ;
+      - **15 cartes du BOARD** (5♠ ×11, 9♣ ×4) : la pile de jetons du pot est
+        posée sur leur bas ; le recalage horizontal part sur l'arête des
+        jetons, la boîte passe de 160 à 197 px de haut et son rapport (0,594)
+        tombe juste sous MIN_RATIO.
+
+    Ablation mesurée sur ces mêmes captures
+    (`banc_verite_captures.py --quiet-sides 2`) : localisation 76,7 → 96,9 %,
+    rôles justes 65,1 → 96,9 %, **0 carte inventée**, 8 cartes encore perdues
+    (celles sous les jetons). Sur les 144 tables synthétiques, la même
+    ablation coûtait 1,9 % de boîtes fantômes — d'où QUIET_SIDES = 3. Les
+    deux mesures ne pointent pas dans le même sens, et c'est **la mesure sur
+    le réel qui n'existait pas** quand la constante a été posée. Le
+    desserrement n'est pas appliqué ici : il demande un chantier qui
+    re-mesure les deux bancs ensemble ;
   · rien n'appelle encore ce module hors de son banc et de ses tests : la
     fonctionnalité n'est PAS disponible dans l'application.
 """
@@ -264,7 +295,15 @@ BRIDGE = 9               # comble les coupures d'arête (liseré clair traversan
 SIDE_COVER = 0.72        # part de la largeur couverte par l'arête haute/basse
 SIDE_CONTRAST = 16.0     # écart de couleur dedans/dehors, par côté
 QUIET_MAX = 0.25         # densité d'arêtes tolérée dans un abord « calme »
-QUIET_SIDES = 3          # nombre d'abords calmes exigés sur 4
+# Nombre d'abords calmes exigés sur 4. C'est LA constante qui coûte le plus
+# cher sur de vraies captures : elle rejette 45 des 60 cartes perdues du banc
+# de vérité-terrain, dont les deux cartes du héros sur presque toute la table
+# 7-max, parce qu'un décor lumineux borde le siège. Posée à 2, le rappel réel
+# passe de 76,7 % à 96,9 % sans produire une seule carte inventée — mais elle
+# fait entrer 1,9 % de boîtes fantômes sur les 144 tables synthétiques. Voir
+# la docstring du module : les deux mesures s'opposent, et seule la seconde
+# existait quand la valeur a été choisie.
+QUIET_SIDES = 3
 INNER_MAX = 0.72         # densité d'arêtes tolérée dans le carton (jetons : 0,83)
 NMS_COVER = 0.55         # recouvrement relatif au-delà duquel on ne garde qu'une
 

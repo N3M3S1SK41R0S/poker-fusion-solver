@@ -55,6 +55,7 @@ __all__ = [
     "fenetres_disponibles",
     "capturer_fenetre",
     "lire_ecran",
+    "lire_image",
     "CarteLue",
     "LectureLive",
     "SondeIntrouvable",
@@ -399,7 +400,7 @@ def _agrandir(b: CardBox, k: float, largeur: int, hauteur: int) -> CardBox:
 
 
 def _lire_boites(image, boites: list[CardBox], role: str,
-                 fenetre: str) -> list[CarteLue]:
+                 fenetre: str, archiver: bool = True) -> list[CarteLue]:
     """Reconnaît chaque boîte, et archive celles qui échouent — sauf `others`.
 
     Une découpe de rôle inconnu qui n'est pas lue n'apprend rien : ce peut
@@ -407,8 +408,12 @@ def _lire_boites(image, boites: list[CardBox], role: str,
     une boîte fantôme posée sur du feutre. En archiver revient à remplir le
     banc d'essai de bruit, jusqu'à noyer les vrais échecs. Seuls les rôles
     identifiés — héros et board — méritent d'être conservés pour rejeu.
+
+    `archiver=False` sert aux BANCS, qui rejouent des centaines de découpes
+    déjà sur disque : les archiver une seconde fois n'apprendrait rien et
+    noierait le banc d'essai de l'utilisateur.
     """
-    archivable = role in ("hero", "board")
+    archivable = archiver and role in ("hero", "board")
     lues: list[CarteLue] = []
     for b in boites:
         decoupe = image.crop((b.x, b.y, b.x + b.w, b.y + b.h))
@@ -464,9 +469,45 @@ def lire_ecran(titre: str | None = None,
     from PIL import Image
 
     png = capturer_fenetre(titre, timeout_s)
-    png_b64 = base64.b64encode(png).decode("ascii")
     image = Image.open(io.BytesIO(png)).convert("RGB")
+    return lire_image(image, fenetre=titre or "auto",
+                      largeur_detection=largeur_detection,
+                      png=png)
 
+
+def lire_image(image, fenetre: str = "image",
+               largeur_detection: int = LARGEUR_SANS_REDUCTION,
+               archiver: bool = True,
+               png: bytes | None = None) -> LectureLive:
+    """Localise et lit les cartes d'une image DÉJÀ chargée.
+
+    C'est le coeur de `lire_ecran`, sans la capture d'écran. L'extraction
+    n'est pas cosmétique : elle existe pour que `banc_verite_captures.py`
+    rejoue **exactement** le code de production sur des captures figées.
+    Un banc qui réimplémenterait la boucle mesurerait sa propre copie, et
+    c'est précisément le genre de mesure qui a déjà menti dans ce dépôt.
+
+    Parameters
+    ----------
+    image : PIL.Image
+        Capture d'une table, en RGB.
+    fenetre : str
+        Étiquette reportée dans la lecture et dans l'archive.
+    largeur_detection : int
+        Voir `lire_ecran`. ``0`` = pleine échelle.
+    archiver : bool
+        Enregistrer les échecs de lecture pour rejeu ultérieur. À mettre à
+        ``False`` dans un banc, dont les images sont déjà sur disque.
+    png : bytes, optional
+        Octets PNG à renvoyer dans `image_b64`. Absent, le champ reste vide :
+        un banc n'a pas besoin de trimballer l'image, et la ré-encoder
+        produirait des octets DIFFÉRENTS de la capture d'origine.
+
+    Returns
+    -------
+    LectureLive
+        Les cartes vues, leur rôle et la confiance de chaque lecture.
+    """
     if largeur_detection:
         cherchee, k = _reduire(image, largeur_detection)
     else:
@@ -481,8 +522,9 @@ def lire_ecran(titre: str | None = None,
         # aucun détail du glyphe.
         pleines = ([_agrandir(b, k, image.width, image.height)
                     for b in boites] if largeur_detection else list(boites))
-        cartes.extend(_lire_boites(image, pleines, role, titre or "auto"))
+        cartes.extend(_lire_boites(image, pleines, role, fenetre, archiver))
 
-    return LectureLive(fenetre=titre or "auto",
-                       largeur=image.width, hauteur=image.height,
-                       cartes=cartes, image_b64=png_b64)
+    return LectureLive(
+        fenetre=fenetre, largeur=image.width, hauteur=image.height,
+        cartes=cartes,
+        image_b64=base64.b64encode(png).decode("ascii") if png else "")

@@ -16,6 +16,16 @@ au ratio carte → tri héros (bas) / board (rangée médiane).
 **Critère** : sur tables synthétiques (habillages × fonds × dispositions),
 ≥ 95 % des cartes localisées, 0 fausse localisation grossière.
 
+> **Le critère est atteint sur synthétique (98,8 %) et RATÉ sur réel
+> (76,7 %).** Mesuré le 11 août 2026 par `python/banc_verite_captures.py`
+> contre la vérité-terrain des 57 captures PMU : 198 cartes localisées sur
+> 258 réellement présentes. L'avertissement d'honnêteté ci-dessus s'est
+> vérifié au pire endroit — 60 cartes ne sont jamais vues, dont les deux
+> cartes du héros sur presque toute une des deux tables, et la cause est une
+> constante calée sur le synthétique (`QUIET_SIDES`, voir le README). La
+> phase A n'est donc **pas close** : son critère doit être re-libellé sur du
+> réel, et c'est le premier chantier de vision à ouvrir.
+
 ### Phase A — diagnostic mesuré du cas qui bloque
 Carte BLANCHE (deck classique) sur tapis CLAIR : corps de carte `[254,254,254]`,
 ovale de table `[229,233,240]` → distance RGB **36,1** (donc séparables), mais la

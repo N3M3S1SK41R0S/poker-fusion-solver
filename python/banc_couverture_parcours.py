@@ -47,6 +47,7 @@ deux.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import threading
 import types
@@ -214,6 +215,10 @@ def main() -> None:
                     help="détail par module")
     ap.add_argument("--settrace", action="store_true",
                     help="force le traceur maison même si coverage.py est là")
+    ap.add_argument("--json", metavar="FICHIER", nargs="?", const="-",
+                    help="écrit la mesure en JSON (« - » = sortie standard), "
+                         "pour la croiser avec banc_atteignabilite_statique.py "
+                         "--croiser")
     args = ap.parse_args()
 
     sys.path.insert(0, str(RACINE))
@@ -226,6 +231,19 @@ def main() -> None:
 
     par_module, methode = (mesurer_settrace() if args.settrace
                            else mesurer_coverage())
+    if args.json:
+        # Le croisement (a)×(b) a besoin du détail par module, pas du total :
+        # c'est l'écart entre les deux ensembles qui est instructif, pas la
+        # somme.
+        charge = {"methode": methode, "parcours": PARCOURS,
+                  "par_module": {n: list(v) for n, v in par_module.items()}}
+        texte = json.dumps(charge, ensure_ascii=False, indent=2)
+        if args.json == "-":
+            print(texte)
+        else:
+            Path(args.json).write_text(texte, encoding="utf-8")
+            print(f"mesure écrite dans {args.json}")
+        return
     rapport(par_module, methode, args.modules)
 
 

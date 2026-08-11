@@ -1,5 +1,72 @@
 # Journal des versions — Poker Fusion Solver
 
+## Non publié — 11 août 2026
+
+### Le « 95 % » de lecture des cartes était faux : le vrai taux est 76,7 %
+
+Le dépôt annonçait « 199 cartes lues sur 209, soit 95 % » sur 57 captures
+réelles. Une revue externe a démonté la métrique, et elle avait raison sur les
+deux points : le dénominateur ne comptait que les cartes que le détecteur
+avait bien voulu trouver — le **rappel n'était pas mesuré** — et « lue avec
+certitude » voulait dire « non refusée », faute de **vérité-terrain** : une
+lecture fausse et affirmée comptait comme un succès.
+
+Les 57 captures ont été annotées à la main, carte par carte. Contre ce relevé,
+la chaîne de production rend :
+
+| mesure | valeur |
+|---|---|
+| cartes réellement présentes | **258** (et non 209) |
+| rappel de lecture | **76,7 %** (198/258) |
+| dont bon rôle | **65,1 %** (168/258) |
+| précision | **100 %** (199/199) |
+| lectures fausses affirmées | **0** |
+| cartes jamais localisées | **60** |
+| rôles faux affirmés | **30** |
+
+### Ajouté
+
+- **`python/tests/donnees/verite_captures.json`** — la vérité-terrain :
+  57 frames, 263 cartes relevées à l'œil, emplacements mesurés au pixel. Le
+  relevé visuel et un masque de couleur exact sur les quatre aplats du jeu
+  concordent sur les 263 cartes.
+- **`python/banc_verite_captures.py`** — rejoue la chaîne de production sur
+  les captures et rend rappel, précision, abstention, lectures fausses
+  affirmées, cartes inventées et rôles faux. Option `--quiet-sides N` pour
+  l'ablation qui chiffre la cause des cartes perdues.
+- **`python/banc_mutations_verite.py`** — casse une par une les onze choses
+  que les nouveaux tests protègent et exige qu'ils tombent. La première
+  mutation refabrique exactement le « 95 % ».
+- **`python/tests/test_verite_captures.py`** — cohérence du relevé
+  (notation, doublons, board monotone, totaux) et arithmétique du banc.
+- **`pfs.vision.live.lire_image()`** — le coeur de `lire_ecran` sans la
+  capture d'écran, pour que le banc rejoue le code de production et non une
+  copie.
+
+### Corrigé
+
+- **Une carte en cours de retournement pouvait être AFFIRMÉE, et fausse.**
+  Le 6♣ du flop de `300_7-max_KO/0003` sortait « Kc », statut « sure », à un
+  écart de 616 pour une marge de 33. Le contrôle de dispersion du lecteur à
+  fond plein existait et refusait bien la découpe — mais son refus était
+  **muet** : `identify_card_autour` passait la main au hachage, dont les 40
+  cadrages finissaient par en trouver un sous le seuil. Le refus est
+  désormais **franc** quand la teinte est celle d'une famille du jeu (donc :
+  c'est une carte de ce jeu, partiellement recouverte), et la main n'est plus
+  passée. Un garde-fou contournable en changeant de chemin n'en est pas un.
+
+### Diagnostiqué, non corrigé
+
+- **45 des 60 cartes perdues sont rejetées par `QUIET_SIDES = 3`** — la règle
+  « 3 abords calmes sur 4 », calibrée sur des tables synthétiques au feutre
+  uni. L'habillage « KO » de la table 7-max borde le siège d'un rail lumineux
+  et pose une pastille de prime sur la carte de gauche. À 2, le rappel réel
+  passe à 96,9 % sans une seule carte inventée, mais fait entrer 1,9 % de
+  fantômes sur le banc synthétique. Chantier suivant.
+- **15 cartes du board** disparaissent sous la pile de jetons du pot : le
+  recalage horizontal accroche l'arête des jetons et le rapport sort des
+  bornes.
+
 ## v4.4.0 — 10 août 2026
 
 Calibration en direct : lire une vraie table à l'écran, sans jamais conseiller.

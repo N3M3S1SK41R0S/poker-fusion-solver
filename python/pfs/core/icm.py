@@ -197,6 +197,30 @@ def icm_equities(
     # rien ne permet de les départager, et l'ordre de leur élimination n'est
     # pas dans les données.
     #
+    # Cette branche est-elle la LIMITE de la récursion, ou seulement une
+    # valeur voisine ? La question n'est pas rhétorique : `bubble_factor`
+    # divise $EV_perte — évaluée ICI, pour le joueur couvert — par $EV_gain,
+    # évaluée par la récursion ordinaire. Le quotient met en rapport deux
+    # régimes de code, et il AMPLIFIE leur écart (mesuré ×11,9 à ×76,5) là où
+    # la conservation, l'échelle et la permutation l'absorbent toutes.
+    #
+    # Mesuré (banc_invariants_icm.py --continuite, section 10) : elle l'EST.
+    # En remplaçant le tapis nul par un tapis résiduel ε décroissant, l'écart
+    # décroît linéairement en ε, et l'extrapolation en zéro retombe sur cette
+    # branche à 2,0e-15 près en relatif, sur huit spots et dans les deux sens
+    # de couverture. La forme générale :
+    #
+    #     lim icm(survivants ⊕ ε·mourants) =
+    #         icm(survivants, π[:r]) ⊕ icm(mourants, π[r:])
+    #
+    # Le second facteur, évalué à tapis égaux, est exactement le partage
+    # ci-dessous. À UN seul tapis nul il n'y a plus de rapport entre mourants,
+    # donc une seule limite : la continuité est vraie. À PLUSIEURS, la limite
+    # dépend de ces rapports — [100, ε, ε/2] tend vers (26,667 ; 23,333) et
+    # non vers (25 ; 25) — donc il n'existe pas de valeur en zéro, et le
+    # partage égal est un CHOIX (le seul compatible avec la permutation), pas
+    # une convergence. `tests/test_icm_invariants.py` épingle les deux.
+    #
     # `vivants` ne peut pas être vide ici : les tapis sont validés positifs ou
     # nuls, donc « aucun vivant » implique une somme nulle, que `_validate` a
     # déjà refusée. Le code qui prétendait partager la dotation dans ce cas
@@ -316,9 +340,12 @@ def bubble_factor(
     # trancher, suppose la pression maximale ») est prudent et cohérent, là
     # où un nombre plausible et faux serait le pire des deux. Un tournoi réel
     # ne dépasse pas un rapport de ~1e6.
-    if gain <= 0.0:
+    echelle = max(abs(base), abs(ev_win), abs(ev_lose))
+    if gain <= 1e-12 * echelle:
         return math.inf
-    return float(loss / gain)
+    # L'équité ICM est croissante en jetons (invariant de monotonie) : perdre
+    # des jetons ne peut pas rapporter. Une perte négative est du bruit.
+    return float(max(loss, 0.0) / gain)
 
 
 def risk_premium(bf: float) -> float:

@@ -37,13 +37,58 @@ que ni la couverture ni l'analyse statique ne voient : les lignes **atteintes
 mais causalement inertes**, dont le résultat est calculé puis jeté. C'est la
 catégorie qui contenait `/api/advise` jetant les tapis de tournoi.
 
-**Le « 95 % » de lecture des cartes n'est pas une exactitude.** Le
-dénominateur est conditionnel à la détection, il n'y a aucune vérité-terrain,
-et « non refusé » n'est pas « juste ». Votre indice chiffré était exact :
-108 boîtes héros sur 57 frames font 1,89 par frame au lieu de 2. Une
-annotation manuelle des 57 captures est en cours pour produire rappel,
-précision, et le seul chiffre qui compte vraiment — le nombre de lectures
-fausses affirmées.
+**Le « 95 % » de lecture des cartes n'est pas une exactitude — et le vrai
+chiffre est 76,7 %.** Le dénominateur était conditionnel à la détection, il
+n'y avait aucune vérité-terrain, et « non refusé » n'est pas « juste ». Votre
+indice chiffré était exact, et il pointait le bon endroit : 108 boîtes héros
+sur 57 frames font 1,89 par frame au lieu de 2.
+
+Les 57 captures ont été annotées à la main, carte par carte
+(`tests/donnees/verite_captures.json`, 263 cartes relevées ; le relevé visuel
+et un masque de couleur exact sur les quatre aplats du jeu concordent). Le
+banc `banc_verite_captures.py` rejoue la chaîne de production et rend :
+
+```
+cartes réellement présentes (pleinement visibles) : 258   (et non 209)
+RAPPEL DE LOCALISATION :  76,7 %  (198/258)
+RAPPEL DE LECTURE      :  76,7 %  (198/258)   ← le taux à annoncer
+  dont bon rôle        :  65,1 %  (168/258)
+PRÉCISION              : 100,0 %  (199/199 lectures affirmées)
+cartes JAMAIS localisées : 60      LECTURES FAUSSES AFFIRMÉES : 0
+```
+
+Trois choses, dans l'ordre de gravité :
+
+* **le rappel était l'information manquante, et il est mauvais** : 60 cartes
+  réellement présentes ne sont jamais vues. 45 sont les cartes du HÉROS de la
+  table 7-max — jamais une seule, sur 24 des 25 captures ;
+* **30 cartes du board y sont présentées comme cartes du héros**, conséquence
+  mécanique de la précédente : `read_table` prend la rangée la plus basse
+  pour la main du héros, et quand le siège n'est pas détecté, c'est le board
+  qui hérite du rôle. Une carte juste au mauvais rôle vaut une carte fausse ;
+* **une lecture fausse et affirmée a bien été trouvée** — le 6♣ du flop de
+  `300_7-max_KO/0003`, saisi en pleine animation de retournement, sortait
+  « Kc », statut « sure ». Le contrôle de dispersion que nous vous avions
+  présenté comme la parade existait déjà et refusait bien la découpe : son
+  refus était **muet**, la chaîne passait la main au hachage, et les 40
+  cadrages essayés finissaient par en trouver un sous le seuil. Le refus est
+  désormais franc, et un test emprunte le chemin de la CHAÎNE, pas celui du
+  lecteur isolé. Le compteur est à 0.
+
+La cause des 45 cartes du héros perdues est mesurée, et ce n'est ni une
+occultation ni un siège vide : les cartes sont parfaitement visibles, la
+bonne paire d'arêtes est trouvée, le recalage donne le bon rapport (1,017,
+dans la plage « carte coupée par le bas »). C'est la règle « **3 abords
+calmes sur 4** » du détecteur qui les rejette — l'habillage « KO » de cette
+table pose un rail lumineux immédiatement à gauche et à droite du siège, et
+une pastille de prime « 2,25 € » à cheval sur la carte de gauche. Cette règle
+avait été calibrée sur des tables **synthétiques**, où le feutre est uni.
+Ablation mesurée sur les vraies captures
+(`banc_verite_captures.py --quiet-sides 2`) : rappel **76,7 % → 96,9 %**,
+rôles justes **65,1 % → 96,9 %**, et **zéro carte inventée**. Sur les 144
+tables synthétiques, la même ablation coûtait 1,9 % de boîtes fantômes. Nous
+ne l'avons pas appliquée : c'est un chantier de correction, avec ses propres
+mesures sur les deux bancs.
 
 **Le seuil d'uniformité du fond repose sur une statistique qui sature.** Vous
 avez raison : min, médiane, p95 et maximum tous à exactement 0,0 sur

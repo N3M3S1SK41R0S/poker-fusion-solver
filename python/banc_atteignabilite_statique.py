@@ -213,12 +213,21 @@ def compter_lignes(fichiers: dict[str, Path]) -> tuple[dict[str, int], str]:
         return ({n: _lignes_co(f) for n, f in fichiers.items()},
                 f"co_lines (Python {sys.version.split()[0]}) — coverage.py absent")
 
+    # `analysis2` sans collecte préalable : les *statements* sont lus par le
+    # parseur, aucun code n'est exécuté. C'est la seule façon d'obtenir le
+    # dénominateur EXACT du banc de couverture — un décompte maison divergerait
+    # de quelques lignes et rendrait les deux mesures incomparables pour de
+    # mauvaises raisons.
     cov = coverage.Coverage(data_file=None)
-    cov._init()                       # prépare le parseur sans rien exécuter
     compte: dict[str, int] = {}
-    for nom, f in fichiers.items():
-        _, statements, _, _, _ = cov.analysis2(str(f))
-        compte[nom] = len(statements)
+    try:
+        for nom, f in fichiers.items():
+            _, statements, _, _, _ = cov.analysis2(str(f))
+            compte[nom] = len(statements)
+    except Exception as e:              # noqa: BLE001 — API changée : on le dit
+        return ({n: _lignes_co(f) for n, f in fichiers.items()},
+                f"co_lines (Python {sys.version.split()[0]}) — "
+                f"coverage.analysis2 indisponible ({type(e).__name__})")
     return compte, f"coverage.py {coverage.__version__} (statements)"
 
 
@@ -285,20 +294,85 @@ def rapport(r: dict, detail: bool) -> None:
     print()
 
 
+def croiser(r: dict, fichier: str) -> dict:
+    """Compare l'ensemble (a) « jamais importé » à l'ensemble (b) « jamais traversé ».
+
+    Produit le fichier avec ::
+
+        python banc_couverture_parcours.py --json couverture.json
+
+    L'intérêt n'est pas la somme mais l'**écart** : il montre que les deux
+    mesures ne se recouvrent pas, et dans les DEUX sens. Un module importé et
+    jamais exécuté est invisible à (a) ; un module que seuls les tests
+    importent est compté mort par (a) et couvert par (b).
+    """
+    charge = json.loads(Path(fichier).read_text(encoding="utf-8"))
+    par_module = charge["par_module"]
+
+    def _cle(chemin: str) -> str:
+        return _nom_module(RACINE / chemin.replace("\\", "/"))
+
+    # Les modules sans ligne exécutable (paquets vides) sortent du croisement :
+    # « jamais traversé » n'a pas de sens pour un fichier qui n'a rien à traverser.
+    jamais_traverses = {_cle(c) for c, (vu, tot) in par_module.items()
+                        if vu == 0 and tot}
+    jamais_importes = {n for n in r["liste_morts"] if r["detail"][n][1]}
+
+    return {
+        "fichier_couverture": fichier,
+        "methode_couverture": charge.get("methode"),
+        "a_jamais_importes": sorted(jamais_importes),
+        "b_jamais_traverses": sorted(jamais_traverses),
+        "les_deux": sorted(jamais_importes & jamais_traverses),
+        "a_seulement": sorted(jamais_importes - jamais_traverses),
+        "b_seulement": sorted(jamais_traverses - jamais_importes),
+    }
+
+
+def rapport_croisement(c: dict) -> None:
+    print()
+    print("═" * 74)
+    print("  CROISEMENT (a) JAMAIS IMPORTÉ  ×  (b) JAMAIS TRAVERSÉ")
+    print(f"  ({c['methode_couverture']})")
+    print("═" * 74)
+    print(f"  (a) seul : {len(c['a_seulement'])}"
+          "   modules que SEULS LES TESTS importent —")
+    for n in c["a_seulement"]:
+        print(f"             {n}")
+    print("             morts pour l'application, couverts par la mesure.")
+    print(f"  (b) seul : {len(c['b_seulement'])}"
+          "   modules IMPORTÉS et JAMAIS EXÉCUTÉS —")
+    for n in c["b_seulement"]:
+        print(f"             {n}")
+    print("             charger n'est pas exécuter ; (a) ne peut pas les voir.")
+    print(f"  les deux : {len(c['les_deux'])}")
+    print("─" * 74)
+    print("  Les deux ensembles se recouvrent partiellement et débordent dans")
+    print("  les deux sens : aucun des deux nombres ne confirme l'autre.")
+    print()
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--modules", action="store_true", help="détail par module")
     ap.add_argument("--outils", action="store_true",
                     help="ajouter les scripts CLI de python/ aux entrées")
+    ap.add_argument("--croiser", metavar="COUVERTURE.json",
+                    help="croiser avec la sortie de banc_couverture_parcours.py --json")
     ap.add_argument("--json", action="store_true", help="sortie machine")
     args = ap.parse_args()
 
     r = mesurer(avec_outils=args.outils)
+    c = croiser(r, args.croiser) if args.croiser else None
     if args.json:
         r.pop("detail")
+        if c:
+            r["croisement"] = c
         print(json.dumps(r, ensure_ascii=False, indent=2))
     else:
         rapport(r, args.modules)
+        if c:
+            rapport_croisement(c)
 
 
 if __name__ == "__main__":

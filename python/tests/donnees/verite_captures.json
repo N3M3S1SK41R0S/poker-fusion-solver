@@ -1,0 +1,539 @@
+{
+ "objet": "vérité-terrain des 57 captures PMU PLAY du 10 août 2026",
+ "methode": "Chaque capture a été REGARDÉE (planche contact, zone centrale recadrée). La famille de chaque carte a ensuite été recoupée par masque de couleur exact (tolérance RGB 6) sur les quatre aplats du jeu `pmu_solid` : les deux relevés concordent sur les 263 cartes. Les emplacements sont mesurés au pixel et stables à ±1 px sur les 57 captures.",
+ "conventions": {
+  "hero": "cartes du héros PLEINEMENT visibles (bas recouvert par le bandeau d'équité, ce qui est l'état normal)",
+  "board": "cartes communes pleinement visibles",
+  "hero_transition": "cartes du héros dans un état transitoire (fondu) — identifiables à l'œil, mais qu'un lecteur honnête a le droit de refuser",
+  "board_transition": "cartes communes en cours de retournement",
+  "emplacements": "boîtes (x, y, largeur, hauteur) des emplacements fixes, board de gauche à droite puis héros"
+ },
+ "emplacements": {
+  "board": [
+   [644, 514, 117, 160],
+   [777, 514, 117, 160],
+   [910, 514, 117, 160],
+   [1043, 514, 117, 160],
+   [1176, 514, 117, 160]
+  ],
+  "hero": [
+   [839, 929, 117, 106],
+   [965, 929, 117, 106]
+  ]
+ },
+ "frames": [
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0000",
+   "hero": ["Kc", "9c"],
+   "board": [],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "préflop"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0001",
+   "hero": ["Kc", "9c"],
+   "board": [],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "préflop"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0002",
+   "hero": ["Kc", "9c"],
+   "board": [],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "préflop"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0003",
+   "hero": ["Kc", "9c"],
+   "board": ["2c", "6h", "2s"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "flop"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0004",
+   "hero": ["Kc", "9c"],
+   "board": ["2c", "6h", "2s"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "flop"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0005",
+   "hero": ["Kc", "9c"],
+   "board": ["2c", "6h", "2s"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "flop"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0006",
+   "hero": ["Kc", "9c"],
+   "board": ["2c", "6h", "2s"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "flop"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0007",
+   "hero": ["Kc", "9c"],
+   "board": ["2c", "6h", "2s"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "flop"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0008",
+   "hero": ["Kc", "9c"],
+   "board": ["2c", "6h", "2s"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "flop"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0009",
+   "hero": ["Kc", "9c"],
+   "board": ["2c", "6h", "2s"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "flop"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0010",
+   "hero": ["Kc", "9c"],
+   "board": ["2c", "6h", "2s"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "flop"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0011",
+   "hero": ["Kc", "9c"],
+   "board": ["2c", "6h", "2s"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "flop"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0012",
+   "hero": ["Kc", "9c"],
+   "board": ["2c", "6h", "2s"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "flop"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0013",
+   "hero": ["Kc", "9c"],
+   "board": ["2c", "6h", "2s"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "flop"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0014",
+   "hero": ["Kc", "9c"],
+   "board": ["2c", "6h", "2s"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "flop"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0015",
+   "hero": ["Kc", "9c"],
+   "board": ["2c", "6h", "2s"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "flop"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0016",
+   "hero": ["Kc", "9c"],
+   "board": ["2c", "6h", "2s"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "flop"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0017",
+   "hero": ["Kc", "9c"],
+   "board": ["2c", "6h", "2s"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "flop"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0018",
+   "hero": ["Kc", "9c"],
+   "board": ["2c", "6h", "2s"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "flop"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0019",
+   "hero": ["Kc", "9c"],
+   "board": ["2c", "6h", "2s"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "flop"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0020",
+   "hero": ["Kc", "9c"],
+   "board": ["2c", "6h", "2s", "Ts"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "turn"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0021",
+   "hero": ["Kc", "9c"],
+   "board": ["2c", "6h", "2s", "Ts"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "turn"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0022",
+   "hero": ["Kc", "9c"],
+   "board": ["2c", "6h", "2s", "Ts"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "turn"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0023",
+   "hero": ["Kc", "9c"],
+   "board": ["2c", "6h", "2s", "Ts"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "turn"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0024",
+   "hero": ["Kc", "9c"],
+   "board": ["2c", "6h", "2s", "Ts"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "turn"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0025",
+   "hero": ["Kc", "9c"],
+   "board": ["2c", "6h", "2s", "Ts"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "turn"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0026",
+   "hero": ["Kc", "9c"],
+   "board": ["2c", "6h", "2s", "Ts"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "turn"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0027",
+   "hero": ["Kc", "9c"],
+   "board": ["2c", "6h", "2s", "Ts"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "turn"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0028",
+   "hero": ["Kc", "9c"],
+   "board": ["2c", "6h", "2s", "Ts"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "turn ; cartes du héros entourées d'un liseré doré (tour d'agir)"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0029",
+   "hero": ["Kc", "9c"],
+   "board": ["2c", "6h", "2s", "Ts"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "turn ; cartes du héros entourées d'un liseré doré (tour d'agir)"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0030",
+   "hero": ["Kc", "9c"],
+   "board": ["2c", "6h", "2s", "Ts", "4d"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "river"
+  },
+  {
+   "session": "100_-_6-max_Turbo_Re-buy_1197329110",
+   "frame": "0031",
+   "hero": ["Kc", "9c"],
+   "board": ["2c", "6h", "2s", "Ts", "4d"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "river"
+  },
+  {
+   "session": "300_7-max_KO_1197327559",
+   "frame": "0000",
+   "hero": ["7c", "3h"],
+   "board": [],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "préflop, main 1"
+  },
+  {
+   "session": "300_7-max_KO_1197327559",
+   "frame": "0001",
+   "hero": ["7c", "3h"],
+   "board": [],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "préflop, main 1"
+  },
+  {
+   "session": "300_7-max_KO_1197327559",
+   "frame": "0002",
+   "hero": ["7c", "3h"],
+   "board": [],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "préflop, main 1"
+  },
+  {
+   "session": "300_7-max_KO_1197327559",
+   "frame": "0003",
+   "hero": [],
+   "board": [],
+   "hero_transition": ["7c", "3h"],
+   "board_transition": ["6c", "As", "Js"],
+   "note": "flop en cours de retournement (moitié dos) ; cartes du héros en fondu de sortie après un couché"
+  },
+  {
+   "session": "300_7-max_KO_1197327559",
+   "frame": "0004",
+   "hero": ["2s", "Ad"],
+   "board": [],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "préflop, main 2"
+  },
+  {
+   "session": "300_7-max_KO_1197327559",
+   "frame": "0005",
+   "hero": ["2s", "Ad"],
+   "board": [],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "préflop, main 2"
+  },
+  {
+   "session": "300_7-max_KO_1197327559",
+   "frame": "0006",
+   "hero": ["2s", "Ad"],
+   "board": [],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "préflop, main 2"
+  },
+  {
+   "session": "300_7-max_KO_1197327559",
+   "frame": "0007",
+   "hero": ["2s", "Ad"],
+   "board": [],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "préflop, main 2"
+  },
+  {
+   "session": "300_7-max_KO_1197327559",
+   "frame": "0008",
+   "hero": ["2s", "Ad"],
+   "board": [],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "préflop, main 2"
+  },
+  {
+   "session": "300_7-max_KO_1197327559",
+   "frame": "0009",
+   "hero": ["2s", "Ad"],
+   "board": [],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "préflop, main 2"
+  },
+  {
+   "session": "300_7-max_KO_1197327559",
+   "frame": "0010",
+   "hero": ["2s", "Ad"],
+   "board": [],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "préflop, main 2"
+  },
+  {
+   "session": "300_7-max_KO_1197327559",
+   "frame": "0011",
+   "hero": ["2s", "Ad"],
+   "board": [],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "préflop, main 2"
+  },
+  {
+   "session": "300_7-max_KO_1197327559",
+   "frame": "0012",
+   "hero": ["2s", "Ad"],
+   "board": [],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "préflop, main 2"
+  },
+  {
+   "session": "300_7-max_KO_1197327559",
+   "frame": "0013",
+   "hero": ["2s", "Ad"],
+   "board": [],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "préflop, main 2"
+  },
+  {
+   "session": "300_7-max_KO_1197327559",
+   "frame": "0014",
+   "hero": ["2s", "Ad"],
+   "board": ["6s", "Ah", "5s"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "flop"
+  },
+  {
+   "session": "300_7-max_KO_1197327559",
+   "frame": "0015",
+   "hero": ["2s", "Ad"],
+   "board": ["6s", "Ah", "5s"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "flop"
+  },
+  {
+   "session": "300_7-max_KO_1197327559",
+   "frame": "0016",
+   "hero": ["2s", "Ad"],
+   "board": ["6s", "Ah", "5s"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "flop"
+  },
+  {
+   "session": "300_7-max_KO_1197327559",
+   "frame": "0017",
+   "hero": ["2s", "Ad"],
+   "board": ["6s", "Ah", "5s", "9c"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "turn"
+  },
+  {
+   "session": "300_7-max_KO_1197327559",
+   "frame": "0018",
+   "hero": ["2s", "Ad"],
+   "board": ["6s", "Ah", "5s", "9c"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "turn"
+  },
+  {
+   "session": "300_7-max_KO_1197327559",
+   "frame": "0019",
+   "hero": ["2s", "Ad"],
+   "board": ["6s", "Ah", "5s", "9c"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "turn"
+  },
+  {
+   "session": "300_7-max_KO_1197327559",
+   "frame": "0020",
+   "hero": ["2s", "Ad"],
+   "board": ["6s", "Ah", "5s", "9c"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "turn"
+  },
+  {
+   "session": "300_7-max_KO_1197327559",
+   "frame": "0021",
+   "hero": ["2s", "Ad"],
+   "board": ["6s", "Ah", "5s", "9c", "4s"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "river"
+  },
+  {
+   "session": "300_7-max_KO_1197327559",
+   "frame": "0022",
+   "hero": ["2s", "Ad"],
+   "board": ["6s", "Ah", "5s", "9c", "4s"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "river"
+  },
+  {
+   "session": "300_7-max_KO_1197327559",
+   "frame": "0023",
+   "hero": ["2s", "Ad"],
+   "board": ["6s", "Ah", "5s", "9c", "4s"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "river"
+  },
+  {
+   "session": "300_7-max_KO_1197327559",
+   "frame": "0024",
+   "hero": ["2s", "Ad"],
+   "board": ["6s", "Ah", "5s", "9c", "4s"],
+   "hero_transition": [],
+   "board_transition": [],
+   "note": "river"
+  }
+ ]
+}

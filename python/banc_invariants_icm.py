@@ -5,6 +5,8 @@
     python banc_invariants_icm.py --large       + balayages aléatoires larges
     python banc_invariants_icm.py --seuils      détaille les deux seuils
                                                 numériques et leur marge
+    python banc_invariants_icm.py --continuite  la branche « tapis nul » est-elle
+                                                bien la LIMITE de la récursion ?
 
 Pourquoi ce fichier existe
 --------------------------
@@ -47,9 +49,82 @@ Les invariants mesurés ici
 7. **bubble factor** : == 1 exactement quand l'équité est affine en jetons
    (heads-up, ou gain unique) ; > 1 sinon ; croissant avec le tapis du
    vilain.
+8. **continuité en zéro** : la branche « tapis nul » doit être la LIMITE de
+   la récursion, pas une valeur voisine. Voir plus bas — c'est l'invariant
+   que les six premiers ne pouvaient pas voir.
+9. **translation, homogénéité, tapis égaux, dénominateurs nuls** : quatre
+   propriétés des GAINS et des cas dégénérés, jusqu'ici non mesurées.
 
 Et les mêmes invariants sur le chemin PKO : la valeur d'une prime ne doit
 pas dépendre de l'unité dans laquelle on compte les jetons.
+
+Pourquoi la continuité en zéro était l'angle mort
+-------------------------------------------------
+Le facteur de bulle vaut ``($EV − $EV_perte) / ($EV_gain − $EV)``. Pour le
+joueur COUVERT — le tapis court, celui pour qui ce nombre compte le plus —
+``$EV_perte`` est évaluée À TAPIS ZÉRO, donc dans la branche spéciale ; le
+numérateur et le dénominateur du quotient viennent alors de DEUX RÉGIMES DE
+CODE DIFFÉRENTS. (Pour le joueur COUVRANT c'est ``$EV_gain`` qui y passe :
+gagner, c'est éliminer.)
+
+Un écart entre la branche et la limite est ABSORBÉ dans les équités — la
+somme reste conservée, l'échelle, la permutation et la monotonie restent
+vertes — mais AMPLIFIÉ par le quotient. Mesuré en section 10(c) : une erreur
+d'équité de 1 % de la dotation devient **11,9 à 20,3 %** d'erreur relative sur
+le facteur de bulle. Les six premiers invariants ne pouvaient pas la voir.
+
+Le résultat de la mesure (section 10) : **la branche et la limite
+coïncident**. L'écart tend vers zéro LINÉAIREMENT en epsilon — extrapolé en
+zéro, il vaut au plus 2,0e-15 en relatif sur huit spots, soit le bruit de la
+double précision. La branche n'est donc pas « proche » de la limite : elle
+l'est. Il n'y avait rien à corriger dans ``pfs/core/icm.py`` — mais rien ne
+le prouvait.
+
+Ce que la section 10 attrape, et que les sections 1 à 8 laissaient passer
+------------------------------------------------------------------------
+En injectant dans la branche un écart RELATIF ρ sur ce que touche l'éliminé,
+et en le REDISTRIBUANT sur les vivants pour que la dotation reste exacte :
+la mutation est invisible pour la conservation (somme intacte), pour
+l'échelle (ρ est sans dimension), pour la permutation (elle est symétrique)
+et pour la monotonie (elle est constante).
+
+Dans sa version la plus furtive — l'écart n'est appliqué que s'il reste au
+moins DEUX survivants, ce qui épargne le heads-up et les cas affines, seuls
+endroits où l'ancien socle voyait quelque chose :
+
+Comptage sur les quatre fichiers de tests qui touchent l'ICM
+(``test_icm_invariants.py``, ``test_icm.py``, ``test_icm_tapis_nul.py``,
+``test_golden_values.py``) :
+
+    ρ        tests d'avant       tests des sections 10-11
+    1e-6     2 échecs            35 échecs
+    1e-9     **0 échec**         21 échecs
+    1e-11    **0 échec**         12 échecs
+
+À ρ = 1e-9, tout ce qui existait avant était VERT sur un ICM faux.
+
+La nuance qu'il ne faut pas rater
+---------------------------------
+L'ICM est AUTHENTIQUEMENT discontinu quand PLUSIEURS tapis sont nuls, et
+exiger la continuité là ferait « corriger » du code juste. La forme générale,
+mesurée en 10(f) :
+
+    lim  icm([survivants] + ε·[a₁ … a_k], π)
+    ε→0      =  icm([survivants], π[:r])  ⊕  icm([a₁ … a_k], π[r:])
+
+La limite dépend donc des RAPPORTS ``a_i`` entre les tapis qui s'évanouissent.
+Sur ``[100, ε, ε/2]`` avec 50/30/20 elle vaut (26,667 ; 23,333) ; sur
+``[100, ε, ε²]`` elle vaut (30 ; 20) ; sur ``[100, ε, ε]`` elle vaut
+(25 ; 25). Trois chemins, trois limites : il n'y a pas de valeur en zéro.
+
+À tapis EXACTEMENT nuls, ces rapports n'existent plus — l'ordre d'élimination
+n'est pas dans les données. La branche rend (25 ; 25), c'est-à-dire la limite
+du chemin SYMÉTRIQUE, seule réponse compatible avec l'invariance par
+permutation. C'est un choix, pas une convergence, et il est documenté comme
+tel.
+
+À UN SEUL tapis nul le groupe qui s'évanouit est un singleton : plus aucun
+rapport, la limite est unique, et la continuité est donc EXIGIBLE.
 
 Ce que le banc ne mesure pas
 ----------------------------
@@ -72,12 +147,18 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from pfs.core.icm import (  # noqa: E402
+    IcmSpot,
     PkoSpot,
     _finish_probs_exact,
     _finish_probs_mc,
+    _validate,
+    analyse_icm_spot,
     analyse_pko_spot,
     bubble_factor,
+    icm_dollar_ev,
     icm_equities,
+    icm_required_equity,
+    risk_premium,
     spot_pko_face_a_tapis,
 )
 
@@ -610,6 +691,482 @@ def section_pko(rng: random.Random, large: bool) -> bool:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# 10 — CONTINUITÉ EN ZÉRO : la branche « tapis nul » est-elle la LIMITE ?
+# ═══════════════════════════════════════════════════════════════════════════
+
+EPSILONS = (10.0, 1.0, 0.1, 1e-6, 1e-9, 1e-12)
+"""Les tapis résiduels balayés. 10 jetons est déjà « petit » devant un tapis
+court de 500 ; 1e-12 est en dessous du dernier chiffre significatif d'un
+tapis réel. Six décades suffisent à distinguer une CONVERGENCE d'un PALIER."""
+
+
+def bf_par_continuite(stacks, payouts, hero: int, villain: int,
+                      eps: float) -> float:
+    """Le facteur de bulle où le tapis qui tombe à zéro garde ``eps`` jeton.
+
+    Selon qui couvre qui, ce n'est pas le même terme du quotient qui traverse
+    la branche « tapis nul » :
+
+    * héros COUVERT (``s[hero] <= s[villain]``) : c'est ``$EV_perte``, le
+      héros finit à zéro s'il perd ;
+    * héros COUVRANT : c'est ``$EV_gain``, gagner c'est éliminer le vilain.
+
+    On ne perturbe que le terme concerné — perturber les deux mélangerait
+    deux effets d'ordre epsilon et brouillerait la pente mesurée. Le transfert
+    est réduit d'autant, donc le TOTAL de jetons reste celui du spot : la
+    limite mesurée est bien celle de la même table, pas d'une table enrichie.
+
+    Parameters
+    ----------
+    eps : float
+        Jetons laissés au perdant. ``eps = 0`` redonne exactement
+        `pfs.core.icm.bubble_factor` (mêmes états, même arithmétique).
+
+    Returns
+    -------
+    float
+        ``($EV − $EV_perte) / ($EV_gain − $EV)``, sans le garde-fou anti-0/0
+        de la fonction de production : ici on VEUT voir le quotient brut.
+    """
+    s, p = _validate(stacks, payouts)
+    amt = min(s[hero], s[villain])
+    base = icm_dollar_ev(s, p, hero)
+
+    d_win = amt - eps if s[villain] <= s[hero] else amt
+    d_lose = amt - eps if s[hero] <= s[villain] else amt
+    win = list(s)
+    win[hero] += d_win
+    win[villain] -= d_win
+    lose = list(s)
+    lose[hero] -= d_lose
+    lose[villain] += d_lose
+    return ((base - icm_dollar_ev(lose, p, hero))
+            / (icm_dollar_ev(win, p, hero) - base))
+
+
+def extrapole_en_zero(f, e1: float, e2: float) -> float:
+    """``f(0)`` par extrapolation linéaire depuis ``f(e1)`` et ``f(e2)``.
+
+    C'est l'extrapolation de Richardson au premier ordre. Elle vaut mieux
+    qu'un simple « f(1e-12) est proche de f(0) » : si ``f(ε) = f(0) + Cε``,
+    elle rend ``f(0)`` EXACTEMENT, quel que soit ``C``. Une branche fausse
+    donne un palier, donc une extrapolée qui rate la branche de tout le saut.
+    """
+    return (e1 * f(e2) - e2 * f(e1)) / (e1 - e2)
+
+
+# Huit spots où un tapis tombe à zéro, dans les DEUX sens de couverture.
+CONTINUITE_BF = (
+    # nom, tapis, gains, héros, vilain, sens
+    ("PMU 9j : court(3) vs chipleader(1)", TABLE_9, PAYOUTS_9, 3, 1, "couvert"),
+    ("PMU 9j : court(3) vs moyen(0)", TABLE_9, PAYOUTS_9, 3, 0, "couvert"),
+    ("bulle 4/3 : court(3) vs gros(0)",
+     (5000.0, 3000.0, 1500.0, 500.0), (50.0, 30.0, 20.0), 3, 0, "couvert"),
+    ("satellite 5j : court(4) vs gros(0)",
+     (900.0, 700.0, 500.0, 300.0, 100.0), (100.0, 100.0, 100.0), 4, 0, "couvert"),
+    ("3 joueurs : court(2) vs gros(0)",
+     (600.0, 300.0, 100.0), (50.0, 30.0, 20.0), 2, 0, "couvert"),
+    ("heads-up (affine) : court(1) vs gros(0)",
+     (7000.0, 3000.0), (60.0, 40.0), 1, 0, "couvert"),
+    ("PMU 9j : chipleader(1) paie le court(3)", TABLE_9, PAYOUTS_9, 1, 3, "couvrant"),
+    ("bulle 4/3 : gros(0) paie le court(3)",
+     (5000.0, 3000.0, 1500.0, 500.0), (50.0, 30.0, 20.0), 0, 3, "couvrant"),
+)
+
+# Configurations à UN SEUL tapis nul : la continuité y est EXIGIBLE.
+CONTINUITE_VECTEUR = (
+    ("9 joueurs / 9 gains",
+     (0.0, 125.74, 27.41, 19.25, 52.0, 52.0, 52.0, 52.0, 52.0), PAYOUTS_9),
+    ("4 joueurs / 3 gains (le mort ne touche rien)",
+     (0.0, 3000.0, 1500.0, 500.0), (50.0, 30.0, 20.0)),
+    ("4 joueurs / 4 gains (le mort touche la 4ᵉ place)",
+     (0.0, 3000.0, 1500.0, 500.0), (50.0, 30.0, 20.0, 10.0)),
+    ("2 joueurs / 3 gains (gains tronqués)", (0.0, 100.0), (50.0, 30.0, 20.0)),
+    ("3 joueurs / 1 gain (winner-take-all)", (0.0, 100.0, 200.0), (100.0,)),
+    ("satellite 5j / 3 places égales",
+     (0.0, 700.0, 500.0, 300.0, 100.0), (100.0, 100.0, 100.0)),
+    ("zéro au milieu de la table",
+     (300.0, 0.0, 200.0, 100.0), (50.0, 30.0, 20.0, 10.0)),
+)
+
+
+def _icm_mort_a_zero(stacks, payouts) -> np.ndarray:
+    """La branche FAUSSE : un joueur à zéro touche 0, pas le dernier gain.
+
+    C'est l'écriture naïve — « il n'a plus de jetons, il ne vaut plus rien » —
+    et c'est celle que le correctif du tapis nul a remplacée. Elle sert ici de
+    TÉMOIN : un invariant que cette version-là ne fait pas tomber ne mesure
+    rien.
+    """
+    s, p = _validate(stacks, payouts)
+    viv = [i for i, v in enumerate(s) if v > 0.0]
+    if len(viv) == len(s):
+        return icm_equities(s, p)
+    out = np.zeros(len(s), dtype=np.float64)
+    haut = list(p[: len(viv)])
+    if haut:
+        out[viv] = icm_equities([s[i] for i in viv], haut)
+    return out
+
+
+def _bf_mort_a_zero(stacks, payouts, hero: int, villain: int) -> float:
+    """Le facteur de bulle qu'on obtiendrait avec la branche fausse."""
+    s, p = _validate(stacks, payouts)
+    amt = min(s[hero], s[villain])
+    base = float(_icm_mort_a_zero(s, p)[hero])
+    win = list(s)
+    win[hero] += amt
+    win[villain] -= amt
+    lose = list(s)
+    lose[hero] -= amt
+    lose[villain] += amt
+    return ((base - float(_icm_mort_a_zero(lose, p)[hero]))
+            / (float(_icm_mort_a_zero(win, p)[hero]) - base))
+
+
+def section_continuite(rng: random.Random, large: bool) -> bool:
+    print("── 10. CONTINUITÉ EN ZÉRO  (la branche « tapis nul » est-elle la LIMITE ?)")
+    ok = True
+
+    print("     (a) facteur de bulle : branche vs limite, ε décroissant")
+    print("         borne : |BF(ε) − BF(0)| ≤ 3·ε/tapis_court + 1e-13·BF.")
+    print("         Le premier terme est SANS DIMENSION (ε rapporté au tapis")
+    print("         court), donc valable à toute échelle ; pente mesurée 1,0 à")
+    print("         2,2. Le second est le plancher de bruit : à ε = 1e-12 le")
+    print("         terme linéaire vaut 1e-15 sur le heads-up, soit sous le")
+    print("         dernier bit de $EV — la limite y est atteinte, pas approchée.")
+    pire_k = 0.0
+    for nom, s, p, h, v, sens in CONTINUITE_BF:
+        b0 = bubble_factor(s, p, h, v)
+        court = min(s[h], s[v])
+        pire = 0.0
+        detail = []
+        for e in EPSILONS:
+            if e >= court:
+                continue
+            d = abs(bf_par_continuite(s, p, h, v, e) - b0)
+            pire = max(pire, d / (3.0 * e / court + 1e-13 * b0))
+            if e >= 1e-9:                       # au-delà, c'est le bruit
+                pire_k = max(pire_k, d * court / e)
+            detail.append(f"{d:.1e}")
+        ok &= _ligne(f"{nom}  [{sens}]", f"BF={b0:.6f}",
+                     pire <= 1.0, "écarts " + " ".join(detail))
+    print(f"         pente maximale mesurée (ε ≥ 1e-9) : {pire_k:.3f}  "
+          f"(borne posée à 3)")
+
+    print()
+    print("     (b) extrapolation de Richardson : la limite EST la branche")
+    print("         f(0) ≈ (ε₁·f(ε₂) − ε₂·f(ε₁))/(ε₁−ε₂), depuis 1e-6 et 1e-7.")
+    pire_rel = 0.0
+    for nom, s, p, h, v, sens in CONTINUITE_BF:
+        b0 = bubble_factor(s, p, h, v)
+        f0 = extrapole_en_zero(
+            lambda e, s=s, p=p, h=h, v=v: bf_par_continuite(s, p, h, v, e),
+            1e-6, 1e-7)
+        rel = abs(f0 - b0) / abs(b0)
+        pire_rel = max(pire_rel, rel)
+        ok &= _ligne(nom, f"{rel:.2e}", rel <= 1e-11,
+                     f"extrapolé {f0:.15f}")
+    print(f"         écart relatif maximal : {pire_rel:.3e}  "
+          f"(seuil 1e-11, soit {1e-11 / max(pire_rel, 1e-300):.0f}× de marge)")
+
+    print()
+    print("     (c) AMPLIFICATION : pourquoi les six premiers invariants")
+    print("         ne pouvaient pas voir cet écart-là.")
+    print("         Une erreur sur $EV_perte est absorbée dans la somme des")
+    print("         équités (conservation verte) mais lue TELLE QUELLE par le")
+    print("         numérateur du quotient.")
+    ampli_max = 0.0
+    for nom, s, p, h, v, sens in CONTINUITE_BF:
+        b0 = bubble_factor(s, p, h, v)
+        pool = sum(p[: len(s)])
+        amt = min(s[h], s[v])
+        base = icm_dollar_ev(s, p, h)
+        win = list(s); win[h] += amt; win[v] -= amt
+        lose = list(s); lose[h] -= amt; lose[v] += amt
+        gain = icm_dollar_ev(win, p, h) - base
+        perte = base - icm_dollar_ev(lose, p, h)
+        # une erreur de 1 % de la dotation sur $EV_perte
+        delta = 0.01 * pool
+        faux = (perte + delta) / gain
+        ampli = (abs(faux - b0) / b0) / 0.01
+        ampli_max = max(ampli_max, ampli)
+        print(f"         {nom:<44s} ×{ampli:5.2f}")
+    ok &= _ligne("l'amplification est réelle (≥ 5×)", f"×{ampli_max:.2f}",
+                 ampli_max >= 5.0, "1 % de dotation → % sur le BF")
+
+    print()
+    print("     (d) continuité du VECTEUR entier, à UN SEUL tapis nul")
+    print("         borne : écart ≤ 4·ε·dotation/total — sans dimension aussi.")
+    pire_k = 0.0
+    for nom, s, p in CONTINUITE_VECTEUR:
+        i0 = [i for i, x in enumerate(s) if x == 0.0][0]
+        ref = icm_equities(s, p)
+        echelle = sum(p[: len(s)]) / sum(s)
+        pire = 0.0
+        detail = []
+        for e in EPSILONS:
+            se = list(s)
+            se[i0] = e
+            d = float(np.max(np.abs(icm_equities(se, p) - ref)))
+            pire = max(pire, d / (4.0 * e * echelle))
+            pire_k = max(pire_k, d / (e * echelle))
+            detail.append(f"{d:.1e}")
+        ok &= _ligne(nom, f"{pire:.3f}·borne", pire <= 1.0,
+                     " ".join(detail))
+    print(f"         pente maximale mesurée : {pire_k:.3f}  (borne posée à 4)")
+
+    print()
+    print("     (e) TÉMOIN : la branche fausse (« le mort touche 0 ») ne")
+    print("         converge pas — elle fait un PALIER, et le BF s'en va.")
+    print("         DEUX ANGLES MORTS, à connaître : la branche fausse ne")
+    print("         change QUE l'équité du joueur à zéro, donc")
+    print("           • m < n : le mort ne touche rien de toute façon ;")
+    print("           • héros COUVRANT : c'est le vilain qui tombe à zéro,")
+    print("             pas lui — son $EV est identique dans les deux versions.")
+    print("         Autrement dit : ce défaut-là ne se voit que du côté du")
+    print("         joueur qui va mourir. C'est exactement celui qui compte.")
+    mord = False
+    for nom, s, p, h, v, sens in CONTINUITE_BF:
+        vrai = bubble_factor(s, p, h, v)
+        faux = _bf_mort_a_zero(s, p, h, v)
+        ecart = abs(faux - vrai) / vrai
+        a_vrai = icm_required_equity(100.0, 100.0, vrai)
+        a_faux = icm_required_equity(100.0, 100.0, faux)
+        if len(p) < len(s):
+            note = "   [aveugle : m < n]"
+        elif sens == "couvrant":
+            note = "   [aveugle : le héros n'est pas celui qui tombe à zéro]"
+        else:
+            note = ""
+        if ecart > 1e-9:
+            mord = True
+        print(f"         {nom:<44s} {vrai:.4f} → {faux:.4f}"
+              f"  ({ecart:+7.2%}, {(a_faux - a_vrai) * 100:+5.1f} pts d'équité)"
+              + note)
+    ok &= _ligne("la branche fausse EST détectée par le BF", "—", mord,
+                 "sinon l'invariant ne prouverait rien")
+    # …et la continuité, elle, la voit même là où le BF ne bouge pas.
+    s9 = (0.0, 125.74, 27.41, 19.25, 52.0, 52.0, 52.0, 52.0, 52.0)
+    ref_faux = _icm_mort_a_zero(s9, PAYOUTS_9)
+    palier = min(
+        float(np.max(np.abs(_icm_mort_a_zero([e if i == 0 else x
+                                              for i, x in enumerate(s9)],
+                                             PAYOUTS_9) - ref_faux)))
+        for e in (1e-6, 1e-9, 1e-12))
+    ok &= _ligne("branche fausse : palier au lieu d'une convergence",
+                 f"{palier:.4f}", palier > 1.0,
+                 "écart constant quand ε → 0")
+
+    print()
+    print("     (f) DISCONTINUITÉ ATTENDUE à PLUSIEURS tapis nuls")
+    print("         La limite dépend des RAPPORTS entre les tapis qui")
+    print("         s'évanouissent. Exiger la continuité ici ferait")
+    print("         « corriger » du code juste.")
+    p3 = (50.0, 30.0, 20.0)
+    branche = icm_equities([100.0, 0.0, 0.0], p3)
+    print(f"         branche [100, 0, 0]            → {branche.round(6).tolist()}")
+    chemins = (("[100, ε, ε]   (symétrique)", 1.0, 1.0),
+               ("[100, ε, ε/2]", 1.0, 0.5),
+               ("[100, ε, ε/100]", 1.0, 0.01),
+               ("[100, 3ε, 7ε]", 3.0, 7.0))
+    limites = []
+    for nom, a, b in chemins:
+        lim = icm_equities([100.0, a * 1e-9, b * 1e-9], p3)
+        limites.append(tuple(lim.round(6).tolist()))
+        print(f"         {nom:<30s} → {lim.round(6).tolist()}")
+    distinctes = len(set(limites))
+    ok &= _ligne("plusieurs chemins, plusieurs limites", f"{distinctes} distinctes",
+                 distinctes >= 3, "→ il n'existe PAS de valeur en zéro")
+    ok &= _ligne("la branche = le chemin symétrique", "—",
+                 bool(np.allclose(branche, icm_equities([100.0, 1e-9, 1e-9], p3),
+                                  atol=1e-6)),
+                 "seule réponse compatible avec la permutation")
+
+    print()
+    print("     (g) FACTORISATION ASYMPTOTIQUE : la forme générale")
+    print("         lim icm(survivants ⊕ ε·mourants) =")
+    print("             icm(survivants, π[:r])  ⊕  icm(mourants, π[r:])")
+    pire = 0.0
+    for nom, surv, mour, p in (
+            ("2 survivants, 2 mourants", [300.0, 100.0], [1.0, 0.5],
+             (50.0, 30.0, 20.0, 10.0)),
+            ("3 survivants, 2 mourants", [300.0, 200.0, 100.0], [3.0, 1.0],
+             (50.0, 30.0, 20.0, 10.0, 5.0)),
+            ("1 survivant, 3 mourants", [500.0], [1.0, 0.5, 0.25],
+             (50.0, 30.0, 20.0, 10.0)),
+            ("2 survivants, 3 mourants", [400.0, 100.0], [1.0, 2.0, 4.0],
+             (60.0, 40.0, 30.0, 20.0, 10.0))):
+        r = len(surv)
+        att = np.concatenate([icm_equities(surv, p[:r]),
+                              icm_equities(mour, p[r:])])
+        got = icm_equities(surv + [a * 1e-9 for a in mour], p)
+        d = float(np.max(np.abs(got - att)))
+        # et à tapis EXACTEMENT nuls, la branche doit rendre le cas symétrique
+        att0 = np.concatenate([icm_equities(surv, p[:r]),
+                               icm_equities([1.0] * len(mour), p[r:])])
+        d0 = float(np.max(np.abs(icm_equities(surv + [0.0] * len(mour), p) - att0)))
+        pire = max(pire, d, d0)
+        ok &= _ligne(nom, f"{d:.1e} / {d0:.1e}", d <= 1e-6 and d0 <= 1e-9,
+                     "limite ε→0 / branche == symétrique")
+    print(f"         écart maximal : {pire:.3e}\n")
+    return ok
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 11 — TRANSLATION, HOMOGÉNÉITÉ, TAPIS ÉGAUX, DÉNOMINATEURS NULS
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def section_gains(rng: random.Random, large: bool) -> bool:
+    print("── 11. INVARIANTS DES GAINS ET CAS DÉGÉNÉRÉS")
+    ok = True
+
+    print("     (a) TRANSLATION : ajouter c à tous les gains ajoute c à toutes")
+    print("         les équités — MAIS seulement si m ≥ n (tout le monde est")
+    print("         payé). Sinon Σₖ pᵢₖ < 1 et dépend du joueur : la translation")
+    print("         change alors la STRUCTURE, ce n'est pas un défaut.")
+    for nom, stacks, payouts in REFERENCE:
+        n, m = len(stacks), len(payouts)
+        ref = icm_equities(stacks, payouts)
+        pire = 0.0
+        for c in (0.5, 7.0, 1000.0):
+            got = icm_equities(stacks, [x + c for x in payouts])
+            pire = max(pire, float(np.max(np.abs(got - (ref + c)))))
+        if m >= n:
+            ok &= _ligne(f"{nom}  (m={m} ≥ n={n})", f"{pire:.2e}",
+                         pire <= 1e-9 * max(sum(payouts[:n]) + 1000.0, 1.0),
+                         "invariant exigé")
+        else:
+            ok &= _ligne(f"{nom}  (m={m} < n={n})", f"{pire:.2e}",
+                         pire > 1e-6, "NON invariant — attendu")
+
+    print("         le facteur de bulle sous translation :")
+    for nom, s, p, h, v in (("9j/9gains (m≥n)", TABLE_9, PAYOUTS_9, 3, 1),
+                            ("4j/3gains (m<n)", (5000.0, 3000.0, 1500.0, 500.0),
+                             (50.0, 30.0, 20.0), 3, 0)):
+        vals = [bubble_factor(s, [x + c for x in p], h, v)
+                for c in (0.0, 7.0, 1000.0)]
+        etendue = max(vals) - min(vals)
+        attendu_invariant = len(p) >= len(s)
+        print(f"         {nom:<20s} BF = " + "  ".join(f"{x:.9f}" for x in vals))
+        ok &= _ligne(f"BF invariant par translation ? {nom}", f"{etendue:.2e}",
+                     (etendue <= 1e-9) is attendu_invariant,
+                     "exigé" if attendu_invariant else "non exigé (m < n)")
+
+    print("         …et quand m < n, la dérive a une LIMITE calculable")
+    print("         ailleurs : c → ∞ rend les gains proportionnellement égaux,")
+    print("         donc la structure tend vers un SATELLITE PUR. C'est une")
+    print("         référence externe, pas une valeur recopiée du code.")
+    for nom, s, p, h, v in (
+            ("bulle 4j/3gains", (5000.0, 3000.0, 1500.0, 500.0),
+             (50.0, 30.0, 20.0), 3, 0),
+            ("6j/4gains", (176.0, 124.0, 92.0, 70.0, 55.0, 44.0),
+             (100.0, 60.0, 40.0, 25.0), 5, 0)):
+        limite = bubble_factor(s, (1.0,) * len(p), h, v)
+        suite = [(c, bubble_factor(s, [x + c for x in p], h, v))
+                 for c in (0.0, 1e3, 1e9)]
+        for c, bf in suite:
+            print(f"         {nom:<18s} c={c:<8g} BF = {bf:.9f}")
+        print(f"         {nom:<18s} satellite pur = {limite:.9f}")
+        ok &= _ligne(f"BF(c→∞) → satellite pur : {nom}",
+                     f"{abs(suite[-1][1] - limite):.2e}",
+                     abs(suite[-1][1] - limite) <= 1e-6 * limite,
+                     "convergence vers une référence externe")
+
+    print()
+    print("     (b) HOMOGÉNÉITÉ : λ·gains ⇒ λ·équités, et BF inchangé.")
+    print("         (le dollar n'a pas plus d'unité que le jeton)")
+    pire_eq = pire_bf = 0.0
+    for nom, stacks, payouts in REFERENCE:
+        n = len(stacks)
+        ref = icm_equities(stacks, payouts)
+        for lam in (1e-6, 3.0, 1e6):
+            got = icm_equities(stacks, [x * lam for x in payouts])
+            pire_eq = max(pire_eq, float(np.max(np.abs(got - lam * ref)))
+                          / (lam * max(sum(payouts[:n]), 1.0)))
+        ok &= _ligne(nom, f"{pire_eq:.2e}", pire_eq <= 1e-12, "écart relatif")
+    for nom, s, p, h, v in (("9j", TABLE_9, PAYOUTS_9, 3, 1),
+                            ("4j/3gains", (5000.0, 3000.0, 1500.0, 500.0),
+                             (50.0, 30.0, 20.0), 3, 0),
+                            ("un tapis nul", (0.0, 3000.0, 1500.0, 500.0),
+                             (50.0, 30.0, 20.0, 10.0), 3, 1)):
+        b0 = bubble_factor(s, p, h, v)
+        for lam in (1e-6, 3.0, 1e6):
+            pire_bf = max(pire_bf,
+                          abs(bubble_factor(s, [x * lam for x in p], h, v) - b0))
+    ok &= _ligne("BF homogène de degré 0 en les gains", f"{pire_bf:.2e}",
+                 pire_bf <= 1e-9, "")
+
+    print()
+    print("     (c) TAPIS TOUS ÉGAUX : chacun vaut la MOYENNE des gains")
+    print("         attribuables, et le BF est le même pour TOUTES les paires.")
+    for n, p in ((2, (50.0, 30.0, 20.0)), (3, (50.0, 30.0, 20.0)),
+                 (5, (50.0, 30.0, 20.0)), (5, PAYOUTS_9), (9, PAYOUTS_9),
+                 (4, (100.0, 60.0, 40.0, 25.0)), (6, (100.0,))):
+        s = [1000.0] * n
+        eq = icm_equities(s, p)
+        moy = sum(p[:n]) / n
+        d = float(np.max(np.abs(eq - moy)))
+        vals = [bubble_factor(s, p, i, j)
+                for i in range(n) for j in range(n) if i != j]
+        disp = max(vals) - min(vals)
+        ok &= _ligne(f"n={n}, m={len(p)}", f"{d:.2e}",
+                     d <= 1e-11 * max(sum(p[:n]), 1.0) and disp <= 1e-9,
+                     f"moyenne {moy:.4f}  BF {vals[0]:.9f}  dispersion {disp:.1e}")
+
+    print()
+    print("     (d) DÉNOMINATEURS NULS DU FACTEUR DE BULLE")
+    print("         gain == 0 ⇒ +inf, et la chaîne complète doit tenir :")
+    sp = IcmSpot(stacks=(1.0, 2.0, 3.0), payouts=(1.0, 1.0, 1.0),
+                 hero=0, villain=1, pot=100.0, bet=50.0)
+    a = analyse_icm_spot(sp, hero_equity=0.99)
+    ok &= _ligne("analyse_icm_spot sur structure dégénérée",
+                 f"α={a.alpha_icm:.3f}",
+                 math.isinf(a.bubble) and a.alpha_icm == 1.0
+                 and a.premium == 0.5,
+                 "BF=+inf → prime 0,5, équité exigée 100 %")
+    ok &= _ligne("risk_premium(+inf)", f"{risk_premium(math.inf)}",
+                 risk_premium(math.inf) == 0.5, "")
+    ok &= _ligne("icm_required_equity(·, ·, +inf)",
+                 f"{icm_required_equity(100.0, 50.0, math.inf)}",
+                 icm_required_equity(100.0, 50.0, math.inf) == 1.0, "")
+
+    print("         et le BF ne rend JAMAIS zéro — sinon la chaîne casserait")
+    print("         sur « bubble factor doit être > 0 » :")
+    zeros = infs = 0
+    mini = math.inf
+    total = 0
+    for _ in range(6000 if large else 2000):
+        n = rng.randint(2, 7)
+        s = [0.0 if rng.random() < 0.30 else rng.uniform(1, 1000)
+             for _ in range(n)]
+        if sum(s) <= 0:
+            continue
+        k = rng.randint(1, n + 1)
+        base_p = [round(rng.uniform(0, 100), 1) for _ in range(k)]
+        if rng.random() < 0.30:                 # force des ex æquo
+            base_p = [base_p[0]] * k
+        p = sorted(base_p, reverse=True)
+        h, v = rng.sample(range(n), 2)
+        if min(s[h], s[v]) <= 0:
+            continue
+        total += 1
+        bf = bubble_factor(s, p, h, v)
+        if bf == 0.0:
+            zeros += 1
+        elif math.isinf(bf):
+            infs += 1
+        else:
+            mini = min(mini, bf)
+    ok &= _ligne(f"balayage {total} spots (30 % de tapis nuls, ex æquo)",
+                 f"{zeros} zéro(s)", zeros == 0,
+                 f"{infs} dégénérés → +inf, min fini {mini:.12f}")
+    print()
+    return ok
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # 9 — LES DEUX SEUILS NUMÉRIQUES ET LEUR MARGE
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -674,6 +1231,8 @@ def main() -> int:
                     help="ajoute les balayages aléatoires larges (plus lent)")
     ap.add_argument("--seuils", action="store_true",
                     help="détaille les deux seuils numériques et leur marge")
+    ap.add_argument("--continuite", action="store_true",
+                    help="n'exécute QUE les sections 10 et 11 (itération rapide)")
     ap.add_argument("--graine", type=int, default=20260811)
     a = ap.parse_args()
 
@@ -682,16 +1241,24 @@ def main() -> int:
           f"{len(REFERENCE)} tables de référence, "
           f"facteurs d'échelle {FACTEURS}\n")
 
-    sections = (
-        section_echelle(rng, a.large),
-        section_permutation(rng, a.large),
-        section_conservation(rng, a.large),
-        section_monotonie(rng, a.large),
-        section_non_linearite(rng, a.large),
-        section_monte_carlo(rng, a.large),
-        section_bubble(rng, a.large),
-        section_pko(rng, a.large),
-    )
+    if a.continuite:
+        sections = (
+            section_continuite(rng, a.large),
+            section_gains(rng, a.large),
+        )
+    else:
+        sections = (
+            section_echelle(rng, a.large),
+            section_permutation(rng, a.large),
+            section_conservation(rng, a.large),
+            section_monotonie(rng, a.large),
+            section_non_linearite(rng, a.large),
+            section_monte_carlo(rng, a.large),
+            section_bubble(rng, a.large),
+            section_pko(rng, a.large),
+            section_continuite(rng, a.large),
+            section_gains(rng, a.large),
+        )
     if a.seuils:
         section_seuils()
 

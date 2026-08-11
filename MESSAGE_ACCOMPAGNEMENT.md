@@ -39,9 +39,14 @@ brief, dont deux qui rendaient des verdicts **faux** sans le signaler.
    au dépôt. C'est le point le plus important : un solveur qui se trompe est
    pire qu'un solveur absent.
 
-2. **Dites-moi ce qui est calculé mais jamais utilisé.** Un audit interne a
-   trouvé que 31,7 % du code n'est atteignable par aucune de mes actions —
-   dont toute une chaîne de treize modules censée produire la décision
+2. **Dites-moi ce qui est calculé mais jamais utilisé.** Trois bancs, trois
+   mesures distinctes : **17 modules sur 62** ne sont importés par aucune
+   chaîne partant de `python -m pfs` ; **69,1 % des lignes** ne sont
+   traversées par aucun parcours utilisateur réel ; et une troisième mesure,
+   par perturbation, cherche les calculs traversés dont le résultat n'atteint
+   jamais la sortie. Ces trois nombres ne se confirment pas l'un l'autre — le
+   README explique pourquoi les rapprocher serait une faute. Parmi le code
+   mort : toute une chaîne de treize modules censée produire la décision
    finale, et qui ne s'exécute jamais. Je veux votre lecture indépendante, et
    surtout : **par où brancher ce qui ne l'est pas**.
 

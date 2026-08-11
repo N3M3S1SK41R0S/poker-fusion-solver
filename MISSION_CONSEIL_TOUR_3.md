@@ -46,6 +46,29 @@ dos adverses : 114 refusés sur 116 — comportement correct
 localisation : 919 ms par frame
 ```
 
+> **ERRATUM (11 août 2026) — ce chiffre est faux, et il l'était deux fois.**
+> Le conseil l'a démonté, à raison. Le dénominateur 209 ne comptait que les
+> boîtes que le détecteur avait bien voulu rendre : le RAPPEL n'était pas
+> mesuré. Et « lue avec certitude » voulait dire « non refusée », faute de
+> vérité-terrain : une lecture fausse et affirmée comptait comme un succès.
+>
+> Les 57 captures ont depuis été annotées à la main
+> (`python/tests/donnees/verite_captures.json`) et
+> `python/banc_verite_captures.py` rejoue la chaîne :
+>
+> ```
+> cartes réellement présentes : 258   (et non 209)
+> rappel de lecture : 76,7 % (198/258)   dont bon rôle 65,1 % (168/258)
+> précision : 100 % (199/199)   lectures fausses affirmées : 0
+> cartes jamais localisées : 60      rôles faux affirmés : 30
+> ```
+>
+> Le chiffre à retenir de ce paragraphe n'est donc pas 95 % mais **76,7 %**,
+> et l'information la plus utile est celle qui manquait : 60 cartes ne sont
+> jamais vues, dont les deux cartes du héros sur 24 des 25 captures de la
+> table 7-max. Détail et cause mesurée : `MISSION_CONSEIL_TOUR_4.md` §1 et
+> `README.md`.
+
 ### 1.2 Un faux positif trouvé, et la mesure qui l'élimine
 
 Deux des 116 « dos » ressortaient **sure**. Vérification à l'œil : ce sont
@@ -120,8 +143,42 @@ Lignes traversées      : 2 900
 COUVERTURE DU PARCOURS : 31,7 %
 ```
 
-Coïncidence troublante : le même 31,7 %, obtenu par une méthode entièrement
-différente. **Un tiers du code est traversé quand l'utilisateur s'en sert.**
+**Correction du 11 août 2026 — nous avions tiré de cette mesure une conclusion
+fausse, elle est retirée.** Ce paragraphe annonçait « coïncidence troublante :
+le même 31,7 %, obtenu par une méthode entièrement différente ». C'était faux
+deux fois.
+
+* 31,7 % de lignes **traversées** implique 68,3 % **non traversées**. Pour
+  confirmer un taux de mortalité de 31,7 %, il aurait fallu lire 68,3 % de
+  couverture. Nous avions obtenu l'exact **complément** du chiffre que nous
+  prétendions confirmer.
+* Le banc trouve **20 modules jamais atteints sur 61** là où le recensement en
+  annonçait 12 : il ne le confirme pas, il le **révise à la hausse de 67 %**.
+
+Même travers que le « 97 % des pertes viennent des décisions » que vous nous
+aviez fait corriger : une conclusion plus forte que la mesure. Nous publions
+désormais **trois nombres distincts, avec leur méthode**, et nous ne les
+rapprochons plus (README, § « Trois nombres, trois méthodes ») :
+
+| | banc | mesure du 11 août 2026 |
+|---|---|---|
+| (a) jamais importé depuis `python -m pfs` | `banc_atteignabilite_statique.py` | 17 modules sur 62 · 2 313 lignes sur 9 428 (24,5 %) |
+| (b) jamais traversé par le parcours réel | `banc_couverture_parcours.py` | 6 515 lignes sur 9 428 non traversées (69,1 %) · 21 modules à zéro |
+| (c) traversé mais sans effet sur la sortie | `banc_inertie_causale.py` | 0 symbole inerte sur 13 (réponse entière) · 7 sur 13 (verdict seul) |
+
+Le croisement `banc_atteignabilite_statique.py --croiser couverture.json`
+montre que (a) et (b) débordent l'un de l'autre **dans les deux sens** :
+13 modules communs, 1 dans (a) seul (`vision/synth_table`, que seuls les tests
+importent), 8 dans (b) seul (importés et jamais exécutés, dont `pfs/engine.py`
+derrière un import différé). Aucune inclusion, donc aucune confirmation.
+
+Le (c) est la catégorie que ni l'import ni la couverture ne voient : c'est
+celle qui contenait `/api/advise` jetant les tapis. Elle se mesure par
+perturbation d'une entrée — on modifie un champ, et si la sortie ne bouge
+pas, le calcul qui le consommait est mort sans en avoir l'air.
+
+`tests/test_trois_nombres_distincts.py` échoue si l'un de nos documents
+réaffirme une égalité entre ces trois nombres.
 
 ### 1.6 Livré aussi
 
