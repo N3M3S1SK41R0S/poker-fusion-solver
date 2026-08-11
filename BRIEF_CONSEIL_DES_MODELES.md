@@ -210,19 +210,26 @@ ou **non vérifié**. Pas de quatrième catégorie.
 
 ### Axe B — Qu'est-ce qui est calculé mais jamais utilisé ?
 
-L'audit interne a trouvé 31,7 % de code mort. Nous voulons votre lecture
-indépendante :
+L'audit interne a trouvé 31,7 % de code mort. **La décision est prise : tout
+ce qui sert la décision de jeu sera branché, rien ne sera supprimé pour
+simplifier.** Ce que nous attendons de vous, c'est le *comment* et l'*ordre*.
 
-- Ce recensement est-il juste ? En avons-nous manqué ?
-- Parmi les 12 modules morts, lesquels **serviraient réellement la décision**
-  s'ils étaient branchés, et lesquels sont de la recherche à archiver ?
-- La chaîne de fusion (13 fusions, `pfs/fusion/`) vaut-elle d'être branchée,
-  ou est-ce de l'ingénierie sans contrepartie mesurable ? Soyez francs :
-  si votre lecture est qu'un HMM de tilt et un filtre particulaire sur les
-  ranges adverses n'apportent rien de mesurable à un joueur qui perd 97 % de
-  ses bb sur des fautes préflop élémentaires, **dites-le**.
-- Les 4 routes fantômes (`resolve`, `presets`, `drill/next`, `next`) : à
-  exposer ou à retirer ?
+- Ce recensement est-il juste ? En avons-nous manqué ? Des modules que nous
+  croyons vivants sont-ils en réalité contournés ?
+- Pour chacun des 12 modules morts : **par où le brancher**, quel maillon
+  manque, et qu'est-ce que l'utilisateur y gagne concrètement. Exemple connu :
+  `digit_ocr` sait lire les montants, mais le détecteur ne sait localiser que
+  des cartes — il manque la détection des bandeaux de texte.
+- **La chaîne de fusion (13 modules) doit être branchée.** Comment ? Elle met
+  aujourd'hui 221 secondes sur sa seule route, et dégénère en GTO pur faute
+  d'observations adverses qu'aucune interface ne permet de fournir. Il faut
+  donc : un chemin de saisie ou de capture des observations, et un budget de
+  calcul compatible avec une interface. Dites-nous comment vous vous y
+  prendriez, et ce que chacune des 13 fusions apporte réellement à la
+  décision finale — les inutiles doivent être identifiées comme telles, mais
+  par leur apport mesuré, pas par principe d'économie.
+- Les 4 routes fantômes (`resolve`, `presets`, `drill/next`, `next`) :
+  comment les exposer utilement dans l'interface ?
 
 ### Axe C — Comment être loin devant la concurrence ?
 
@@ -231,9 +238,12 @@ Concurrents de référence : **GTO Wizard**, **PioSOLVER**, **Simple Postflop**,
 et **Equilab** (équité), **PokerSnowie** (heuristique neuronale), et la
 littérature académique (DeepStack, Libratus, Pluribus, ReBeL).
 
-Nous ne cherchons pas à les égaler sur leur terrain : un solveur postflop
-tournant sur un PC personnel ne battra pas Pio, et un ICM maison ne battra pas
-HRC sur son cœur de métier.
+**L'objectif est explicite et il n'est pas négociable : l'outil le plus abouti
+qui ait existé pour un joueur seul.** Pas un outil de plus, pas un sous-ensemble
+raisonnable. Nous savons qu'un solveur postflop sur un PC personnel ne battra
+pas PioSOLVER en force brute — mais la force brute n'est qu'un des axes, et
+c'est le seul sur lequel nous concédons quelque chose. Partout ailleurs, la
+question est **comment faire mieux**, pas s'il faut essayer.
 
 **Les questions qui nous intéressent :**
 
@@ -241,18 +251,24 @@ HRC sur son cœur de métier.
    un angle : ils sont tous *normatifs* (voici l'équilibre) et aucun n'est
    *personnel* (voici **ta** fuite, mesurée sur **tes** mains, et l'exercice
    qui la corrige). Ce pari tient-il ? Quel autre angle mort voyez-vous ?
-2. **Quelle est la chose la plus utile qu'on puisse ajouter pour un joueur
-   dont le profil mesuré est : VPIP 63 %, PFR 31 %, écart 32 points, 3-bet
-   5 %, WTSD 45 %, et dont 97 % des pertes viennent du jeu, l'essentiel au
-   préflop et au postflop précoce ?** Ne répondez pas « un meilleur solveur
-   postflop » sans justifier que c'est là que son argent part.
-3. **Qu'est-ce qui, dans la littérature récente, n'est pas encore dans les
-   produits commerciaux ?** Nous acceptons les réponses ambitieuses si elles
-   sont réalisables sur une machine personnelle.
+2. **Que manque-t-il à ce logiciel pour dépasser chacun d'eux sur son propre
+   terrain, un par un ?** Prenez-les nommément — GTO Wizard, Pio, Monker, HRC,
+   ICMIZER, Snowie — et pour chacun : sur quoi sommes-nous déjà devant, sur
+   quoi sommes-nous derrière, et qu'est-ce qui comblerait l'écart. Le profil
+   mesuré du joueur (VPIP 63 %, PFR 31 %, 3-bet 5 %, WTSD 45 %) sert à
+   **prioriser** vos réponses, pas à en écarter.
+3. **Qu'est-ce qui, dans la littérature récente, n'est encore dans aucun
+   produit commercial ?** DeepStack, Libratus, Pluribus, ReBeL, et ce qui a
+   suivi. Nous acceptons les réponses ambitieuses dès lors qu'elles tournent
+   sur une machine personnelle. C'est là que se gagne l'avance, et c'est la
+   partie de vos réponses qui nous intéresse le plus.
 4. **Quelle mesure de progrès proposeriez-vous ?** Le logiciel sait mesurer
    les fuites ; il ne sait pas encore mesurer si le joueur s'améliore. Comment
    établiriez-vous qu'un entraînement a un effet, avec quelques centaines de
    mains par semaine et une variance énorme ?
+5. **Qu'est-ce qui manque que personne n'a encore nommé ?** Si votre meilleure
+   idée n'entre dans aucune des questions ci-dessus, c'est probablement la
+   plus intéressante : mettez-la en premier.
 
 ---
 
@@ -330,14 +346,16 @@ Structurez ainsi. La longueur est libre, la précision ne l'est pas.
 
 ## 7. Trois questions dont la réponse nous importe particulièrement
 
-1. **Le projet mesure que 97 % des pertes du joueur viennent du jeu et non de
-   la variance, avec un écart VPIP−PFR de 32 points constant sur 62 tournois.
-   Autrement dit : il joue une main sur trois en payant plutôt qu'en
-   relançant. Faut-il, dans ces conditions, continuer à investir dans la
-   sophistication (fusions, solveur postflop, modélisation adverse), ou tout
-   ce qui dépasse « ouvre ou couche, ne limpe jamais » est-il du luxe tant que
-   cette fuite n'est pas corrigée ?** Répondez franchement, y compris si la
-   réponse est que la moitié du logiciel est prématurée.
+1. **Le joueur a une fuite mesurée — écart VPIP−PFR de 32 points, constant sur
+   62 tournois — et il a tranché : il ne veut pas d'un outil réduit à cette
+   fuite, il veut le solveur le plus abouti possible, et il apprendra avec.
+   Cette décision n'est pas à rediscuter.** La question qui nous intéresse est
+   donc l'inverse de celle du périmètre : **comment un outil complet peut-il
+   aussi corriger une fuite élémentaire, sans se brider ?** Autrement dit, que
+   faut-il ajouter pour que la sophistication *serve* l'apprentissage au lieu
+   de le contourner — hiérarchie des conseils, ordre d'exposition, boucle
+   drill → mesure → drill ? Répondez à cette question-là, pas à celle de
+   savoir s'il faut en faire moins.
 
 2. **La reconnaissance d'images a coûté six diagnostics erronés successifs
    avant d'aboutir.** Chaque fois, une cause plausible était affirmée sans
