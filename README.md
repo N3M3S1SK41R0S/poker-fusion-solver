@@ -1,10 +1,40 @@
-# ♠ Poker Fusion Solver v4.2
+# ♠ Poker Fusion Solver
 
-Assistant poker personnel — **14 fusions mathématiques**, un solveur NLHE, une
-suite d'**analyse a posteriori** de tes propres mains, et la **reconnaissance de
-cartes** à partir d'une image. Application 100 % locale.
+Assistant poker personnel : **analyse a posteriori** de ses propres mains,
+**conseil sur une main terminée** à partir d'une capture d'écran, et
+**entraînement**. Application 100 % locale, en français.
 
-**731 tests verts · 19 goldens · zéro dépendance réseau · zéro € de licence.**
+**1 095 tests verts · zéro dépendance réseau · zéro € de licence.**
+
+> ## État réel — à lire avant tout
+>
+> Ce qui suit est vérifié au 11 août 2026, et ce paragraphe existe parce que
+> la version précédente de ce README promettait davantage que ce que le
+> logiciel exécute.
+>
+> **Ce qui marche et se mesure :** la lecture des historiques PMU (721 mains
+> réelles récupérées sur 62 tournois), la revue de session avec séparation
+> variance / jeu, la revue push/fold contre Nash, la reconnaissance des
+> cartes sur capture réelle, le simulateur, les drills.
+>
+> **Ce qui existe mais ne s'exécute jamais :** **12 modules, soit 31,7 % du
+> code de production**, ne sont atteignables par aucune action de
+> l'utilisateur. En particulier :
+> * la **chaîne de fusion** (`pfs/fusion/`, 13 modules) —
+>   `FusionEngine.decide()` n'est appelée que par `demo.py` et les tests.
+>   Les fusions ne participent à **aucune** décision rendue à l'utilisateur ;
+> * l'**OCR des montants** (`pfs/vision/digit_ocr.py`), qui sait lire les
+>   tapis et le pot à 99,5 % sur son banc, mais n'est branché nulle part —
+>   d'où la saisie manuelle des montants après un collage.
+>
+> Le détail, les mesures et les défauts corrigés récemment sont dans
+> [`BRIEF_CONSEIL_DES_MODELES.md`](BRIEF_CONSEIL_DES_MODELES.md), rédigé pour
+> une revue critique externe. C'est le document le plus à jour du dépôt.
+>
+> **Ce que le logiciel ne fait pas, et ne fera pas :** aucune assistance en
+> temps réel pendant une partie d'argent réel. La limite est inscrite dans le
+> code (`pfs/vision/live.py`) et vérifiée par
+> `tests/test_live_sans_conseil.py`.
 
 v4.2 — **reconnaissance de cartes** (`pfs/vision`) : à partir d'une capture,
 le recogniseur identifie les cartes par hash perceptuel (pHash DCT) sur le deck
