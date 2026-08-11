@@ -96,6 +96,18 @@ def _finish_probs_exact(stacks: tuple[float, ...], n_places: int) -> np.ndarray:
     def place_probs(mask: int, place: int) -> tuple[float, ...]:
         """P(i termine à `place` | ensemble `mask` encore en course)."""
         total = sub_total(mask)
+        if total <= 0.0:
+            # Plus aucun jeton dans l'ensemble considéré : la récursion a
+            # épuisé les joueurs, ou l'un d'eux a un tapis nul.
+            #
+            # Ce cas n'est pas théorique : `bubble_factor` évalue précisément
+            # ce que vaut le tapis du héros APRÈS avoir tout perdu, donc avec
+            # un tapis à zéro. La division par le total plantait alors, et
+            # c'est tout le calcul de pression de bulle — le nombre qui dit
+            # de combien resserrer par rapport au cash — qui était
+            # inutilisable. Un joueur sans jeton n'a aucune chance de prendre
+            # une place devant : probabilité nulle, pas une exception.
+            return tuple([0.0] * n)
         first = tuple(
             (stacks[i] / total if mask & (1 << i) else 0.0) for i in range(n)
         )
@@ -168,6 +180,39 @@ def icm_equities(
     s, p = _validate(stacks, payouts)
     if not p:
         return np.zeros(len(s))
+
+    # Un joueur sans jeton est DÉJÀ éliminé : il n'entre pas dans la course
+    # aux places, il occupe les dernières. Le traiter comme les autres fait
+    # diviser par un total nul ; lui donner zéro fait disparaître son gain,
+    # et la somme des équités cesse d'égaler la dotation.
+    #
+    # Ce n'est pas un cas d'école : `bubble_factor` évalue précisément ce que
+    # vaut le tapis du héros APRÈS avoir tout perdu. Lui attribuer zéro au
+    # lieu du dernier gain surestime ce qu'il perd, donc la pression de bulle
+    # elle-même — mesuré sur une vraie table à neuf joueurs : facteur 2,42
+    # face au gros tapis avec le zéro, 2,04 avec le dernier gain, soit une
+    # équité exigée de 70,8 % au lieu de 67,1 %.
+    #
+    # Les joueurs à zéro se partagent à parts égales les dernières places :
+    # rien ne permet de les départager, et l'ordre de leur élimination n'est
+    # pas dans les données.
+    vivants = [i for i, v in enumerate(s) if v > 0.0]
+    if len(vivants) < len(s):
+        out = np.zeros(len(s), dtype=np.float64)
+        if not vivants:
+            # Personne n'a de jeton : la dotation entière se partage.
+            out[:] = sum(p) / len(s)
+            return out
+        restes = list(p[len(vivants):])
+        if restes:
+            morts = [i for i in range(len(s)) if i not in set(vivants)]
+            out[morts] = sum(restes) / len(morts)
+        haut = list(p[:len(vivants)])
+        if haut:
+            out[vivants] = icm_equities([s[i] for i in vivants], haut,
+                                        n_sims=n_sims, seed=seed)
+        return out
+
     if len(s) <= EXACT_LIMIT:
         probs = _finish_probs_exact(s, len(p))
     else:
@@ -505,6 +550,78 @@ def analyse_pko_spot(spot: PkoSpot, hero_equity: float | None = None) -> PkoAnal
 
     return PkoAnalysis(ev_fold, ev_win, ev_lose, bv, eliminated,
                        r_icm, r_pko, r_icm - r_pko, verdict)
+
+
+def spot_pko_face_a_tapis(
+    tapis: Sequence[float],
+    payouts: Sequence[float],
+    primes: Sequence[float],
+    hero: int,
+    villain: int,
+    *,
+    blindes_mortes: float = 0.0,
+    deja_engage_hero: float = 0.0,
+) -> PkoSpot:
+    """Construit le spot « il part à tapis, je paie » depuis les tapis RÉELS.
+
+    `PkoSpot` attend des tapis **après** engagement : le vilain à tapis y
+    figure à zéro, ses jetons étant comptés dans ``pot``. Cette convention
+    est correcte mais se retourne facilement — je m'y suis pris les pieds en
+    analysant une vraie table, en passant le tapis entier du vilain : il
+    n'était alors pas vu comme éliminé, la prime valait zéro, et l'équité
+    exigée sortait à 90 % au lieu de 53 %. Un chiffre faux et plausible, le
+    pire genre.
+
+    Cette fonction prend les tapis tels qu'on les lit à l'écran et fait la
+    conversion.
+
+    Parameters
+    ----------
+    tapis : sequence of float
+        Tapis observés, dans la même unité que ``payouts`` n'a pas à
+        partager (les jetons suffisent, l'ICM est invariant d'échelle).
+    primes : sequence of float
+        Une prime par joueur, en euros.
+    blindes_mortes : float
+        Ce qui traîne déjà au pot sans appartenir aux deux joueurs : petite
+        blinde couchée, antes de tout le monde.
+    deja_engage_hero : float
+        Ce que le héros a déjà posé (sa grosse blinde, typiquement) et qu'il
+        n'a donc pas à payer une seconde fois.
+
+    Returns
+    -------
+    PkoSpot
+        Prêt pour `analyse_pko_spot`.
+
+    Examples
+    --------
+    >>> # Vilain à 19,25 bb part à tapis ; héros à 35,64 bb en grosse blinde.
+    >>> s = spot_pko_face_a_tapis(
+    ...     [35.64, 19.25], [100.0, 40.0], [8.13, 4.17], hero=0, villain=1,
+    ...     blindes_mortes=1.4, deja_engage_hero=1.0)
+    >>> s.stacks[1], round(s.pot, 2), round(s.bet, 2)
+    (0.0, 20.65, 18.25)
+    """
+    n = len(tapis)
+    if not (0 <= hero < n) or not (0 <= villain < n) or hero == villain:
+        raise IcmError("indices héros/vilain invalides.")
+
+    # Le vilain ne peut engager que ce qu'il a, et le héros ne peut perdre
+    # que jusqu'à concurrence de son propre tapis.
+    engage = min(float(tapis[villain]), float(tapis[hero]))
+    apres = list(float(t) for t in tapis)
+    apres[villain] = float(tapis[villain]) - engage   # 0 s'il est couvert
+    apres[hero] = float(tapis[hero]) - deja_engage_hero
+
+    pot = engage + blindes_mortes
+    bet = engage - deja_engage_hero
+    if bet <= 0:
+        raise IcmError("rien à payer : le vilain n'engage pas plus que "
+                       "ce que le héros a déjà posé.")
+    return PkoSpot(stacks=apres, payouts=list(payouts),
+                   bounties=list(primes), hero=hero, villain=villain,
+                   pot=pot, bet=bet)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

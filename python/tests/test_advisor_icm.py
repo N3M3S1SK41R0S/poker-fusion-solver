@@ -316,27 +316,58 @@ class TestIcmContreChipEV(unittest.TestCase):
 
 
 class TestAmputationDuBubbleFactor(unittest.TestCase):
-    """Le contournement de ``_bubble``, et le cas exact qui l'exige.
+    """Le tapis nul, et pourquoi l'amputation n'est plus nécessaire.
 
-    La branche perdante met le héros à zéro. La récurrence de Harville divise
-    par la somme des tapis encore en course : elle n'est indéfinie que si elle
-    doit descendre jusqu'au joueur busté, donc quand la structure classe
-    autant de places qu'il y a de joueurs. Le diagnostic « ≥ 3 joueurs » est
-    faux — le golden 3 tapis / 2 gains du conseiller passe très bien.
+    La branche perdante met le héros à zéro. La récurrence de Harville
+    divisait alors par la somme des tapis encore en course, nulle dès qu'elle
+    devait descendre jusqu'au joueur busté — c'est-à-dire quand la structure
+    classe autant de places qu'il y a de joueurs.
+
+    Le contournement retenu à l'époque était l'AMPUTATION : évaluer la perte
+    sur ``amount = tapis × (1 − 1e-9)`` plutôt que sur le tapis entier, pour
+    que le total ne tombe jamais tout à fait à zéro. L'erreur relative avait
+    été mesurée à 8,5e-9 — négligeable, mais c'était une approximation là où
+    une valeur exacte existe.
+
+    `icm_equities` traite désormais le cas directement : un joueur sans jeton
+    est déjà éliminé, il occupe la dernière place et touche le dernier gain.
+    Les valeurs de référence de l'époque sont retrouvées **au dernier
+    chiffre** (5,021764845 sur le golden 3 tapis / 2 gains, là où l'amputation
+    donnait 5,021764802), et le heads-up rend exactement 1.
+
+    Ces tests gardent le savoir accumulé — la condition structurelle
+    ``len(payouts) == len(stacks)``, la valeur des goldens, l'ordre de
+    grandeur de l'amputation — en épinglant le comportement exact.
     """
 
-    def test_la_division_par_zero_suit_len_payouts_pas_len_stacks(self) -> None:
-        passe = ([10.0, 0.0], [100.0]), ([10.0, 40.0, 0.0], [65.0, 35.0]), \
-                ([10.0, 40.0, 5.0, 0.0], [50.0, 30.0, 20.0])
-        for stacks, payouts in passe:
-            icm_equities(stacks, payouts)       # ne doit rien lever
-        leve = (([10.0, 0.0], [65.0, 35.0]),
-                ([10.0, 40.0, 0.0], [50.0, 30.0, 20.0]),
-                ([10.0, 40.0, 5.0, 0.0], [50.0, 30.0, 20.0, 10.0]),
-                ([10.0, 40.0, 5.0, 3.0, 0.0], [50.0, 30.0, 10.0, 6.0, 4.0]))
-        for stacks, payouts in leve:
-            with self.assertRaises(ZeroDivisionError):
-                icm_equities(stacks, payouts)
+    def test_le_tapis_nul_ne_leve_plus_rien(self) -> None:
+        """Toutes les structures passent, y compris celles qui plantaient.
+
+        Les quatre dernières sont exactement les cas que la version
+        précédente déclarait indéfinis : autant de gains classés que de
+        joueurs, donc une récurrence qui descend jusqu'au busté.
+        """
+        cas = (([10.0, 0.0], [100.0]),
+               ([10.0, 40.0, 0.0], [65.0, 35.0]),
+               ([10.0, 40.0, 5.0, 0.0], [50.0, 30.0, 20.0]),
+               ([10.0, 0.0], [65.0, 35.0]),
+               ([10.0, 40.0, 0.0], [50.0, 30.0, 20.0]),
+               ([10.0, 40.0, 5.0, 0.0], [50.0, 30.0, 20.0, 10.0]),
+               ([10.0, 40.0, 5.0, 3.0, 0.0], [50.0, 30.0, 10.0, 6.0, 4.0]))
+        for stacks, payouts in cas:
+            eq = icm_equities(stacks, payouts)
+            self.assertAlmostEqual(
+                float(sum(eq)), float(sum(payouts)), places=6,
+                msg=f"la dotation n'est pas conservée sur {stacks}/{payouts}")
+
+    def test_le_joueur_a_zero_touche_le_dernier_gain(self) -> None:
+        """Il a terminé le tournoi, en dernier — pas « rien ».
+
+        C'est le point qui décide de la valeur du bubble factor : compter
+        zéro surestime ce qu'on perd en perdant tout.
+        """
+        eq = icm_equities([10.0, 40.0, 5.0, 0.0], [50.0, 30.0, 20.0, 10.0])
+        self.assertAlmostEqual(float(eq[3]), 10.0, places=9)
 
     def test_le_golden_du_chantier_na_pas_besoin_de_lamputation(self) -> None:
         """3 tapis / 2 gains : la valeur exacte existe, l'écart est mesuré."""
@@ -348,29 +379,36 @@ class TestAmputationDuBubbleFactor(unittest.TestCase):
         self.assertAlmostEqual(ampute, 5.021764802, places=9)
         self.assertLess(abs(ampute - exact) / exact, 1e-8)     # mesuré 8,5e-9
 
-    def test_trois_gains_sur_trois_tapis_ne_marchent_que_par_lamputation(self):
-        """Le cas que le conseiller expose et qui n'était épinglé nulle part."""
-        with self.assertRaises(ZeroDivisionError):
-            bubble_factor([10.0, 40.0, 1.0], [50.0, 30.0, 20.0], 0, 1,
-                          amount=10.0)
+    def test_trois_gains_sur_trois_tapis_se_calculent_exactement(self):
+        """Le cas que le conseiller expose, désormais exact.
+
+        La valeur reste celle mesurée à l'époque par amputation : la
+        correction ne déplace pas le résultat, elle supprime l'approximation.
+        """
+        exact = bubble_factor([10.0, 40.0, 1.0], [50.0, 30.0, 20.0], 0, 1,
+                              amount=10.0)
         a = advise(Spot(hero="Kh 9d", big_blind=1, stacks="10, 40, 1",
                         payouts="50, 30, 20", players=3))
         self.assertAlmostEqual(a.bubble, 2.970558, places=6)
-        # amputation mille fois plus fine : la limite est stable à 1e-8 près
+        self.assertAlmostEqual(exact, a.bubble, places=6)
+        # L'amputation converge bien vers la valeur exacte quand elle s'affine.
         fin = bubble_factor([10.0, 40.0, 1.0], [50.0, 30.0, 20.0], 0, 1,
                             amount=10.0 * (1.0 - 1e-12))
-        self.assertLess(abs(a.bubble - fin) / fin, 1e-8)       # mesuré 7,0e-9
+        self.assertLess(abs(exact - fin) / exact, 1e-8)
 
     def test_heads_up_icm_est_lineaire_donc_bf_vaut_un(self) -> None:
         """2 tapis / 2 gains : $EV affine en jetons, et l'amputation obligatoire.
 
         Avec deux joueurs, P(1er) = s/T et P(2e) = 1 − s/T : le $EV vaut
         π₂ + (π₁ − π₂)·s/T, affine en jetons. Le bubble factor vaut donc 1
-        exactement et l'équilibre ICM EST l'équilibre chipEV. Ce chemin est
-        aussi celui qui exige l'amputation (2 gains pour 2 joueurs).
+        exactement et l'équilibre ICM EST l'équilibre chipEV. Ce chemin
+        exigeait naguère l'amputation (2 gains pour 2 joueurs) ; il rend
+        maintenant la valeur théorique au chiffre près, ce qui est la
+        meilleure vérification possible du correctif.
         """
-        with self.assertRaises(ZeroDivisionError):
-            bubble_factor([10.0, 40.0], [65.0, 35.0], 0, 1, amount=10.0)
+        self.assertAlmostEqual(
+            bubble_factor([10.0, 40.0], [65.0, 35.0], 0, 1, amount=10.0),
+            1.0, places=9)
         icm = advise(Spot(hero="Kh 9d", big_blind=1, stacks="10, 40",
                           payouts="65, 35", players=2))
         chip = advise(Spot(hero="Kh 9d", stack=10, big_blind=1))
