@@ -539,9 +539,14 @@ def _edge_maps(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Masques des arêtes verticales et horizontales, seuil calé sur le bruit."""
     H, W = rgb.shape[:2]
     a = rgb
-    if _noise_sigma(rgb) >= SMOOTH_ABOVE:
+    # Sans lissage, ``a is rgb`` et le sigma serait recalculé à l'identique
+    # (fonction déterministe de l'image) : on le réutilise — mesuré 70 ms
+    # sur une capture 2194 × 1660, à seuil rigoureusement inchangé.
+    sigma = _noise_sigma(rgb)
+    if sigma >= SMOOTH_ABOVE:
         a = ndimage.gaussian_filter(rgb, sigma=(1.0, 1.0, 0))
-    t = max(EDGE_MIN, NOISE_K * _noise_sigma(a))
+        sigma = _noise_sigma(a)
+    t = max(EDGE_MIN, NOISE_K * sigma)
 
     gx = np.abs(a[:, 2:] - a[:, :-2]).max(axis=2)
     gy = np.abs(a[2:, :] - a[:-2, :]).max(axis=2)
@@ -573,16 +578,31 @@ def _snap_to_edges(hm: np.ndarray, box: tuple[int, int, int, int]
     x, y, w, h = box
     reach = max(3, int(round(h * 0.12)))
     found: list[int | None] = []
+    # Réécriture VECTORISÉE de la boucle « pour chaque yy candidat, couverture
+    # de la bande de trois lignes » — la mesure est inchangée à l'identique :
+    # pour chaque yy, la couverture reste (colonnes touchées par une arête
+    # dans hm[yy−1 : yy+2]) / w, bornée à l'image comme avant (une ligne de
+    # bord n'a que deux lignes de bande), et l'ordre de parcours reste « du
+    # plus extérieur vers l'ancre ». Seul le NOMBRE d'opérations numpy change :
+    # ~4 par ancre au lieu d'une paire any/mean par candidat (jusqu'à 62).
     for anchor in (y, y + h - 1):
+        lo, hi = max(0, anchor - reach), min(H - 1, anchor + reach)
         edge = None
-        for d in range(reach, -reach - 1, -1):
-            yy = anchor + (-d if anchor == y else d)
-            if not (0 <= yy < H):
-                continue
-            band = hm[max(0, yy - 1):yy + 2, x:x + w]
-            if band.size and band.any(axis=0).mean() >= SIDE_COVER:
-                edge = yy
-                break
+        if lo <= hi:
+            a = max(0, lo - 1)
+            sub = hm[a:hi + 2, x:x + w]
+            if sub.size:
+                trois = sub.copy()
+                trois[1:] |= sub[:-1]
+                trois[:-1] |= sub[1:]
+                # trois[yy − a] == hm[max(0, yy−1) : yy+2].any(axis=0)
+                cover = trois.mean(axis=1)
+                ordre = (range(lo, hi + 1) if anchor == y
+                         else range(hi, lo - 1, -1))
+                for yy in ordre:
+                    if cover[yy - a] >= SIDE_COVER:
+                        edge = yy
+                        break
         found.append(edge)
     top, bottom = found
     if top is None or bottom is None or bottom - top < 14:
@@ -772,10 +792,20 @@ def _looks_like_a_card(rgb: np.ndarray, edges: np.ndarray,
     if min(top, bottom) < SIDE_CONTRAST or max(left, right) < SIDE_CONTRAST:
         return False
 
+    # Sortie anticipée à décision STRICTEMENT identique : le verdict ne
+    # dépend que de « quiet ≥ QUIET_SIDES », donc on s'arrête dès qu'il est
+    # acquis, ou dès que les abords restants ne peuvent plus l'atteindre.
+    # `_quiet_density` n'a aucun effet de bord observable (son seul cache est
+    # keyé sur l'image d'arêtes déjà en place) : en sauter n'affecte rien.
     quiet = 0
-    for outs in outside:
+    for restant, outs in enumerate(outside, start=-len(outside)):
         if _quiet_density(edges, outs) < QUIET_MAX:
             quiet += 1
+            if quiet >= QUIET_SIDES:
+                break
+        elif quiet - restant - 1 < QUIET_SIDES:
+            # même en comptant tous les abords restants, le quota est mort
+            break
     if quiet < QUIET_SIDES:
         return False
 
@@ -846,8 +876,11 @@ def _solid_background_boxes(rgb: np.ndarray) -> list[tuple[int, int, int, int]]:
     blanc = rgb.min(axis=2) >= SEUIL_BLANC
     out: list[tuple[int, int, int, int]] = []
     for ref in FAMILLES.values():
-        d = a - np.array(ref, dtype=np.int16)
-        mask = (d[..., 0].astype(np.int32) ** 2 + d[..., 1] ** 2
+        # int32 sur LES TROIS canaux avant le carré : en int16, un écart de
+        # canal ≥ 182 déborde (182² > 32767) et son carré devient négatif —
+        # un pixel très loin de la famille pouvait alors passer le seuil.
+        d = (a - np.array(ref, dtype=np.int16)).astype(np.int32)
+        mask = (d[..., 0] ** 2 + d[..., 1] ** 2
                 + d[..., 2] ** 2) <= FOND_TOL * FOND_TOL
         # Une composante candidate couvre au moins FOND_FILL_MIN de la plus
         # petite boîte admissible : moins de pixels que ça dans tout le
@@ -894,7 +927,17 @@ def detect_card_boxes(image) -> list[CardBox]:
     list[CardBox]
         Une boîte par carte trouvée, rôle non encore attribué (« ? »).
     """
-    rgb = _rgb_array(image)
+    # `read_table` a déjà converti l'image en tableau float64 : la repasser
+    # par `_rgb_array` la ferait transiter float64 → uint8 → PIL → float64
+    # (87 Mo sur une capture 2194 × 1660, ~150 ms) pour retomber sur des
+    # valeurs identiques — la sortie de `_rgb_array` est entière dans
+    # [0 ; 255], l'aller-retour uint8 y est l'identité. Tout autre type
+    # d'entrée (PIL, chemin, uint8) suit le chemin historique.
+    if (isinstance(image, np.ndarray) and image.dtype == np.float64
+            and image.ndim == 3 and image.shape[2] == 3):
+        rgb = image
+    else:
+        rgb = _rgb_array(image)
     H, W = rgb.shape[:2]
     area_img = float(H * W)
     kept: list[tuple[int, int, int, int]] = _solid_background_boxes(rgb)
@@ -929,12 +972,16 @@ def detect_card_boxes(image) -> list[CardBox]:
         int(CUT_MAX_RATIO * (seg[:, 2] - seg[:, 1] + 1).max()) + 2,
         int(np.sqrt(CUT_MAX_RATIO * MAX_AREA_FRAC * area_img)) + 2)
 
+    # Conversion UNIQUE en entiers Python : le déballage `int(v) for v in
+    # seg[j]` dans la boucle interne coûtait 1,6 M d'appels de générateur sur
+    # la capture Twister (0,4 s au profil). `tolist()` rend les mêmes entiers.
+    seg_py: list[list[int]] = seg.tolist()
     seen: set[tuple[int, int, int, int, bool]] = set()
-    for i in range(len(seg)):
-        xl, top_l, bot_l = (int(v) for v in seg[i])
+    for i in range(len(seg_py)):
+        xl, top_l, bot_l = seg_py[i]
         hi = int(np.searchsorted(cols, xl + width_max, side="right"))
         for j in range(i + 1, hi):
-            xr, top_r, bot_r = (int(v) for v in seg[j])
+            xr, top_r, bot_r = seg_py[j]
             w = xr - xl
             if w < 10:
                 continue

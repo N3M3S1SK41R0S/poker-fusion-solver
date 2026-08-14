@@ -35,6 +35,7 @@ section{display:none;animation:f .25s}
 section.on{display:block}
 @keyframes f{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:12px}
+.card h2:first-child{margin-top:0}
 .row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start}
 .col{flex:1;min-width:290px}
 label{display:block;font-size:11px;color:var(--dim2);text-transform:uppercase;
@@ -66,6 +67,11 @@ tr:hover td{background:#ffffff05}
 .kpi{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
 .kpi .v{font-size:20px;font-weight:900;font-variant-numeric:tabular-nums}
 .kpi .l{font-size:10.5px;color:var(--dim2);margin-top:2px;text-transform:uppercase;letter-spacing:.05em}
+/* une tuile n'est pas une colonne de formulaire : elle peut être bien plus
+   étroite que les 290 px de .col sans devenir illisible */
+.kpi.col{min-width:150px}
+/* rangée de tuiles hors .row (solveur postflop, ICM) — même gabarit partout */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px}
 #grid{display:inline-block;user-select:none}
 .gr{display:flex}
 .gc{width:36px;height:36px;display:flex;align-items:center;justify-content:center;
@@ -153,6 +159,12 @@ kbd{font:11px ui-monospace,monospace;background:#1a1a28;border:1px solid var(--l
  border-bottom-width:2px;border-radius:5px;padding:1px 5px;color:var(--dim)}
 .hint{font-size:11.5px;color:var(--dim2);margin-top:6px}
 .skel{color:var(--dim2);font-size:13px;padding:18px 0;text-align:center}
+/* apparition douce des résultats « une fois » (verdict, tirage, revue…) —
+   les blocs à recalcul continu (fusion, sizing, live) restent sans animation
+   pour ne pas clignoter à chaque frappe */
+@keyframes fade{from{opacity:0}to{opacity:1}}
+#sp-out>*,#si-out>*,#rv-out>*,#rp-out>*,#lx-out>*,#pf-out>*,#solve-out>*,#hh-out>*{
+ animation:fade .25s ease-out}
 
 /* zone de collage d'une capture + cadrage des cartes */
 .drop{border:2px dashed var(--line);border-radius:12px;padding:22px;text-align:center;
@@ -202,7 +214,7 @@ kbd{font:11px ui-monospace,monospace;background:#1a1a28;border:1px solid var(--l
 /* Infobulles pédagogiques : chaque chiffre du verdict s'explique au survol,
    en français simple — le texte vient du lexique (une seule source). */
 [data-tt]{cursor:help;border-bottom:1px dotted var(--dim)}
-#tt{position:fixed;z-index:99;max-width:340px;padding:10px 12px;border-radius:9px;
+#tt{position:fixed;z-index:99;max-width:min(340px,calc(100vw - 16px));padding:10px 12px;border-radius:9px;
  background:#221c38;border:1px solid #57499a;color:var(--txt);font-size:13px;
  line-height:1.45;box-shadow:0 8px 24px #000a;pointer-events:none;display:none}
 #tt b{color:#cfc4f5}
@@ -243,11 +255,38 @@ kbd{font:11px ui-monospace,monospace;background:#1a1a28;border:1px solid var(--l
   .gc{height:24px;font-size:8px}
   .gh{height:14px;font-size:8px}
   #shot{max-width:100%}
+  /* ── nouveaux composants du verdict ──
+     tuiles : 2 par ligne (6 tuiles pleine largeur = un écran entier de vide) */
+  .kpi.col{flex:1 1 calc(50% - 4px);min-width:calc(50% - 4px)}
+  .grid2:has(>.kpi),.grid3:has(>.kpi){grid-template-columns:1fr 1fr}
+  .kpis{grid-template-columns:1fr 1fr}
+  /* vignettes de cartes : plus petites, les groupes Flop·Turn·River
+     s'empilent proprement, libellé aligné sur les cartes */
+  .cartev{width:38px;height:53px;margin-right:4px}
+  .cartev .rg{font-size:16px}
+  .cartev .en{font-size:15px;margin-top:2px}
+  .cartev.dos .en{font-size:18px}
+  .streets{gap:10px}
+  .street-lbl{text-align:left}
+  /* frise d'équité : grille 2 colonnes au lieu d'une rangée qui se tord */
+  .frise{display:grid;grid-template-columns:1fr 1fr}
+  .frise .pt{min-width:0}
+  /* le grand mot du verdict peut se replier au lieu de déborder */
+  .verdict .act{font-size:24px;white-space:normal}
+  .verdict .act .ico{font-size:22px}
+  /* Ranges : la colonne de la grille ne doit pas déborder de l'écran —
+     la barre d'outils se replie, la grille défile si besoin */
+  #s-study .row>div{flex:1 1 100%;max-width:100%;min-width:0}
+  #grid{max-width:100%;overflow-x:auto}
 }
 @media(max-width:420px){
   .spotbar{grid-template-columns:1fr}
   .gc,.gh{width:21px}
   .gc{height:21px;font-size:7.5px}
+  .cartev{width:34px;height:48px}
+  .cartev .rg{font-size:14px}
+  .cartev .en{font-size:13px}
+  .cartev.dos .en{font-size:16px}
 }
 </style>
 </head>
@@ -372,7 +411,7 @@ kbd{font:11px ui-monospace,monospace;background:#1a1a28;border:1px solid var(--l
   qu'elle a lu</b>, carte par carte, avec sa confiance. C'est un banc d'essai
   de la reconnaissance : il ne dit jamais quoi jouer.</p>
 
-  <div class="card" style="border-left:3px solid var(--am)">
+  <div class="card" style="border-left:3px solid var(--y)">
     <b>Pourquoi cet onglet ne conseille rien.</b>
     <div class="hint" style="margin-top:6px">
       Lire ton propre écran pour vérifier qu'un programme reconnaît des images
@@ -394,7 +433,8 @@ kbd{font:11px ui-monospace,monospace;background:#1a1a28;border:1px solid var(--l
       </div>
       <button class="ghost" style="width:auto" onclick="calFenetres()">Rafraîchir</button>
       <button style="width:auto" onclick="calLire()">Lire maintenant</button>
-      <label style="width:auto;display:flex;align-items:center;gap:6px;margin:0">
+      <label style="width:auto;display:flex;align-items:center;gap:6px;margin:0;
+        text-transform:none;letter-spacing:0;font-size:13px">
         <input type="checkbox" id="cal-boucle" style="width:auto;margin:0">
         <span class="muted">en continu</span></label>
     </div>
@@ -414,7 +454,7 @@ kbd{font:11px ui-monospace,monospace;background:#1a1a28;border:1px solid var(--l
   (client PMU PLAY, badge vérifié à chaque image). Tout le reste est en
   lecture seule : c'est l'onglet Calibration.</p>
 
-  <div class="card" style="border-left:3px solid var(--am)">
+  <div class="card" style="border-left:3px solid var(--y)">
     <b>Pourquoi cette porte est verrouillée.</b>
     <div class="hint" style="margin-top:6px">
       Un conseil calculé <i>pendant</i> une main d'argent réel prend aux
@@ -438,7 +478,10 @@ kbd{font:11px ui-monospace,monospace;background:#1a1a28;border:1px solid var(--l
       <button style="width:auto" id="lv-btn-armer" onclick="lvArmer()">Armer cette fenêtre</button>
       <button class="ghost" style="width:auto" onclick="lvDesarmer()">Désarmer</button>
     </div>
-    <label style="display:flex;align-items:center;gap:8px;margin-top:10px">
+    <!-- une phrase entière n'est pas une étiquette de champ : on neutralise
+         les majuscules et la couleur éteinte du style global des label -->
+    <label style="display:flex;align-items:center;gap:8px;margin-top:10px;
+      text-transform:none;letter-spacing:0;font-size:13px;color:var(--txt)">
       <input type="checkbox" id="lv-confirme" style="width:auto;margin:0">
       <span>Je confirme : cette table est en <b>argent fictif</b> (PMU PLAY) —
       pas d'argent réel, pas de freeroll doté.</span></label>
@@ -492,7 +535,7 @@ kbd{font:11px ui-monospace,monospace;background:#1a1a28;border:1px solid var(--l
   <div class="card">
     <label>Chercher un terme</label>
     <input id="lx-q" placeholder="équité, ICM, limp, MDF, VPIP…"
-           oninput="lexRun()">
+           oninput="dLex()">
   </div>
   <div id="lx-out"></div>
 </section>
@@ -634,7 +677,7 @@ kbd{font:11px ui-monospace,monospace;background:#1a1a28;border:1px solid var(--l
       <div style="flex:1;min-width:110px"><label>force du prior</label>
         <input type="number" id="sk-str" value="1" step="0.25" min="0" max="1" oninput="dSkill()"></div>
     </div>
-    <div id="skill-out" style="margin-top:10px"></div>
+    <div id="skill-out" style="margin-top:10px"><div class="muted">Calcul en cours…</div></div>
   </div>
 </section>
 
@@ -725,7 +768,7 @@ kbd{font:11px ui-monospace,monospace;background:#1a1a28;border:1px solid var(--l
       <div style="flex:1;min-width:110px"><label>± écart-type (pts)</label>
         <input type="number" id="bc-s" value="9" oninput="dBC()"></div>
     </div>
-    <div id="bc-out" style="margin-top:10px"></div>
+    <div id="bc-out" style="margin-top:10px"><div class="muted">Calcul en cours…</div></div>
   </div>
 </section>
 
@@ -886,7 +929,7 @@ kbd{font:11px ui-monospace,monospace;background:#1a1a28;border:1px solid var(--l
 </section>
 
 <footer>
-  Poker Fusion Solver v4.2 — 14 fusions · solveur river/turn réel · analyse post-partie · reconnaissance de cartes · 127.0.0.1 uniquement · aucune sortie réseau
+  Poker Fusion Solver v4.5 — 14 fusions · solveur river/turn réel · analyse post-partie · reconnaissance de cartes · mode Live argent fictif · 127.0.0.1 uniquement · aucune sortie réseau
 </footer>
 </div>
 
@@ -936,6 +979,7 @@ const dBR     =()=>debounce("br",brRun);
 const dSkill  =()=>debounce("skill",skillRun);
 const dICM    =()=>debounce("icm",icmRun);
 const dEQ     =()=>debounce("eq",eqRun,400);
+const dLex    =()=>debounce("lex",lexRun,250);
 
 // Bandeau d'anomalie : un onglet resté ouvert après un redémarrage porte un
 // jeton périmé, et TOUT échoue alors en 403. Sans message explicite, cela se
@@ -1067,15 +1111,34 @@ function ttTexte(cle){
 function tt(label,cle){return `<span data-tt="${cle}">${label}</span>`;}
 (function initTT(){
   const el=document.createElement("div");el.id="tt";document.body.appendChild(el);
-  document.addEventListener("mouseover",e=>{
+  function ttShow(c){
+    const html=ttTexte(c.dataset.tt);
+    if(!html){el.style.display="none";return false;}
+    el.innerHTML=html;el.dataset.pour=c.dataset.tt;el.style.display="block";
+    const r=c.getBoundingClientRect();
+    el.style.left=Math.max(8,Math.min(innerWidth-352,r.left))+"px";
+    // sous l'élément — sauf si le bas de l'écran couperait la bulle
+    el.style.top="0px";
+    const h=el.offsetHeight;
+    el.style.top=((r.bottom+8+h>innerHeight&&r.top-8-h>0)?(r.top-8-h):(r.bottom+8))+"px";
+    return true;
+  }
+  // Souris : survol classique. Les pointeurs tactiles sont exclus ici —
+  // ils ont leur propre geste ci-dessous (au doigt, le survol n'existe pas).
+  document.addEventListener("pointerover",e=>{
+    if(e.pointerType&&e.pointerType!=="mouse")return;
     const c=e.target.closest("[data-tt]");
     if(!c){el.style.display="none";return;}
-    const html=ttTexte(c.dataset.tt);
-    if(!html){el.style.display="none";return;}
-    el.innerHTML=html;el.style.display="block";
-    const r=c.getBoundingClientRect();
-    el.style.left=Math.min(innerWidth-360,Math.max(8,r.left))+"px";
-    el.style.top=(r.bottom+8)+"px";
+    ttShow(c);
+  });
+  // Tactile : un tap affiche, le même tap masque ; taper ailleurs masque.
+  document.addEventListener("pointerdown",e=>{
+    if(e.pointerType==="mouse")return;
+    const c=e.target.closest("[data-tt]");
+    if(!c){el.style.display="none";return;}
+    if(el.style.display==="block"&&el.dataset.pour===c.dataset.tt){
+      el.style.display="none";return;}
+    ttShow(c);
   });
   document.addEventListener("scroll",()=>{el.style.display="none";},true);
 })();
@@ -1088,7 +1151,11 @@ function posPill(pos){
 }
 
 // La frise : advise rejoué sur les boards tronqués — même moteur, même range.
+// Un identifiant de course invalide les remplissages d'un verdict précédent :
+// deux verdicts enchaînés vite ne mélangent jamais leurs chiffres.
+let friseCourse=0;
 async function friseEquite(base,codes,streetActuelle){
+  const course=++friseCourse;
   const zone=document.getElementById("frise");
   if(!zone)return;
   const etapes=[["Préflop",[]],["Flop",codes.slice(0,3)],
@@ -1101,6 +1168,7 @@ async function friseEquite(base,codes,streetActuelle){
     if(nom===streetActuelle){continue;}     // déjà rendue avec le verdict
     try{
       const r=await api("advise",{...base,board:b.join("")});
+      if(course!==friseCourse)return;       // un verdict plus récent a repris la main
       const c=document.getElementById(id);
       if(c&&r.equity!=null){
         c.querySelector(".eq").textContent=(r.equity*100).toFixed(1)+" %";
@@ -1108,6 +1176,16 @@ async function friseEquite(base,codes,streetActuelle){
           ?`seuil ${(r.required*100).toFixed(1)} %`:"";
       }else if(c){c.remove();}   // pas d'équité à cette street : pas de case vide
     }catch(e){const c=document.getElementById(id);if(c)c.remove();}
+  }
+  // Filet final : jamais de case « ⟳ » orpheline si un appel a échoué, et
+  // une frise réduite à une seule case (la street courante) n'apprend rien —
+  // elle disparaît plutôt que d'occuper une ligne pour répéter le verdict.
+  const f=document.getElementById("frise");
+  if(f&&course===friseCourse){
+    f.querySelectorAll(".pt").forEach(p=>{
+      const e=p.querySelector(".eq");
+      if(e&&e.textContent.trim()==="⟳")p.remove();});
+    if(f.querySelectorAll(".pt").length<2)f.remove();
   }
 }
 
@@ -1378,8 +1456,9 @@ async function simuRun(){
 
 // ══ LEXIQUE ═════════════════════════════════════════════════════════════
 async function lexRun(){
-  const r=await api("lexique",{q:document.getElementById("lx-q").value});
   const out=document.getElementById("lx-out");
+  if(!out.innerHTML)out.innerHTML='<div class="skel">⟳ chargement du lexique…</div>';
+  const r=await api("lexique",{q:document.getElementById("lx-q").value});
   if(r.error){out.innerHTML=`<div class="warn">${r.error}</div>`;return;}
   const parCat={};
   (r.termes||[]).forEach(t=>{(parCat[t.categorie]=parCat[t.categorie]||[]).push(t);});
@@ -1772,7 +1851,7 @@ function statRow(ec,rep,note){
   const u=ec.unite;
   return `<tr>
     <td>${STAT_LIB[ec.stat]||ec.stat}${note?`<div class="muted">${note}</div>`:""}
-      ${ec.comparable?"":`<div class="muted" style="color:var(--am)">⚠ non comparable :
+      ${ec.comparable?"":`<div class="muted" style="color:var(--y)">⚠ non comparable :
         ${ec.pourquoi}</div>`}</td>
     <td class="num" style="color:${col};font-weight:700">${ec.valeur.toFixed(1)}${u}</td>
     <td style="width:45%">

@@ -171,7 +171,11 @@ class ModeLive:
             hwnd=hwnd, window_title=titre_reel,
             play_money_badge_detected=badge_gate))
 
-        lecture = vision_live.lire_image(image, fenetre=titre_reel, png=png)
+        # PAS de ``png=`` : ce paramètre ne sert qu'à remplir
+        # ``lecture.image_b64``, que cette route ne renvoie pas (le contrat
+        # de `live/table` n'a pas d'image — vérifié par le test de contrat
+        # clos). L'encoder à chaque cycle serait du travail jeté.
+        lecture = vision_live.lire_image(image, fenetre=titre_reel)
         table = TableRead(
             hero=[CardBox(c.boite[0], c.boite[1], c.boite[2], c.boite[3], "hero")
                   for c in lecture.cartes if c.role == "hero"],

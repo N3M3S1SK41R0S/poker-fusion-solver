@@ -112,8 +112,13 @@ def phash(image) -> int:
 
 
 def hamming(a: int, b: int) -> int:
-    """Nombre de bits différents entre deux hashes (0 = identiques)."""
-    return int(bin(a ^ b).count("1"))
+    """Nombre de bits différents entre deux hashes (0 = identiques).
+
+    ``int.bit_count()`` (popcount natif) rend le même entier que l'ancien
+    ``bin(a ^ b).count("1")`` sans construire de chaîne — l'appel est fait
+    ~80 000 fois par carte non lue (40 cadrages × banque de gabarits).
+    """
+    return (a ^ b).bit_count()
 
 
 def corner_phash(image) -> int:

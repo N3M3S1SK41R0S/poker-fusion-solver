@@ -1265,7 +1265,7 @@ class API:
 
         from PIL import Image
 
-        from pfs.vision.archive import enregistrer_echec
+        from pfs.vision.archive import dossier_archive
         from pfs.vision.card_recognizer import identify_card_autour
         from pfs.vision.table_detector import read_table
         from pfs.vision.zones_montants import lire_montants
@@ -1293,6 +1293,7 @@ class API:
         table = read_table(image)
         sortie: dict[str, list] = {"hero": [], "board": [], "autres": []}
         cle = {"hero": "hero", "board": "board", "others": "autres"}
+        echecs: list[tuple[Any, dict]] = []
         for role in ("hero", "board", "others"):
             for b in getattr(table, role):
                 m = identify_card_autour(image, (b.x, b.y, b.w, b.h))
@@ -1305,14 +1306,24 @@ class API:
                 # les vrais échecs.
                 if m.statut != "sure" and role in ("hero", "board"):
                     decoupe = image.crop((b.x, b.y, b.x + b.w, b.y + b.h))
-                    tampon = io.BytesIO()
-                    decoupe.save(tampon, format="PNG")
-                    enregistrer_echec(
-                        base64.b64encode(tampon.getvalue()).decode("ascii"),
-                        {"statut": m.statut, "distance": m.distance,
-                         "margin": m.margin, "best_guess": m.best_guess,
-                         "role": role, "origine": "collage",
-                         "boite": [b.x, b.y, b.w, b.h]})
+                    echecs.append((decoupe, {
+                        "statut": m.statut, "distance": m.distance,
+                        "margin": m.margin, "best_guess": m.best_guess,
+                        "role": role, "origine": "collage",
+                        "boite": [b.x, b.y, b.w, b.h]}))
+        if echecs:
+            # L'archive instruit, elle ne répond pas : l'encodage PNG et les
+            # écritures disque sortent du chemin de la réponse (mesuré 10 à
+            # 30 ms par découpe). Le dossier est résolu ICI — pendant que
+            # l'environnement de l'appel (LOCALAPPDATA détourné par les
+            # tests, notamment) est encore celui de la requête — et le
+            # thread n'est PAS daemon : un arrêt du serveur laisse chaque
+            # échec finir de s'écrire. La réponse, elle, ne contient rien
+            # de l'archive : son contenu est inchangé au bit près.
+            threading.Thread(
+                target=_archiver_echecs_collage,
+                args=(echecs, dossier_archive()),
+                name="pfs-archive-echecs").start()
 
         sures = [c for r in ("hero", "board") for c in sortie[r]
                  if c["statut"] == "sure"]
@@ -1608,6 +1619,52 @@ ROUTES: dict[str, Callable[[dict], dict]] = {
 }
 
 
+def _archiver_echecs_collage(echecs: list, dossier) -> None:
+    """Écrit les découpes non lues d'un collage — en dehors de la réponse.
+
+    Reçoit des couples (découpe PIL, diagnostic) et le dossier d'archive DÉJÀ
+    résolu par la requête. Chaque écriture est indépendante : un échec
+    d'archivage n'en bloque pas un autre, et n'a jamais le droit de casser
+    quoi que ce soit — même contrat que l'archivage synchrone qu'il remplace.
+    """
+    import base64
+    import io
+
+    from pfs.vision.archive import enregistrer_echec
+
+    for decoupe, diagnostic in echecs:
+        try:
+            tampon = io.BytesIO()
+            decoupe.save(tampon, format="PNG")
+            enregistrer_echec(
+                base64.b64encode(tampon.getvalue()).decode("ascii"),
+                diagnostic, dossier=dossier)
+        except Exception:
+            pass       # l'archivage ne doit jamais casser la lecture
+
+
+def _prechauffer_caches() -> None:
+    """Construit, pendant que l'utilisateur ouvre son navigateur, les caches
+    que le premier collage paierait sinon sur le chemin de sa réponse.
+
+    Mesuré sur cette machine (processus neuf, capture Twister 2194 × 1660) :
+    gabarits digit_ocr 565 ms, imports scipy/vision ~285 ms — soit ~0,85 s
+    retranchés du premier « coller → verdict » (3 562 → 2 724 ms). Aucun
+    résultat ne change : ce sont exactement les fonctions mémoïsées que la
+    route appelle, appelées plus tôt. Toute panne ici est silencieuse — le
+    préchauffage est un confort, jamais une condition de démarrage.
+    """
+    try:
+        import pfs.vision.table_detector  # noqa: F401  — scipy.ndimage
+        from pfs.vision.card_recognizer import load_templates
+        from pfs.vision.digit_ocr import charger_gabarits
+
+        load_templates()
+        charger_gabarits()
+    except Exception:
+        pass
+
+
 # Le mode Live est un état de processus (armements, mémoire du badge) : une
 # seule instance, créée au premier usage — le serveur reste importable sans
 # que le gate ni la vision du badge ne se construisent.
@@ -1813,6 +1870,11 @@ def run(port: int = 8731, open_browser: bool = True) -> None:
               "Get-Process python | Stop-Process\n")
         print(f"  (ou démarre ailleurs : python -m pfs --port {port + 1})\n")
         raise SystemExit(1) from e
+    # Préchauffage en arrière-plan : le premier collage trouve les gabarits
+    # digit_ocr et les signatures de cartes déjà construits (~0,85 s gagnées,
+    # voir _prechauffer_caches). Daemon : ne retient jamais l'arrêt.
+    threading.Thread(target=_prechauffer_caches, daemon=True,
+                     name="pfs-prechauffage").start()
     url = f"http://127.0.0.1:{srv.server_address[1]}/?t={token}"
     print("╔" + "═" * 66 + "╗")
     print("║  ♠  POKER FUSION SOLVER — interface locale" + " " * 24 + "║")

@@ -5,15 +5,20 @@ on décrit le spot avec ce qu'une image donne — tes cartes, le board, le pot,
 la mise subie, les tapis, la position — et le conseiller rend le verdict
 adossé aux solveurs du projet.
 
-Quatre régimes, choisis selon le spot :
+Cinq régimes, choisis selon le spot :
 
 * **préflop tapis court en tournoi** (``stacks`` *et* ``payouts`` fournis) :
   équilibre de Nash jam/fold résolu en **$EV ICM** (Malmuth-Harville), avec
   l'écart au chipEV affiché — c'est cet écart qui coûte cher en Twister ;
 * **préflop tapis court heads-up chipEV** (≤ 25 bb, héros premier de parole) :
   équilibre de Nash jam/fold exact (``solver.pushfold``) ;
-* **préflop tapis profond** : comparaison à la range d'ouverture de
+* **préflop profond, pot NON ouvert** : comparaison à la range d'ouverture de
   référence de la position (``GTO_PRESETS``, charts approximatives assumées) ;
+* **préflop profond, FACE À UNE OUVERTURE** (mise adverse ≥ 1 bb) : équité de
+  la main contre la range d'ouverture supposée de l'ouvreur, confrontée à la
+  cote exacte du pot et à la MDF face à la taille subie — le modèle de
+  défense de :func:`_advise_preflop_defense`, dont chaque seuil est dérivé
+  (aucune chart de défense inventée) ;
 * **postflop** : river **résolue au CFR** range contre range quand personne
   n'a misé (taille, fréquence et EV de ta main) ; sinon équité exacte de ta
   main contre une range adverse plausible, confrontée aux cotes du pot —
@@ -52,12 +57,18 @@ from pfs.core.equity import equity_vs_range
 from pfs.core.icm import bubble_factor, icm_required_equity, risk_premium
 from pfs.core.range_model import (
     COMBO_TO_GROUP,
+    GROUP_COMBO_COUNT,
     GTO_PRESETS,
+    N_COMBOS,
+    N_GROUPS,
+    PREFLOP_POSITIONS,
     RANKS,
     SUITS,
     Range,
     combo_index,
     group_name,
+    opening_fraction,
+    opening_range,
     parse_range,
 )
 from pfs.solver.postflop import IP, OOP, PostflopError, PostflopSolver
@@ -218,6 +229,10 @@ class Spot:
         Les cartes communes, vide en préflop.
     pot : float
         Pot AVANT la mise adverse, en jetons ou en bb (même unité partout).
+        Préflop face à une ouverture, c'est le pot TEL QUE L'ÉCRAN L'AFFICHE,
+        ouverture et blindes comprises — ce qu'une capture donne réellement,
+        et ce que le banc Pluribus transmet (``pot_gagnable``). La cote du
+        call s'y lit exactement : ``bet / (pot + bet)``.
     bet : float
         Mise à payer (0 si personne n'a misé).
     stack : float
@@ -254,6 +269,12 @@ class Spot:
     solver_budget_s : float
         Budget de temps du solve river en secondes ; ≤ 0 désactive le solve
         et retombe sur l'équité contre la range supposée.
+    opener : str
+        Position de l'OUVREUR préflop si tu la connais (« UTG », « CO »…).
+        Vide → le modèle de défense suppose un mélange des positions
+        assises avant toi, pondéré par leurs fréquences d'ouverture de
+        chart (voir :func:`_melange_ouverture`). Ignoré hors du régime
+        « face à une ouverture ».
     """
 
     hero: str
@@ -274,6 +295,7 @@ class Spot:
     bet_sizes: str | Sequence[float] = "0.33, 0.75, 1.25"
     max_bets: int = 2
     solver_budget_s: float = RIVER_SOLVE_BUDGET_S
+    opener: str = ""
 
 
 @dataclass(slots=True)
@@ -525,7 +547,7 @@ def _advise_preflop_icm(spot: Spot, hero: list[int],
     ante_deci = int(round(spot.ante / bb * 10))
     eff_bb = min(stacks_bb[h], stacks_bb[v])
     if not (1.0 + ante_deci / 10.0 < eff_bb <= MAX_PUSHFOLD_BB):
-        return _advise_preflop_deep(spot, hero)
+        return _advise_preflop_profond(spot, hero)
 
     payouts_key = tuple(float(p) for p in payouts)
     sol = _nash_icm(deci, payouts_key, h, v, ante_deci)
@@ -633,6 +655,475 @@ def _advise_preflop_deep(spot: Spot, hero: list[int]) -> Advice:
             "tes propres solves) — et suppose que personne n'a ouvert devant.",
         ],
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PRÉFLOP — DÉFENSE FACE À UNE OUVERTURE
+# ═══════════════════════════════════════════════════════════════════════════
+
+_BANDE_DEFENSE = 0.01
+"""Bande d'indifférence du modèle de défense, en points d'équité.
+
+Dérivée de la précision de la brique utilisée : la matrice d'équité 169 × 169
+est Monte-Carlo à ±0,9 point par paire (docstring de
+:func:`pfs.solver.pushfold.equity_matrix_169`). Un verdict qui tient à moins
+d'un point d'équité du seuil est donc à l'intérieur du bruit de mesure de son
+propre outil — le conseiller rend « MARGINAL » plutôt que de trancher sur du
+bruit.
+"""
+
+_RATIO_BLUFF_3BET = 0.5
+"""Masse de 3-bets bluff pour une masse 1 de 3-bets de valeur.
+
+Dérivé, pas posé : la 3-bet modélisée est une relance au pot (voir
+:func:`_advise_preflop_defense`), face à laquelle l'équité requise du vilain
+pour payer vaut EXACTEMENT 1/3 quelle que soit la taille de l'ouverture
+(calcul dans la docstring). En transposant le calcul river des ranges
+polarisées — la part de bluffs qui rend ses bluff-catchers indifférents est
+égale à sa cote — la range de 3-bet porte 1/3 de bluffs, soit un ratio
+valeur:bluff de 2:1. La transposition préflop est une convention de style
+ASSUMÉE : préflop un « bluff » garde de l'équité quand il est payé, le ratio
+exact d'équilibre en dépend et n'est pas calculable sans solveur.
+"""
+
+
+def _face_a_ouverture(spot: Spot) -> bool:
+    """Le spot préflop est-il une décision FACE À UNE OUVERTURE ?
+
+    Critère : une mise adverse à payer strictement supérieure à la big blind
+    — un limp laisse ``bet`` ≤ 1 bb — avec le cas limite de la
+    mini-ouverture : pour la big blind, payer exactement 1 bb EST défendre
+    contre une relance à 2 bb (un limp lui laisserait ``bet = 0``). Pour
+    toute autre position, ``bet`` = 1 bb est un limp à surrelancer ou non,
+    et reste du ressort de la chart d'ouverture.
+
+    >>> _face_a_ouverture(Spot(hero="Ah Ad", pot=4.0, bet=1.5, big_blind=1.0,
+    ...                        position="BB"))
+    True
+    >>> _face_a_ouverture(Spot(hero="Ah Ad", pot=3.5, bet=1.0, big_blind=1.0,
+    ...                        position="BB"))          # mini-ouverture
+    True
+    >>> _face_a_ouverture(Spot(hero="Ah Ad", pot=2.5, bet=1.0, big_blind=1.0,
+    ...                        position="BTN"))         # limp devant le bouton
+    False
+    >>> _face_a_ouverture(Spot(hero="Ah Ad", pot=1.5, bet=0.0, big_blind=1.0,
+    ...                        position="CO"))          # pot non ouvert
+    False
+    """
+    if spot.bet <= 0.0:
+        return False
+    bb = spot.big_blind if spot.big_blind > 0 else 1.0
+    if spot.bet > bb * (1.0 + 1e-9):
+        return True
+    return (spot.position.strip().upper() == "BB"
+            and spot.bet >= bb * (1.0 - 1e-9))
+
+
+@lru_cache(maxsize=64)
+def _melange_ouverture(pos_hero: str, opener: str):
+    """Range d'ouverture supposée de l'adversaire, vue depuis ``pos_hero``.
+
+    Rend ``(poids 1326, description, ((position, probabilité), …))`` — ou
+    ``None`` quand aucune ouverture ne peut précéder le héros (héros UTG :
+    la mise subie est alors une surrelance, hors du domaine du modèle).
+
+    Si ``opener`` désigne une position à chart, sa range est prise telle
+    quelle (probabilité 1). Sinon, l'ouvreur est INCONNU et le modèle
+    construit un mélange des positions assises avant le héros, pondéré par
+    la probabilité que chacune soit l'ouvreuse « premier de parole » :
+
+    .. math::
+        P(p) \\;\\propto\\; f_p \\prod_{q\\ \\text{avant}\\ p} (1 - f_q)
+
+    où :math:`f_p` est la fréquence d'ouverture de la chart de ``p``
+    (:func:`opening_fraction` — le même chiffre que la colonne « chart » du
+    banc Pluribus, section 6). Tout est donc dérivé des ``GTO_PRESETS``
+    existants ; aucune pondération n'est posée à la main. Approximation
+    déclarée : les joueurs entre l'ouvreur et le héros sont supposés couchés
+    avec probabilité 1 (en réalité ils défendent parfois, ce qui déformerait
+    légèrement le mélange vers les positions tardives).
+
+    >>> poids, desc, probs = _melange_ouverture("BB", "CO")
+    >>> desc, probs
+    ('ouverture CO', (('CO', 1.0),))
+    >>> _melange_ouverture("UTG", "") is None
+    True
+    >>> round(sum(p for _, p in _melange_ouverture("BB", "")[2]), 12)
+    1.0
+    """
+    opener = opener.strip().upper()
+    if opener in GTO_PRESETS:
+        poids = opening_range(opener).weights.copy()
+        poids.setflags(write=False)
+        return poids, f"ouverture {opener}", ((opener, 1.0),)
+    pos_hero = pos_hero.strip().upper()
+    if pos_hero in PREFLOP_POSITIONS:
+        avant = [p for p in PREFLOP_POSITIONS[:PREFLOP_POSITIONS.index(pos_hero)]
+                 if p in GTO_PRESETS]
+    else:  # position libre (« ip », « oop »…) : tout ouvreur est possible
+        avant = [p for p in PREFLOP_POSITIONS if p in GTO_PRESETS]
+    if not avant:
+        return None
+    brutes, reste = [], 1.0
+    for p in avant:
+        f = opening_fraction(p)
+        brutes.append(reste * f)
+        reste *= 1.0 - f
+    total = sum(brutes)
+    probs = tuple((p, b / total) for p, b in zip(avant, brutes))
+    poids = np.zeros(N_COMBOS)
+    for p, pr in probs:
+        poids += pr * opening_range(p).weights
+    poids.setflags(write=False)
+    desc = "mélange " + " / ".join(f"{p} {pr * 100:.0f} %" for p, pr in probs)
+    return poids, desc, probs
+
+
+@lru_cache(maxsize=64)
+def _classement_defense(pos_hero: str, opener: str):
+    """Classement des 169 groupes par équité contre la range d'ouverture.
+
+    Rend ``(équités (169,), ordre décroissant, masse cumulée de mains)`` —
+    la masse cumulée est la part des 1326 combos servis couverte par les
+    groupes les plus forts, celle sur laquelle se lit le quantile MDF. Les
+    équités viennent de la matrice 169 × 169 du solveur push/fold
+    (:func:`equity_matrix_169`), pondérée par la masse de chaque groupe dans
+    la range d'ouverture — la même brique, pas un nouveau calcul.
+    """
+    melange = _melange_ouverture(pos_hero, opener)
+    if melange is None:
+        return None
+    poids, _, _ = melange
+    masse = np.bincount(COMBO_TO_GROUP, weights=poids, minlength=N_GROUPS)
+    eq = _equity_matrix() @ masse / masse.sum()
+    ordre = np.argsort(-eq)
+    cumul = np.cumsum(GROUP_COMBO_COUNT[ordre]) / float(N_COMBOS)
+    return eq, ordre, cumul
+
+
+@lru_cache(maxsize=1)
+def _force_groupes():
+    """Équité de chaque groupe contre une main aléatoire (matrice 169).
+
+    Sert d'ordre de force canonique pour construire la range de continuation
+    du vilain face à une 3-bet — « il garde ses mains les plus fortes ».
+    """
+    return _equity_matrix() @ (GROUP_COMBO_COUNT / float(N_COMBOS))
+
+
+def _advise_preflop_defense(spot: Spot, hero: list[int]) -> Advice | None:
+    r"""Défense préflop face à une ouverture : équité vs range, cote, MDF.
+
+    Le verdict n'utilise AUCUNE chart de défense : tout est dérivé des
+    ranges d'ouverture existantes (``GTO_PRESETS``) et de quatre calculs
+    écrits ici. Notation : ``P`` = pot affiché (ouverture comprise),
+    ``b`` = mise à payer, ``bb`` = big blind.
+
+    1. **Cote du pot exacte.** Payer ``b`` pour un pot final ``P + b`` :
+
+       .. math:: \alpha = \frac{b}{P + b}
+
+       C'est un PLANCHER nécessaire : en dessous, même en voyant les cinq
+       cartes sans autre mise (équité « hot-cold »), le call perd. En
+       tournoi (``stacks`` + ``payouts``), le bubble factor la relève :
+       :math:`\alpha_{ICM} = BF·b / (P + BF·b)` (:func:`icm_required_equity`).
+
+    2. **MDF face à la taille.** L'ouvreur risque sa relance ``R`` pour
+       l'argent mort ``P₀`` qui précédait :
+
+       .. math:: \mathrm{MDF} = \frac{P_0}{P_0 + R},
+          \qquad R = b + i_h - i_v,\quad P_0 = P - R
+
+       où ``i_h`` est la blinde déjà postée par le héros (1 bb en BB, 0,5 en
+       SB, 0 sinon) et ``i_v`` celle de l'ouvreur — connue exactement quand
+       ``opener="SB"`` (0,5 bb), sinon son espérance ``P(SB)·0,5 bb`` sous le
+       mélange. Blinde contre blinde (SB ouvre à 3 bb, blindes 0,5/1) :
+       ``R = 2 + 1 − 0,5 = 2,5``, ``P₀ = 1,5``, MDF = 1,5/4 = **37,5 %** —
+       la valeur exacte, pas une approximation.
+
+    3. **Part du héros.** La MDF est COLLECTIVE : le bluff de l'ouvreur est
+       indifférent si la probabilité que personne ne défende vaut 1 − MDF.
+       Avec ``n`` défenseurs restants (``players − 1``) supposés porter le
+       même fardeau — hypothèse de symétrie ASSUMÉE, la vraie défense se
+       concentre en BB — chacun défend :
+
+       .. math:: x = 1 - (1 - \mathrm{MDF})^{1/n}
+
+       La BB qui clôt l'action (``n = 1``) porte la MDF entière. Le héros
+       défend alors les ``x`` meilleures mains servies, CLASSÉES PAR ÉQUITÉ
+       contre la range d'ouverture : le seuil d'équité :math:`e^*` est le
+       quantile ``x`` de ce classement (granularité : un groupe de la grille
+       169, au plus 12/1326 = 0,9 % de masse). Seuil effectif du call :
+       ``max(e*, α)``.
+
+    4. **3-bet.** La 3-bet modélisée est une relance AU POT (payer ``b``
+       puis relancer du pot obtenu) : le héros ajoute ``P + 2b``, le vilain
+       doit payer ``P + b`` dans un pot de ``2(P + b) + (P + b)``, soit une
+       équité requise de **1/3 exactement**, quelle que soit la taille de
+       l'ouverture. Face à elle, il défend sa MDF :
+       ``MDF_v = P / (2(P + b))`` — ses mains les plus fortes. La 3-bet est
+       « de valeur » quand l'équité du héros contre cette range de
+       continuation atteint 50 % ; les bluffs candidats sont les mains
+       JUSTE SOUS le seuil de call portant un as ou un roi (blockers aux
+       continuations dominantes), jouées en fréquence au ratio 2:1
+       valeur:bluff (:data:`_RATIO_BLUFF_3BET`) — style assumé, dit tel quel.
+
+    Goldens dérivés à la main (blindes 0,5/1, formules ci-dessus ; lignes
+    1 à 3 avec ``opener="CO"`` — ouvreur hors des blindes, donc
+    ``i_v = 0`` ; sans ``opener``, l'espérance ``P(SB)·0,5`` réduit ``R``
+    et la MDF s'élargit un peu) :
+
+    ======================================  ======  =====  =======  =======
+    spot                                    P       b      α        MDF
+    ======================================  ======  =====  =======  =======
+    BB face à CO 2,5 bb                     4,0     1,5    27,27 %  37,50 %
+    BB face à une mini-ouverture (2 bb)     3,5     1,0    22,22 %  42,86 %
+    BB face à une ouverture énorme (10 bb)  11,5    9,0    43,90 %  13,04 %
+    BB face à SB 3 bb (blinde vs blinde)    4,0     2,0    33,33 %  37,50 %
+    CO face à UTG 2,5 bb (4 défenseurs)     4,0     2,5    38,46 %  37,50 %
+    ======================================  ======  =====  =======  =======
+
+    Sur la dernière ligne, la part du héros vaut 1 − 0,625^(1/4) = 11,09 %
+    des mains servies — le quantile mesuré du classement y met le seuil
+    d'équité à 39,1 % contre la range d'ouverture UTG.
+
+    >>> a = advise(Spot(hero="Ah Ad", position="BB", opener="CO",
+    ...                 pot=4.0, bet=1.5, stack=97.5, big_blind=1.0))
+    >>> a.action, a.confidence
+    ('CALL ou 3-BET (valeur)', 'indicatif')
+    >>> round(a.required, 4), round(a.mdf, 4)
+    (0.2727, 0.375)
+    >>> advise(Spot(hero="7h 2d", position="BB", opener="CO", pot=4.0,
+    ...             bet=1.5, stack=97.5, big_blind=1.0)).action
+    'FOLD'
+
+    Rend ``None`` quand le modèle n'a pas de quoi calculer (pas d'ouvreur
+    possible devant le héros, pot inconnu ou incohérent) : l'appelant
+    retombe sur la chart d'ouverture, comme avant. Verdict toujours
+    « indicatif » : les ranges d'ouverture sont des charts approximatives —
+    c'est la doctrine du module.
+    """
+    pos = spot.position.strip().upper()
+    melange = _melange_ouverture(pos, spot.opener)
+    if melange is None or spot.pot <= 0.0 or spot.bet <= 0.0 \
+            or spot.pot <= spot.bet:
+        return None
+    poids_mix, desc, probs = melange
+    bb = spot.big_blind if spot.big_blind > 0 else 1.0
+    label = _hand_label(hero)
+    g = int(COMBO_TO_GROUP[combo_index(hero[0], hero[1])])
+
+    # ── équité du héros, blockers déduits de la range d'ouverture ─────────
+    masse_b = np.bincount(COMBO_TO_GROUP,
+                          weights=Range(poids_mix.copy())
+                          .remove_blockers(hero).weights,
+                          minlength=N_GROUPS)
+    total_b = float(masse_b.sum())
+    if total_b <= 0.0:
+        return None
+    matrice = _equity_matrix()
+    eq = float(matrice[g] @ masse_b / total_b)
+
+    # ── 1. cote du pot exacte (relevée par le bubble factor en tournoi) ───
+    alpha_cash = float(spot.bet / (spot.pot + spot.bet))
+    stacks, payouts = _tournoi(spot)
+    bf = None
+    alpha = alpha_cash
+    if stacks:
+        bf = _bubble(stacks, payouts, spot.hero_seat, spot.villain_seat)
+        alpha = icm_required_equity(spot.pot - spot.bet, spot.bet, bf)
+
+    # ── 2. MDF face à la taille, 3. part du héros et seuil d'équité ───────
+    inv_hero = bb if pos == "BB" else 0.5 * bb if pos == "SB" else 0.0
+    inv_vilain = dict(probs).get("SB", 0.0) * 0.5 * bb
+    relance = spot.bet + inv_hero - inv_vilain
+    mort = spot.pot - relance
+    defenseurs = max(1, spot.players - 1)
+    mdf = part = seuil_mdf = None
+    if relance > 0.0 and mort > 0.0:
+        mdf = minimum_defence_frequency(mort, relance)
+        part = 1.0 - (1.0 - mdf) ** (1.0 / defenseurs)
+        eq_g, ordre, cumul = _classement_defense(pos, spot.opener)
+        rang = min(int(np.searchsorted(cumul, part)), len(ordre) - 1)
+        seuil_mdf = float(eq_g[ordre[rang]])
+    seuil = max(x for x in (alpha, seuil_mdf) if x is not None)
+
+    # ── 4. range de continuation du vilain face à une 3-bet au pot ────────
+    mdf_v = float(spot.pot / (2.0 * (spot.pot + spot.bet)))
+    cont = np.zeros(N_GROUPS)
+    acquis, objectif = 0.0, mdf_v * total_b
+    for j in np.argsort(-_force_groupes()):
+        if masse_b[j] <= 0.0:
+            continue
+        prise = min(float(masse_b[j]), objectif - acquis)
+        cont[j] = prise
+        acquis += prise
+        if acquis >= objectif:
+            break
+    eq_vs_cont = matrice @ cont / max(acquis, 1e-12)
+    valeur = float(eq_vs_cont[g]) >= 0.5
+
+    ev_call = (eq * spot.pot - (1.0 - eq) * spot.bet) / bb
+
+    reasons = [
+        f"Face à une ouverture, ta main vaut {eq * 100:.1f} % contre la "
+        f"range d'ouverture supposée ({desc}).",
+        f"Cote du pot exacte : payer {spot.bet:g} pour un pot final de "
+        f"{spot.pot + spot.bet:g} → {alpha * 100:.1f} % d'équité requise au "
+        "minimum.",
+    ]
+    if bf is not None:
+        reasons.append(
+            f"Bubble factor {bf:.2f} : la cote brute "
+            f"({alpha_cash * 100:.1f} %) est relevée à {alpha * 100:.1f} % — "
+            "en tournoi un jeton risqué pèse plus qu'un jeton gagné.")
+    if mdf is not None:
+        reasons.append(
+            f"MDF face à cette taille : {mdf * 100:.1f} % (l'ouvreur risque "
+            f"{relance:g} pour {mort:g} d'argent mort) ; répartie sur "
+            f"{defenseurs} défenseur{'s' if defenseurs > 1 else ''} → part "
+            f"du héros {part * 100:.1f} % des mains, soit un seuil d'équité "
+            f"de {seuil_mdf * 100:.1f} % contre cette range.")
+    reasons.append(
+        f"Seuil de défense effectif : {seuil * 100:.1f} % d'équité — si tu "
+        f"crois l'ouvreur plus {'serré' if eq >= seuil else 'large'} que "
+        "supposé, la décision s'inverse.")
+    if pos == "BB" and probs == (("SB", 1.0),):
+        reasons.append("Blinde contre blinde : tu clôtures l'action ET tu "
+                       "seras en position postflop — le meilleur des cas "
+                       "pour défendre ta part entière.")
+    elif pos in ("SB", "BB"):
+        reasons.append("Hors de position postflop : l'équité affichée est "
+                       "hot-cold, elle se réalise mal — le seuil MDF est "
+                       "déjà le plancher théorique, pas une invitation à "
+                       "l'élargir.")
+    elif pos == "BTN":
+        reasons.append("En position sur l'ouvreur : la part défendue se "
+                       "réalise mieux que hot-cold.")
+
+    assumptions = [
+        f"Range adverse = {desc} (charts GTO_PRESETS approximatives) ; la "
+        "mise subie est supposée être une OUVERTURE — face à une 3-bet, la "
+        "range réelle est bien plus serrée et le verdict ne vaut plus.",
+        "Partage symétrique de la MDF entre les joueurs restants : hypothèse "
+        "assumée, la défense d'équilibre se concentre en réalité sur la BB.",
+        "Équités par la matrice 169 × 169 du solveur push/fold (Monte-Carlo "
+        "±0,9 pt par paire) : les blockers ne jouent que sur les masses de "
+        "combos, pas à l'intérieur d'un groupe.",
+    ]
+    if len(probs) > 1:
+        assumptions.append(
+            "Les joueurs entre l'ouvreur et toi sont supposés couchés ; "
+            "probabilités d'ouverture dérivées des fréquences de chart : "
+            + ", ".join(f"{p} {pr * 100:.0f} %" for p, pr in probs) + ".")
+
+    if eq >= seuil + _BANDE_DEFENSE:
+        if valeur:
+            action = "CALL ou 3-BET (valeur)"
+            reasons.append(
+                f"Contre les {mdf_v * 100:.0f} % de sa range qui continuent "
+                f"face à une 3-bet au pot, ta main garde "
+                f"{eq_vs_cont[g] * 100:.1f} % : relancer pour la valeur est "
+                "au moins aussi bon que payer.")
+        else:
+            action = "CALL (défense)"
+            reasons.append(
+                f"Au-dessus du seuil mais {eq_vs_cont[g] * 100:.1f} % "
+                "seulement contre sa range de continuation : payer garde "
+                "les mains dominées dans le coup, relancer les chasse.")
+    elif eq > seuil - _BANDE_DEFENSE:
+        action = "MARGINAL — au seuil de défense"
+        reasons.append(
+            f"|équité − seuil| < {_BANDE_DEFENSE * 100:.0f} point : c'est "
+            "l'ordre du bruit Monte-Carlo de la matrice d'équité — les deux "
+            "options se valent, l'erreur ne coûte presque rien.")
+    else:
+        frequence = _frequence_bluff_3bet(g, eq_g_seuil=(None if mdf is None
+                                                         else seuil),
+                                          pos=pos, opener=spot.opener,
+                                          eq_vs_cont=eq_vs_cont)
+        if frequence > 0.0:
+            action = (f"MIXTE — 3-bet bluff {frequence * 100:.0f} % du "
+                      "temps, sinon FOLD")
+            reasons.append(
+                f"Sous le seuil de call mais avec un blocker (as ou roi) : "
+                f"candidate au 3-bet bluff, ratio 2:1 valeur:bluff → "
+                f"{frequence * 100:.0f} % du temps. Style assumé, pas un "
+                "solve.")
+        else:
+            action = "FOLD"
+            reasons.append(
+                f"{eq * 100:.1f} % < {seuil * 100:.1f} % : hors de la part "
+                "de défense que la MDF impose, et sans blocker qui "
+                "justifierait un bluff.")
+
+    return Advice(
+        action=action,
+        confidence="indicatif",
+        regime="défense face à une ouverture (équité vs chart d'ouverture)",
+        equity=eq,
+        required=alpha,
+        mdf=mdf,
+        ev_bb=ev_call,
+        bubble=bf,
+        hand=label,
+        reasons=reasons,
+        assumptions=assumptions,
+    )
+
+
+def _frequence_bluff_3bet(g: int, eq_g_seuil, pos: str, opener: str,
+                          eq_vs_cont) -> float:
+    """Fréquence de 3-bet bluff du groupe ``g``, au ratio 2:1 valeur:bluff.
+
+    Les candidats sont les groupes JUSTE SOUS le seuil de call portant un as
+    ou un roi (le groupe est A-haut ou K-haut, donc la main bloque bien les
+    continuations dominantes), pris par équité décroissante jusqu'à couvrir
+    la moitié de la masse des 3-bets de valeur (:data:`_RATIO_BLUFF_3BET`).
+    Rend 0 si ``g`` n'est pas retenu. La fréquence est UNIFORME sur les
+    candidats retenus : masse requise / masse retenue, plafonnée à 1.
+    """
+    if eq_g_seuil is None:
+        return 0.0
+    classement = _classement_defense(pos, opener)
+    if classement is None:
+        return 0.0
+    eq_g, ordre, _ = classement
+    masses = GROUP_COMBO_COUNT / float(N_COMBOS)
+    valeur_masse = float(sum(
+        masses[j] for j in range(N_GROUPS)
+        if eq_g[j] >= eq_g_seuil and float(eq_vs_cont[j]) >= 0.5))
+    besoin = valeur_masse * _RATIO_BLUFF_3BET
+    if besoin <= 0.0:
+        return 0.0
+    retenus, masse_retenue = [], 0.0
+    for j in ordre:
+        j = int(j)
+        if eq_g[j] >= eq_g_seuil - _BANDE_DEFENSE:
+            continue  # au-dessus du seuil ou dans la bande : pas un bluff
+        if group_name(j)[0] not in "AK":
+            continue
+        retenus.append(j)
+        masse_retenue += float(masses[j])
+        if masse_retenue >= besoin:
+            break
+    if g not in retenus or masse_retenue <= 0.0:
+        return 0.0
+    return min(1.0, besoin / masse_retenue)
+
+
+def _advise_preflop_profond(spot: Spot, hero: list[int]) -> Advice:
+    """Aiguillage du préflop profond : pot ouvert → défense, sinon chart.
+
+    C'est ici que le conseiller cesse de répondre à « faut-il ouvrir ? »
+    quand la question posée est « faut-il défendre ? » — le défaut structurel
+    mesuré par le banc Pluribus (section 9 de son rapport).
+    """
+    if _face_a_ouverture(spot):
+        conseil = _advise_preflop_defense(spot, hero)
+        if conseil is not None:
+            return conseil
+    return _advise_preflop_deep(spot, hero)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -955,4 +1446,4 @@ def advise(spot: Spot) -> Advice:
     eff_bb = spot.stack / spot.big_blind if spot.big_blind > 0 else 0.0
     if spot.players == 2 and 1.0 <= eff_bb <= MAX_PUSHFOLD_BB:
         return _advise_preflop_short(spot, hero, eff_bb)
-    return _advise_preflop_deep(spot, hero)
+    return _advise_preflop_profond(spot, hero)

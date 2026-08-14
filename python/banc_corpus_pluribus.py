@@ -16,8 +16,10 @@ au flop — 990 runouts × la range adverse à chaque spot, soit ≈ 350 ms — 
 il n'est pas réductible sans renoncer à l'exactitude, donc au caractère
 rejouable au chiffre près.
 
-Résultat du rejeu complet au 14 août 2026 (icm.py corrigé du seuil PKO,
-range adverse « moyenne », intervalle de Wilson à 95 %) ::
+Résultat du rejeu complet au 14 août 2026, AVANT le modèle de défense
+préflop — le conseiller répondait alors « face à une relance » avec la
+chart d'ouverture, un modèle hors de son domaine (icm.py corrigé du seuil
+PKO, range adverse « moyenne », intervalle de Wilson à 95 %) ::
 
     préflop · tapis court (< 15 bb)       17 spots · accord 84,6 %
     préflop · profond (≥ 15 bb)       10 282 spots · accord 86,3 % [12,9;14,4]
@@ -26,11 +28,35 @@ range adverse « moyenne », intervalle de Wilson à 95 %) ::
     postflop · river                   1 040 spots · accord 64,4 % [32,7;38,5]
     TOUS RÉGIMES                      15 169 spots · accord 78,0 % [21,3;22,7]
 
-Les intervalles portent le DÉSACCORD. Le désaccord postflop (~36 %) n'est
-pas une mesure du postflop seul : la famille la plus nombreuse d'un corpus
-6-max est la DÉFENSE face à une ouverture, à laquelle le conseiller répond
-avec la chart d'ouverture — un modèle appliqué hors de son domaine, compté
-tel quel (voir la section 9 du rapport). Cash 6-max à 100 bb sans ICM :
+Résultat du rejeu complet au 14 août 2026, APRÈS l'ajout du modèle de
+défense préflop face à une ouverture — ``_advise_preflop_defense`` dans
+``spot_advisor`` : équité contre la range d'ouverture supposée, cote
+exacte du pot, MDF partagée ; mêmes conditions par ailleurs ::
+
+    préflop · tapis court (< 15 bb)       17 spots · accord 82,4 % [ 6,2;41,0]
+    préflop · profond (≥ 15 bb)       10 282 spots · accord 90,2 % [ 9,2;10,4]
+    postflop · flop                    2 317 spots · accord 63,0 % [35,1;39,1]
+    postflop · turn                    1 513 spots · accord 63,8 % [33,8;38,7]
+    postflop · river                   1 040 spots · accord 64,4 % [32,7;38,5]
+    TOUS RÉGIMES                      15 169 spots · accord 81,3 % [18,1;19,3]
+
+Lecture de l'écart : le préflop profond passe de 86,3 % à 90,2 %
+d'accord, intervalles de Wilson DISJOINTS (désaccord [12,9;14,4] contre
+[9,2;10,4]) — l'amélioration n'est pas du bruit. La famille « préflop ·
+face à une relance » (4 946 spots, la plus nombreuse du corpus) est
+désormais tranchée par le bon modèle : accord 87,7 % [11,4;13,3], avec
+302 MARGINAL (bande de bruit de la matrice d'équité) et 31 MIXTE (3-bet
+bluff en fréquence) hors dénominateur, comme le veut la règle du banc.
+Les trois rues postflop sont STRICTEMENT identiques à l'avant — preuve
+comptée qu'aucun autre régime n'a bougé. Le tapis court passe de 11/13 à
+14/17 (les 4 spots autrefois non tranchés le sont maintenant) : un régime
+à 17 spots ne mesure rien, son intervalle le dit. Le texte imprimé par
+les sections 3 et 9 du rapport (« il manque un composant… ») décrit
+l'état d'AVANT et reste à mettre à jour ; en section 9, les spots de
+défense sont comptés dans la ligne « ranges d'ouverture (GTO_PRESETS) »,
+ce qui est exact — c'est bien la brique utilisée, côté vilain cette fois.
+
+Les intervalles portent le DÉSACCORD. Cash 6-max à 100 bb sans ICM :
 aucun de ces chiffres ne valide le conseil en tournoi ni le tapis court.
 
 Pourquoi ce fichier existe
@@ -1393,14 +1419,14 @@ def rapport(res: Resultat, args: argparse.Namespace) -> None:
         print(f"    {nom:<42}{etat}")
         print(f"      {portee}")
     print()
-    print("  Il manque un composant à cette liste parce qu'il n'existe pas :")
-    print("  la DÉFENSE face à une ouverture. Le conseiller y répond avec la")
-    print("  chart d'ouverture de la position, qui suppose un pot non ouvert.")
-    print("  Les spots correspondants sont donc comptés dans la ligne")
-    print("  « ranges d'ouverture » ci-dessus alors qu'ils posent une autre")
-    print("  question — c'est la famille la plus nombreuse d'un corpus 6-max,")
-    print("  et le désaccord qu'on y mesure ne dit pas que la chart est")
-    print("  fausse : il dit qu'on l'applique là où elle n'a rien à faire.")
+    print("  Le composant qui manquait à cette liste existe depuis le 14 août")
+    print("  2026 : la DÉFENSE face à une ouverture (équité contre la range")
+    print("  d'ouverture supposée, cote du pot exacte, MDF face à la taille —")
+    print("  spot_advisor._advise_preflop_defense). Ses spots restent comptés")
+    print("  sous « ranges d'ouverture » ci-dessus, car sa range adverse VIENT")
+    print("  des mêmes charts : un désaccord y teste la chart autant que le")
+    print("  calcul. Mesuré au rejeu complet : préflop profond 86,3 % → 90,2 %")
+    print("  d'accord, famille « face à une relance » 87,7 % (4 946 spots).")
 
     _titre("9 bis. LIMITES — à lire avant de citer un chiffre de ce rapport")
     for ligne in (

@@ -100,7 +100,8 @@ def enregistrer_capture(image_b64: str, note: str = "") -> Path:
     return chemin
 
 
-def enregistrer_echec(image_b64: str, diagnostic: dict) -> Path:
+def enregistrer_echec(image_b64: str, diagnostic: dict,
+                      dossier: Path | None = None) -> Path:
     """Archive une découpe qui n'a pas été lue avec certitude.
 
     Parameters
@@ -112,13 +113,20 @@ def enregistrer_echec(image_b64: str, diagnostic: dict) -> Path:
     diagnostic : dict
         Ce que le recogniseur a renvoyé (statut, distance, marge,
         best_guess), plus le contexte utile (cible héros/board).
+    dossier : Path, optional
+        Racine d'archive DÉJÀ résolue. Sert à l'archivage différé (thread) :
+        le dossier est fixé au moment de la requête, pas au moment de
+        l'écriture — sans quoi un environnement restauré entre-temps (les
+        tests détournent ``LOCALAPPDATA``) ferait écrire ailleurs. Absent,
+        comportement historique : ``dossier_archive()``.
 
     Returns
     -------
     Path
         Chemin de l'image écrite ; le diagnostic est à côté en ``.json``.
     """
-    d = dossier_archive() / "echecs"
+    d = (dossier if dossier is not None else dossier_archive()) / "echecs"
+    d.mkdir(parents=True, exist_ok=True)
     statut = str(diagnostic.get("statut", "refus"))
     chemin = _horodate(d, statut, ".png")
     chemin.write_bytes(_decoder(image_b64))

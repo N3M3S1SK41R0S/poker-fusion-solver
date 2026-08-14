@@ -337,26 +337,50 @@ class TestTolerancePreflop(unittest.TestCase):
         self.assertLess(b.basse, brute_b)
 
     def test_la_tolerance_est_reellement_dissuasive(self) -> None:
-        """Un suivi dont l'équité uniforme brute est juste sous la cote ne doit
-        PAS être accusé si l'écart tient dans la tolérance."""
+        r"""Un suivi dont l'équité uniforme brute est juste sous la cote ne doit
+        PAS être accusé si l'écart tient dans la tolérance.
+
+        Construction de la cote, vérifiée à la main : ``alpha_requise`` prend
+        le pot GAGNABLE (mise adverse comprise). Inverser
+        :math:`\alpha = c/(P+c)` donne :math:`c = \alpha P/(1-\alpha)`, et
+        alors :math:`c/(P+c) = \alpha` exactement — contrôle avec
+        :math:`\alpha = 0{,}3`, :math:`P = 1000` : :math:`c = 3000/7
+        = 428{,}571`, et :math:`428{,}571/1428{,}571 = 0{,}3`. La version
+        interrompue de ce test passait ``pot_gagnable = P + c`` — la mise
+        adverse comptée DEUX fois — et la cote produite valait
+        :math:`\alpha/(1+\alpha)` au lieu de :math:`\alpha` (mesuré :
+        0,26155 = 0,35420/1,35420, la signature exacte du double comptage).
+        C'est la construction qui était fausse, pas la tolérance : elle n'a
+        pas bougé d'un point.
+        """
         b = banc.bornes_equite(parse_cards("7c 2d"), [])
         brute_u = b.brutes[2]
         # Cote calée 1 point au-dessus de l'équité brute : dans la tolérance.
         alpha_vise = brute_u + 0.01
-        pot, c = 1000.0, alpha_vise * 1000.0 / (1.0 - alpha_vise)
+        pot_gagnable = 1000.0
+        c = alpha_vise * pot_gagnable / (1.0 - alpha_vise)
         d = _d(street=Street.PREFLOP, cards=("7c", "2d"), board=(),
-               pot_gagnable=pot + c, to_call=c, montant=c)
-        self.assertAlmostEqual(banc.alpha_requise(pot + c, c), alpha_vise, places=9)
+               pot_gagnable=pot_gagnable, to_call=c, montant=c)
+        self.assertAlmostEqual(banc.alpha_requise(pot_gagnable, c), alpha_vise,
+                               places=9)
         self.assertIsNone(banc.prouver(d, b, 100.0))
 
     def test_hors_tolerance_le_detecteur_conclut_quand_meme(self) -> None:
-        """Sinon la tolérance serait un bâillon, pas une marge."""
+        """Sinon la tolérance serait un bâillon, pas une marge.
+
+        Même inversion de cote que le test précédent — et même correction du
+        double comptage de la mise adverse. La cote visée dépasse l'équité
+        uniforme brute de tolérance + 5 points : le détecteur A3 doit
+        conclure malgré la marge.
+        """
         b = banc.bornes_equite(parse_cards("7c 2d"), [])
         alpha_vise = b.brutes[2] + banc.TOLERANCE_PREFLOP + 0.05
-        pot = 1000.0
-        c = alpha_vise * pot / (1.0 - alpha_vise)
+        pot_gagnable = 1000.0
+        c = alpha_vise * pot_gagnable / (1.0 - alpha_vise)
         d = _d(street=Street.PREFLOP, cards=("7c", "2d"), board=(),
-               pot_gagnable=pot + c, to_call=c, montant=c)
+               pot_gagnable=pot_gagnable, to_call=c, montant=c)
+        self.assertAlmostEqual(banc.alpha_requise(pot_gagnable, c), alpha_vise,
+                               places=9)
         p = banc.prouver(d, b, 100.0)
         self.assertIsNotNone(p)
         self.assertEqual(p.critere, "A3")

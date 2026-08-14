@@ -2,6 +2,112 @@
 
 ## Non publié — 14 août 2026 (suite)
 
+### Conseiller : la défense préflop face à une ouverture existe
+
+Le plus gros écart de justesse mesuré au banc Pluribus est clos. Nouveau
+modèle `_advise_preflop_defense` (`pfs/analysis/spot_advisor.py`) : équité
+contre la range d'ouverture supposée (GTO_PRESETS ; mélange pondéré par les
+fréquences de chart quand l'ouvreur est inconnu, champ `Spot.opener` sinon),
+cote du pot exacte b/(P+b) relevée par le bubble factor en tournoi,
+MDF = P₀/(P₀+R) face à la taille, part du héros 1−(1−MDF)^(1/n), 3-bet
+valeur/bluff au ratio 2:1 (style assumé, blockers A/K). Verdict
+« indicatif », chaque seuil dérivé d'un calcul écrit dans la docstring.
+`range_model` : `PREFLOP_POSITIONS`, `opening_range()`,
+`opening_fraction()` (ajouts purs). Tests : `tests/test_advisor_defense.py`.
+
+**Mesuré au rejeu complet des 10 000 mains** : préflop profond 86,3 % →
+**90,2 %** d'accord (intervalles de Wilson disjoints), famille « face à une
+relance » (4 946 spots) **87,7 %**, postflop strictement inchangé, tous
+régimes 78,0 % → **81,3 %**.
+
+### Vitesse : coller → verdict sous 3 s, sans changer un seul résultat
+
+La route `lire_capture` sur la capture Twister 2194×1660 passe de 3,56 s à
+2,3 s à chaud (−37 %) et le premier collage de 4,2 s à 2,9 s : le serveur
+préchauffe les gabarits digit_ocr et les signatures de cartes pendant que le
+navigateur s'ouvre, l'archive des échecs s'écrit en tâche de fond hors du
+chemin de la réponse (dossier figé à la requête, thread non-daemon — rien ne
+se perd, `test_archive_differee.py` le verrouille), et la détection partage
+son calcul (conversion unique des segments, recalage vectorisé, abords en
+sortie anticipée, plus d'aller-retour float64→PIL de 87 Mo, popcount natif
+pour le hachage). Identité prouvée trois fois : A/B ancien-vs-nouveau code
+sur 59 sorties strictement identiques (2 captures + les 57 frames du banc),
+banc vérité-terrain inchangé au chiffre près (243/258, précision 100 %),
+suite de tests verte. Cycle `live/table` mesuré à ~1,45 s : le solde est
+nommé (scan plein cadre du badge ~300 ms — journalisé, donc dû ; conseiller
+~290 ms), pas promis.
+
+**Corrigé dans la foulée** (signalé par le profil) : dans
+`_solid_background_boxes`, les carrés de distance couleur passaient par
+int16 — un écart de canal ≥ 182 débordait en négatif et pouvait faire
+accepter un pixel très loin de la famille. Calcul élargi en int32 sur les
+trois canaux ; aucun verdict des bancs n'a bougé (le débordement n'avait pas
+encore frappé), la bombe est désamorcée.
+
+### Les trois chantiers mathématiques sont clos
+
+- **Le biais de Harville a son juge externe** : `banc_marche_absorbante.py`
+  simule le tournoi comme marche de jetons à pas équitables (absorption à
+  zéro, deux politiques documentées, raccourci exact de ruine du joueur à
+  deux restants) et confronte ses rangs Monte-Carlo (erreurs-types par case)
+  à `icm_equities`/Malmuth-Harville sur 3–6 joueurs. Verdict, sous la
+  dynamique diffusive : Harville sous-estime les places intermédiaires du
+  gros tapis (« leader 2ᵉ » : −2,3 pt, z = 15), surestime celles du petit et
+  sous-estime nettement sa dernière place (−5,4 pt à 4 joueurs, −6,3 à 6) ;
+  en $EV il survalorise les petits tapis de 0,2 à 1,3 % de la dotation.
+  Stable sous la granularité, le biais change de signe sous une dynamique de
+  loterie de tapis : c'est une fonction du modèle de pas, pas un scalaire.
+  Ancres mesurées à chaque run (martingale, bistochasticité, témoin
+  symétrique) ; goldens figés à 3 erreurs-types calculées
+  (`tests/test_marche_absorbante.py`). `pfs/core/icm.py` n'est pas touché :
+  biais de MODÈLE documenté, pas défaut d'implémentation.
+- **La dégénérescence DCFR est dite dans le code** : les docstrings de
+  `pfs/solver/dcfr.py` documentent ce que les défauts font vraiment —
+  `use_schedule=True` (défaut) ignore α, β, γ ; (1,1) = Linear CFR et non
+  « CFR standard » ; β = 0 divise par deux (pas de remise à zéro CFR+) ;
+  aucun paramètre fini ne donne CFR+ ni Vanilla (le poids de t = 1 vaut ½
+  pour tout exposant) ; γ pondère la contribution neuve, pas l'accumulateur
+  du papier. Tout est adossé aux mesures de
+  `tests/test_dcfr_degenerescences.py` (40 tests).
+- **Le banc WSOP est à sa place** (`python/banc_wsop.py` +
+  `python/tests/test_banc_wsop.py`, 49/49). Les deux tests rouges de
+  `TestTolerancePreflop` comptaient la mise adverse deux fois dans le pot
+  gagnable (cote produite α/(1+α) au lieu de α — l'échec 0,26155 pour
+  0,35420 visé en est la signature). Construction corrigée par calcul
+  indépendant ; `TOLERANCE_PREFLOP` n'a pas bougé d'un point.
+- **`chantiers_interrompus/` ne contient plus de chantier ouvert.**
+
+### Interface — polissage visuel et mobile (ui.html uniquement)
+
+- Corrigé : la classe .kpis (tuiles du solveur postflop et de l'ICM)
+  n'existait pas en CSS — les tuiles s'empilaient verticalement pleine
+  largeur ; elles forment désormais une rangée responsive.
+- Corrigé : var(--am) n'existe pas dans la palette — les bordures d'accent
+  ambre des encadrés éthiques (Calibration, Live) étaient invisibles et
+  l'avertissement « non comparable » de Mes sessions perdait sa couleur ;
+  remplacé par var(--y).
+- Corrigé : la phrase de confirmation « argent fictif » (Live) et « en
+  continu » (Calibration) subissaient les majuscules du style global des
+  label ; rendues en casse normale et lisible.
+- Frise d'équité : plus jamais de case « ⟳ » orpheline après un échec
+  d'appel, plus de frise à case unique (elle se retire), et un garde de
+  course empêche deux verdicts enchaînés de mélanger leurs chiffres.
+- Infobulles pédagogiques : utilisables au doigt (tap = afficher/masquer),
+  repositionnées au-dessus quand le bas de l'écran couperait la bulle,
+  bornées à la largeur de l'écran.
+- Mobile (≤760/≤420 px) : tuiles du verdict en 2 colonnes, vignettes de
+  cartes réduites, groupes Flop·Turn·River empilés proprement, frise en
+  grille 2 colonnes, grand mot du verdict repliable, onglet Ranges sans
+  débordement horizontal.
+- Cohérence : tuiles KPI affranchies du min-width des colonnes, h2 sans
+  marge haute en tête de carte, états de chargement ajoutés, anti-rebond
+  sur la recherche du lexique, apparition en fondu léger des résultats
+  ponctuels. Pied de page passé à v4.5 (il affichait v4.2).
+- Vérifié : 0 erreur console sur les 14 onglets, desktop et mobile ; aucun
+  scroll horizontal à 375 px ; tests structurels 57/57 verts. Aucune
+  logique métier, aucun payload d'API modifiés.
+
+
 ### Onglet Live — le conseil en direct, sur argent fictif prouvé uniquement
 
 Le mode Live lit la table en continu (~1,2 s par cycle) et affiche le

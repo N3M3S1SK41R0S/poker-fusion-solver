@@ -1,4 +1,4 @@
-"""
+r"""
 F8 — Solveur GTO : DCFR alterné + Hyperparameter Schedules.
 
 Sources
@@ -20,6 +20,44 @@ Ce module est l'implémentation de référence, en Python. Elle sert à :
 
 Elle n'est pas destinée à passer à l'échelle du NLHE — c'est le rôle du
 portage Rust + blueprint pré-calculé.
+
+Ce que les paramètres font VRAIMENT — à lire avant de citer un papier
+---------------------------------------------------------------------
+Tout ce qui suit est MESURÉ par ``tests/test_dcfr_degenerescences.py`` contre
+des réimplémentations de référence indépendantes (et par
+``banc_calculs_exacts.py --dcfr``) ; rien n'est affirmé sur la foi des noms.
+
+* **Par défaut, α, β et γ de la config sont IGNORÉS** : ``use_schedule=True``
+  fait calculer (α, β, γ) à chaque itération par
+  :func:`hyperparameter_schedule`. Les valeurs DCFR (1.5, 0, 2) des champs ne
+  gouvernent le solveur que si l'appelant passe ``use_schedule=False``.
+* **L'escompte des regrets est appliqué en FIN d'itération** : la
+  contribution de l'itération *t* est multipliée par
+  :math:`\prod_{s=t}^{T} s^\alpha/(s^\alpha+1)` au fil du temps. Conséquences
+  exactes, démontrées et mesurées :
+
+  - ``(α, β) = (1, 1)`` ⇒ **Linear CFR** (poids résiduel ∝ t, écart L∞
+    ≤ 1,4e-15), et PAS « CFR standard » — l'affirmation contraire a longtemps
+    traîné dans le dépôt ;
+  - ``β = 0`` ⇒ poids :math:`t^0/(t^0+1) = ½` : **division par deux** des
+    regrets négatifs — le réglage propre de DCFR — et PAS la remise à zéro
+    de CFR+ (qui demanderait β → −∞) ;
+  - **aucun (α, β) fini ne donne CFR+ ni Vanilla CFR** : le poids de
+    l'itération 1 vaut ½ pour tout exposant fini (:math:`1^x = 1`), et cette
+    trace ne s'efface jamais. Les limites α, β → ±∞ donnent CFR+ / Vanilla
+    « à l'itération 1 divisée par deux près » (égalité exacte mesurée) ;
+  - ``t**alpha`` déborde (`OverflowError`) dès :math:`\alpha\ln T > 709{,}78`
+    — α > 134 à T = 200, α > 103 à T = 1000.
+
+* **γ n'implémente PAS la loi du papier** : Brown & Sandholm escomptent
+  l'ACCUMULATEUR de stratégie moyenne (poids résiduel ∝ t^γ) ; ici
+  :math:`(t/(t+1))^\gamma` pondère la CONTRIBUTION NEUVE et l'accumulateur
+  n'est jamais escompté. La plage des poids reste bornée par :math:`2^\gamma`
+  au lieu de croître comme :math:`T^\gamma` : la moyenne est quasi uniforme.
+  La convergence observée n'en souffre pas sur Kuhn (le selftest F8 le fige),
+  mais citer « DCFR (2019) » pour la stratégie moyenne de ce module serait
+  inexact — c'est documenté, mesuré, et épinglé par un test qui doit tomber
+  si quelqu'un aligne γ sur le papier.
 """
 
 from __future__ import annotations
@@ -175,16 +213,31 @@ def hyperparameter_schedule(t: int, total: int) -> tuple[float, float, float]:
 
 @dataclass(slots=True)
 class DCFRConfig:
+    """Paramètres du solveur — voir « Ce que les paramètres font VRAIMENT »
+    dans l'en-tête du module avant d'en déduire un algorithme nommé.
+
+    Attention au piège des défauts : ``use_schedule=True`` (le défaut) fait
+    IGNORER ``alpha``, ``beta`` et ``gamma`` — le schedule HS-DCFR les
+    recalcule à chaque itération. Poser (α, β, γ) fixes exige
+    ``use_schedule=False``.
+    """
+
     alpha: float = 1.5
-    """Pondération des regrets positifs : t^α / (t^α + 1)."""
+    """Escompte des regrets positifs, appliqué en fin d'itération t :
+    facteur t^α / (t^α + 1). Ignoré tant que ``use_schedule`` est vrai."""
     beta: float = 0.0
-    """Pondération des regrets négatifs : t^β / (t^β + 1)."""
+    """Escompte des regrets négatifs : facteur t^β / (t^β + 1). À β = 0 ce
+    facteur vaut ½ (division par deux, le réglage DCFR) — PAS la remise à
+    zéro de CFR+, qui est la limite β → −∞. Ignoré si ``use_schedule``."""
     gamma: float = 2.0
-    """Pondération de la stratégie moyenne : (t/(t+1))^γ."""
+    """Poids (t/(t+1))^γ de la CONTRIBUTION NEUVE à la stratégie moyenne.
+    Ce n'est PAS l'escompte d'accumulateur du papier DCFR (poids ∝ t^γ) :
+    voir l'en-tête du module. Ignoré si ``use_schedule``."""
     alternating: bool = True
     """Mise à jour alternée des joueurs — plus rapide en pratique."""
     use_schedule: bool = True
-    """Active HS-DCFR (Zhang, McAleer & Sandholm 2024)."""
+    """Active HS-DCFR (Zhang, McAleer & Sandholm 2024). Tant que c'est vrai,
+    les champs alpha/beta/gamma ci-dessus sont sans effet."""
     prune_threshold: float | None = -1e5
     """Élagage : on n'explore pas une branche à regret très négatif. None = off."""
 

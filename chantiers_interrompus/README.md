@@ -8,23 +8,23 @@ rien à voir avec le logiciel.
 
 Ils ne sont pas jetés pour autant — chacun porte du travail réel.
 
-## `banc_wsop.py` et `test_banc_wsop.py`
+## ~~`banc_wsop.py` et `test_banc_wsop.py`~~ — TERMINÉ le 14 août 2026
 
-Banc destiné à parcourir les 83 mains des World Series 2023 du corpus PHH et
-à classer chaque décision en trois catégories :
+Chantier clos, fichiers déplacés dans `python/` et `python/tests/`. Le banc
+parcourt les 83 mains des World Series 2023 du corpus PHH et classe chaque
+décision en trois catégories (erreur prouvable sans le recul / écart avec le
+recul seul, nommé sophisme du résultat / désaccord sans preuve).
 
-* **erreur prouvable sans le recul** — la décision est mauvaise contre toute
-  range plausible, donc avec la seule information disponible au moment de
-  jouer. C'est la seule catégorie où l'on peut dire qu'un professionnel s'est
-  trompé ;
-* **écart avec le recul seul** — notre conseiller aurait joué autrement et,
-  les cartes étant connues, cela aurait rapporté davantage. **Ce n'est pas une
-  erreur** : c'est le sophisme du résultat, et le banc doit le nommer comme
-  tel ;
-* **désaccord sans preuve**.
-
-Deux tests échouent (`TestTolerancePreflop`), sur la tolérance appliquée aux
-décisions préflop. À reprendre en même temps que le banc.
+Les deux tests rouges de `TestTolerancePreflop` sont verts SANS toucher à la
+tolérance. Départage par calcul indépendant : les deux tests inversaient la
+cote :math:`\alpha = c/(P+c)` en :math:`c = \alpha P/(1-\alpha)` — inversion
+juste quand :math:`P` est le pot GAGNABLE — puis passaient
+``pot_gagnable = P + c``, comptant la mise adverse deux fois. La cote
+produite valait :math:`\alpha/(1+\alpha)` au lieu de :math:`\alpha`, et
+l'échec mesuré (0,26155 pour 0,35420 visé, or 0,35420/1,35420 = 0,26155) en
+est la signature exacte. Les cibles étaient justes, la construction de la
+décision synthétique était fausse ; `TOLERANCE_PREFLOP` n'a pas bougé d'un
+point.
 
 ## ~~`test_icm_ordre_et_elimination.py`~~ — TERMINÉ le 14 août 2026
 
@@ -50,13 +50,29 @@ corrigés :
   ``[100, 100, 0, 0]``, gains 50/30/20/10). Aucune tolérance n'a été
   élargie.
 
-## Ce qu'il reste à faire, par ordre d'urgence
+## ~~Ce qu'il reste à faire~~ — TOUT EST CLOS le 14 août 2026
 
-1. **La marche aléatoire absorbante** — la seule chose qui puisse valider un
-   modèle d'ICM, puisqu'un banc d'invariants ne peut vérifier que
-   l'appartenance à la famille, jamais le choix du membre. L'écart mesuré
-   entre elle et Malmuth-Harville **est** le biais de Harville.
-2. **La dégénérescence DCFR** : le test affirme que `α = β = γ = 1` donne
-   CFR standard, ce qui est faux — cela donne Linear CFR. Vanilla CFR est la
-   limite infinie, CFR+ est `(∞, 0, 2)`.
-3. **Le banc WSOP** ci-dessus, avec ses deux tests de tolérance préflop.
+1. ~~**La marche aléatoire absorbante**~~ — construite :
+   `python/banc_marche_absorbante.py` + `python/tests/test_marche_absorbante.py`.
+   Le biais de Harville est quantifié contre la marche à pas unitaires
+   (politique documentée, ancres martingale et bistochastique mesurées) :
+   Harville sous-estime les places intermédiaires du gros tapis (−2,3 pt sur
+   « le leader finit 2ᵉ »), surestime celles du petit et sous-estime nettement
+   sa dernière place (−5,4 pt à 4 joueurs, −6,3 à 6) ; en $EV, il survalorise
+   les petits tapis de 0,2 à 0,8 % de la dotation. Le biais change de signe
+   sous la politique « allin » : c'est une fonction de la dynamique supposée,
+   pas un scalaire. Aucun défaut d'implémentation dans `pfs/core/icm.py` —
+   c'est un biais de MODÈLE, documenté dans la docstring du banc.
+2. ~~**La dégénérescence DCFR**~~ — le test avait déjà été réécrit au tour 5
+   (`python/tests/test_dcfr_degenerescences.py`, 40 tests) : il MESURE les
+   dégénérescences contre des réimplémentations de référence au lieu
+   d'affirmer des noms. Vérifié le 14 août : `(1,1)` = Linear CFR (exact à
+   1e-12), `(1,1)` ≠ Vanilla, `β = 0` = division par deux (pas CFR+), aucun
+   paramètre fini ne donne CFR+ ni Vanilla (le poids de t = 1 vaut ½ pour
+   tout exposant fini), γ n'implémente pas la loi du papier. Les docstrings
+   de `pfs/solver/dcfr.py` disent désormais ce que les défauts font VRAIMENT
+   (schedule actif par défaut qui ignore α, β, γ ; γ sur la contribution et
+   non l'accumulateur).
+3. ~~**Le banc WSOP**~~ ci-dessus.
+
+Ce dossier ne contient plus de chantier ouvert.

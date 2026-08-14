@@ -35,6 +35,7 @@ __all__ = [
     "card_str", "combo_index", "combo_cards", "group_index", "group_name",
     "COMBO_TO_GROUP", "GROUP_COMBO_COUNT",
     "HandClass", "Range", "parse_range", "GTO_PRESETS",
+    "PREFLOP_POSITIONS", "opening_range", "opening_fraction",
 ]
 
 F64 = npt.NDArray[np.float64]
@@ -490,3 +491,49 @@ GTO_PRESETS: dict[str, str] = {
           "A2o+, K5o+, K4o-K2o:0.5, Q8o+, Q7o:0.5, J8o+, J7o:0.4, T8o+, "
           "97o+, 87o, 76o:0.5",
 }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ACCÈS CANONIQUE AUX RANGES D'OUVERTURE (ajout — conseiller de défense)
+# ═══════════════════════════════════════════════════════════════════════════
+
+PREFLOP_POSITIONS: tuple[str, ...] = ("UTG", "MP", "CO", "BTN", "SB", "BB")
+"""Ordre de parole préflop à une table 6-max — la big blind parle en dernier.
+
+C'est l'ordre qu'exploite le modèle de défense du conseiller : face à une
+ouverture, l'ouvreur est nécessairement assis AVANT le héros dans cette
+séquence (la BB n'ouvre jamais, elle est déjà servie).
+"""
+
+
+@lru_cache(maxsize=8)
+def opening_range(position: str) -> Range:
+    """Range d'ouverture de référence de ``position`` (:data:`GTO_PRESETS` parsée).
+
+    Mémoïsée parce que les presets sont des constantes ; l'objet rendu est
+    donc PARTAGÉ — copier ``weights`` avant toute modification en place.
+
+    >>> opening_range("UTG").fraction < opening_range("BTN").fraction
+    True
+    >>> opening_range("XX")  # doctest: +IGNORE_EXCEPTION_DETAIL
+    Traceback (most recent call last):
+        ...
+    RangeError: pas de chart d'ouverture pour « XX » ...
+    """
+    if position not in GTO_PRESETS:
+        raise RangeError(f"pas de chart d'ouverture pour « {position} » "
+                         f"(positions couvertes : {', '.join(GTO_PRESETS)}).")
+    return parse_range(GTO_PRESETS[position])
+
+
+def opening_fraction(position: str) -> float:
+    """Part des mains que la chart de ``position`` ouvre (moyenne des 1326 poids).
+
+    C'est exactement le chiffre « chart » que le banc Pluribus imprime en
+    section 6 : la fréquence d'ouverture prescrite, fréquences mixtes
+    comprises.
+
+    >>> 0.05 < opening_fraction("UTG") < opening_fraction("SB") < 0.60
+    True
+    """
+    return opening_range(position).fraction
