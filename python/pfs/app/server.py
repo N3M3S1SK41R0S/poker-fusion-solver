@@ -1534,7 +1534,7 @@ ROUTES: dict[str, Callable[[dict], dict]] = {
 
 def _make_handler(token: str) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
-        server_version = "PokerFusionSolver/2.3"
+        server_version = "PokerFusionSolver/4.5"
         protocol_version = "HTTP/1.1"
 
         def log_message(self, fmt: str, *args: Any) -> None:  # silence
@@ -1580,7 +1580,7 @@ def _make_handler(token: str) -> type[BaseHTTPRequestHandler]:
                 # que le serveur qui répond est bien le processus attendu
                 # (voir _ServeurExclusif : un vieux listener peut capter tout
                 # le port). Ne rend que {ok, version} : rien de sensible.
-                self._json(200, {"ok": True, "version": "2.3"})
+                self._json(200, {"ok": True, "version": "4.5"})
                 return
             self._json(404, {"error": "route inconnue"})
 
