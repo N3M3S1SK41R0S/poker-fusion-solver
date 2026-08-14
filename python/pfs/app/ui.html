@@ -407,6 +407,47 @@ kbd{font:11px ui-monospace,monospace;background:#1a1a28;border:1px solid var(--l
 </section>
 
 <!-- ══════════ SIMULATEUR ══════════ -->
+<section id="s-live">
+  <h1>Live (argent fictif) — le conseil en direct, prouvé d'abord</h1>
+  <p class="lead">Lit ta table <b>en continu</b> et affiche le verdict pendant
+  la main — <b>uniquement</b> sur une table d'argent fictif <b>prouvée</b>
+  (client PMU PLAY, badge vérifié à chaque image). Tout le reste est en
+  lecture seule : c'est l'onglet Calibration.</p>
+
+  <div class="card" style="border-left:3px solid var(--am)">
+    <b>Pourquoi cette porte est verrouillée.</b>
+    <div class="hint" style="margin-top:6px">
+      Un conseil calculé <i>pendant</i> une main d'argent réel prend aux
+      adversaires sans qu'ils le sachent — et fait bannir les comptes. La
+      règle est donc câblée, pas déclarative : le conseiller n'est appelé
+      qu'après une <b>preuve positive</b> d'argent fictif (ta confirmation
+      par fenêtre + le badge « PMU PLAY » vu à l'écran), et au moindre doute
+      — badge absent plus de 60 s, titre changé, panne — l'affichage
+      s'éteint. Le test <span class="mono">test_live_conseil_gate.py</span>
+      vérifie chacun de ces chemins à chaque exécution.
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="align-items:flex-end;gap:8px">
+      <div style="flex:1;min-width:240px">
+        <label>Fenêtre de la table</label>
+        <select id="lv-fen"></select>
+      </div>
+      <button class="ghost" style="width:auto" onclick="lvFenetres()">Rafraîchir</button>
+      <button style="width:auto" id="lv-btn-armer" onclick="lvArmer()">Armer cette fenêtre</button>
+      <button class="ghost" style="width:auto" onclick="lvDesarmer()">Désarmer</button>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:10px">
+      <input type="checkbox" id="lv-confirme" style="width:auto;margin:0">
+      <span>Je confirme : cette table est en <b>argent fictif</b> (PMU PLAY) —
+      pas d'argent réel, pas de freeroll doté.</span></label>
+  </div>
+
+  <div id="lv-gate"></div>
+  <div id="lv-out"></div>
+</section>
+
 <section id="s-simu">
   <h1>Simulateur — une main au hasard, et quoi en faire</h1>
   <p class="lead">Tirage réellement aléatoire. Choisis de <b>voir</b> ou de
@@ -859,7 +900,7 @@ let hmmObs=[], drillT0=0;
 // pas « bet_sizing ». L'ordre va du plus fréquent (juger une main) au plus
 // spécialisé (les outils d'expert).
 const TABS=[["s-spot","♠ Ma main"],["s-review","Mes sessions"],
-            ["s-calib","Calibration"],
+            ["s-calib","Calibration"],["s-live","Live (fictif)"],
             ["s-simu","Simulateur"],["s-lex","Lexique"],
             ["s-study","Ranges"],["s-train","S'entraîner"],
             ["s-fusion","Lire l'adversaire"],["s-sizing","Miser juste"],
@@ -872,6 +913,8 @@ TABS.forEach(([id,label],i)=>{
   b.onclick=()=>{document.querySelectorAll(".tab").forEach(t=>t.classList.remove("on"));
     document.querySelectorAll("section").forEach(s=>s.classList.remove("on"));
     b.classList.add("on"); document.getElementById(id).classList.add("on");
+    if(id==="s-live"&&!document.getElementById("lv-fen").options.length)lvFenetres();
+    if(id!=="s-live"&&typeof lvStop==="function")lvStop();
     if(id==="s-fusion"){fusionRun();skillRun();} if(id==="s-sizing"){sizingRun();bcRun();}
     if(id==="s-bankroll"){brRun();icmRun();} if(id==="s-hmm")hmmRun();
     if(id==="s-spot")document.getElementById("sp-hero").focus();
@@ -1158,6 +1201,115 @@ async function adviseRun(){
       villain:g("sp-villain"),stacks:g("sp-stacks"),payouts:g("sp-payouts")},
       boardCodes,streetNom);
   }
+}
+
+// ══ LIVE (ARGENT FICTIF) ════════════════════════════════════════════════
+// La boucle interroge live/table ~1×/s tant que l'onglet est ouvert et
+// qu'une fenêtre est armée. Le serveur décide TOUT (gate, lecture,
+// conseil) ; l'interface ne fait qu'afficher — y compris les refus.
+let lvTimer=null;
+
+async function lvFenetres(){
+  const sel=document.getElementById("lv-fen");
+  const r=await api("live/fenetres",{});
+  sel.innerHTML="";
+  (r.fenetres||[]).forEach(f=>{const o=document.createElement("option");
+    o.value=f;o.textContent=f;sel.appendChild(o);});
+  if(!sel.options.length){const o=document.createElement("option");
+    o.value="";o.textContent="(aucune fenêtre détectée — ouvre ta table)";
+    sel.appendChild(o);}
+}
+
+function lvStop(){if(lvTimer){clearTimeout(lvTimer);lvTimer=null;}}
+
+async function lvArmer(){
+  const fen=document.getElementById("lv-fen").value;
+  const gate=document.getElementById("lv-gate");
+  if(!fen){gate.innerHTML='<div class="warn">Choisis d\'abord la fenêtre de ta table.</div>';return;}
+  if(!document.getElementById("lv-confirme").checked){
+    gate.innerHTML=`<div class="warn"><b>Confirmation requise.</b> Coche la case
+      « argent fictif » : l'armement ne se fait jamais en silence.</div>`;
+    return;
+  }
+  const r=await api("live/armer",{fenetre:fen,confirme:true});
+  if(r.error){gate.innerHTML=`<div class="warn">${esc(r.error)}</div>`;return;}
+  lvStop(); lvLire();
+}
+
+async function lvDesarmer(){
+  lvStop();
+  await api("live/desarmer",{});
+  document.getElementById("lv-gate").innerHTML=
+    '<div class="card"><span class="chip amb">désarmé — le conseil live est éteint</span></div>';
+  document.getElementById("lv-out").innerHTML="";
+}
+
+function lvGateHTML(g){
+  const vert=g.mode==="live";
+  const badge=g.badge_vu
+    ? (g.badge_age_s>0?`badge vu il y a ${g.badge_age_s.toFixed(0)} s`:"badge vu à l'instant")
+    : (g.badge_refus?esc(g.badge_refus):"badge non vu");
+  const signaux=(g.signaux||[]).map(s=>{
+    const m={supports_play:"✓",contradicts_play:"✗",inconclusive:"·"}[s.verdict]||"·";
+    return `${m} ${s.source} — ${s.detail}`;}).join("\n");
+  return `<div class="card" style="border-left:4px solid ${vert?"var(--g)":"var(--r)"}">
+    <span class="chip ${vert?"ok":"bad"}" title="${esc(signaux)}">
+      ${vert?"● TABLE FICTIVE PROUVÉE — conseil actif":"● NON PROUVÉ — conseil désactivé"}</span>
+    <span class="muted" style="margin-left:8px">${badge} · ${esc(g.raison)}</span>
+  </div>`;
+}
+
+async function lvLire(){
+  if(!document.getElementById("s-live").classList.contains("on")){lvStop();return;}
+  const fen=document.getElementById("lv-fen").value;
+  const t0=performance.now();
+  const r=await api("live/table",{fenetre:fen});
+  const ms=Math.round(performance.now()-t0);
+  const gate=document.getElementById("lv-gate");
+  const out=document.getElementById("lv-out");
+  if(r.error||r.erreur){
+    gate.innerHTML=`<div class="warn">${esc(r.erreur||r.error)}</div>`;
+    lvTimer=setTimeout(lvLire,2500); return;
+  }
+  gate.innerHTML=lvGateHTML(r.gate);
+
+  const L=r.lecture, m=L.montants;
+  const chipM=(nom,z)=>z.valeur!=null
+    ?`<span class="chip ok">${nom} ${z.valeur}</span>`
+    :`<span class="chip bad" title="${esc(z.refus||"")}">${nom} ?</span>`;
+  const lignes=`
+    <div class="card">
+      <div class="streets">
+        <div class="street-g"><div class="street-lbl">Ta main</div>
+          <div>${L.main.length?L.main.map(vignette).join(""):vignetteDos()+vignetteDos()}</div></div>
+        ${L.tableau.length?`<div class="street-g"><div class="street-lbl">Board</div>
+          <div>${L.tableau.map(vignette).join("")}</div></div>`:""}
+        <div class="street-g"><div class="street-lbl">Montants lus</div>
+          <div>${chipM("pot",m.pot)}${chipM("mise",m.mise)}${chipM("tapis",m.tapis)}${chipM("blinde",m.blinde)}</div></div>
+      </div>
+      <div class="hint">${L.sures}/${L.total} carte(s) sûre(s) · ${ms} ms</div>
+    </div>`;
+
+  let verdict="";
+  if(r.conseil){
+    const c=r.conseil, [cls,ico,word]=verdictClass(c.action);
+    verdict=`
+      <div class="verdict ${cls}">
+        <div><div class="act"><span class="ico">${ico}</span>${c.action}</div>
+          <div class="sub"><span class="hand">${c.hand||""}</span> · <span class="word">${word}</span></div></div>
+        <div>${gaugeHTML(c.equity,c.required)}</div>
+      </div>
+      <div class="row">
+        ${c.ev_bb!=null?`<div class="kpi col"><div class="v" style="color:${c.ev_bb>=0?"#22c55e":"#ef4444"}">${c.ev_bb>=0?"+":""}${c.ev_bb.toFixed(2)}</div><div class="l">${tt("EV (bb)","ev")}</div></div>`:""}
+        ${c.equity!=null?`<div class="kpi col"><div class="v">${(c.equity*100).toFixed(1)} %</div><div class="l">${tt("ton équité","equite")}</div></div>`:""}
+        ${c.required!=null?`<div class="kpi col"><div class="v" style="color:#eab308">${(c.required*100).toFixed(1)} %</div><div class="l">${tt("équité requise","equite_requise")}</div></div>`:""}
+      </div>`;
+  }else if(r.conseil_refus){
+    verdict=`<div class="card"><b>Pas de verdict :</b>
+      <span class="muted">${esc(r.conseil_refus)}</span></div>`;
+  }
+  out.innerHTML=lignes+verdict;
+  lvTimer=setTimeout(lvLire,1200);
 }
 
 // ══ SIMULATEUR ══════════════════════════════════════════════════════════

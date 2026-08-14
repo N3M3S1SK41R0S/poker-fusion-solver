@@ -1,5 +1,132 @@
 # Journal des versions — Poker Fusion Solver
 
+## Non publié — 14 août 2026 (suite)
+
+### Onglet Live — le conseil en direct, sur argent fictif prouvé uniquement
+
+Le mode Live lit la table en continu (~1,2 s par cycle) et affiche le
+verdict PENDANT la main — mais seulement derrière une **preuve positive**
+d'argent fictif, et la frontière est câblée, pas déclarée.
+
+- `pfs/app/mode_live.py` (nouveau) fait tout ce qui précède le conseil —
+  résolution de la fenêtre (EnumWindows), capture, badge « PMU PLAY »
+  (`badge_pmu`), décision du gate, lecture des cartes et des montants — et
+  **n'importe aucun module de recommandation** (vérifiable au grep). Le
+  conseiller n'est convoqué qu'APRÈS un verdict ``mode == "live"`` ET une
+  lecture complète (2 cartes héros sûres + les quatre montants) ; sinon un
+  refus explicite, jamais un conseil sur des chiffres devinés.
+- Gate `ComplianceGate.profil_pmu_play()` : sur PMU PLAY, les tables
+  affichent des euros fictifs et des marqueurs de tournoi — le jeu de
+  signaux générique les mettrait toutes en REVIEW à perpétuité. La preuve
+  devient donc l'**identité du client** (badge pixel) TOUJOURS combinée à
+  l'armement manuel confirmé ; le titre et la devise sont journalisés, pas
+  votants. Mémoire du badge de 60 s liée au couple (fenêtre, titre),
+  purgée au moindre changement — fail-closed.
+- Trois routes nouvelles (`live/armer` avec confirmation explicite exigée,
+  `live/desarmer`, `live/table` à contrat clos) ; les routes historiques
+  `live/fenetres` et `live/lire` restent SANS conseil, leur verrou
+  (`test_live_sans_conseil.py`) intact.
+- Onglet « Live (fictif) » : bandeau du gate toujours visible (vert
+  « table fictive prouvée » / rouge « non prouvé »), sélection et armement
+  de fenêtre, cartes en vignettes, montants lus ou refusés, verdict en
+  tuiles avec infobulles — le même composant que ♠ Ma main.
+- **`tests/test_live_conseil_gate.py`** (nouveau, 14 tests) verrouille le
+  miroir inversé du verrou existant : non armé, sans badge, gate en panne,
+  désarmé, titre changé, souvenir expiré, lecture insuffisante ⇒ jamais de
+  conseil ; armé + badge ⇒ le conseil est EXACTEMENT ce que le conseiller
+  recalcule (anti-fabrication).
+
+### Sécurité — banc adverse de la porte Live/conseil
+
+- `python/banc_contournements_live.py` étendu de 5 attaques (H–L) contre la
+  frontière « `live/table` ne conseille que prouvé LIVE », chacune écrite
+  pour de vrai, mesurée, puis retirée (sauvegarde SHA-256) : route sans
+  garde de gate, `try/except` fail-open, badge menteur, titre réintégré
+  comme corroboration, corroboration abandonnée. L'attaque du titre
+  (renommer sa fenêtre « argent fictif ») était un **trou** — aucun test ne
+  l'exerçait ; comblé, puis attrapé. Bilan : **13/13 contournements
+  attrapés** (TÉMOIN, A–L), les deux fichiers de tests verts.
+
+### Le tapis rayé « Twister Flash » se lit : source de candidates par couleur de fond
+
+Une capture PMU PLAY « Twister Flash » (3-max, tapis vert rayé, 2194 × 1660)
+rendait 0/3 : aucune boîte sur les deux cartes du héros, et les trois dos de
+cartes adverses du haut de table promus « hero ». L'instrumentation étape par
+étape (même méthodologie que le chantier QUIET_SIDES) a montré que le tapis
+rayé était INNOCENT à la détection d'arêtes — ses diagonales restent sous le
+seuil (densité d'arêtes du feutre nu : 0,000) et les quatre bords des cartes
+portent chacun 4 à 6 segments verticaux. Le vrai coupable : la plaque
+« Temps : 14 / 10 BB » coupe les DEUX arêtes de chaque carte à la même
+hauteur, chaque paire est donc jugée « carte entière » et son rapport recalé
+(0,830–0,908 sur les 60 paires rejouées) tombe dans le trou entre
+MAX_RATIO = 0,82 et CUT_MIN_RATIO = 0,92 — un trou que les avatars de siège
+(0,846–0,872) interdisent de refermer, et le chemin « carte coupée » ne
+s'ouvre jamais faute d'arête qui se prolonge (contrairement à
+`pmu_hero_tronque`, où une arête suit le bandeau).
+
+La parade est colorimétrique, pas géométrique : sur le deck `pmu_solid`,
+l'aplat EST la signature. `table_detector._solid_background_boxes` rend
+candidate toute composante connexe d'une teinte EXACTE de `FAMILLES`
+(tolérance 6 — celle de l'annotation des 57 captures ; aplats Twister mesurés
+à ≤ 2 de la référence), aux proportions d'une carte entière ou tronquée par
+le bas ([0,60 ; 1,10]), dans la moitié basse, remplissant ≥ 0,55 de sa boîte
+(vraies cartes : 0,71–0,73, amas d'interface ≥ 400 px² : ≤ 0,41), de petit
+côté ≥ 26 px (fragments de barre d'équité du crop KO : ≤ 13 ; plus petite
+vraie carte du corpus : 52), et portant l'encre blanche d'un glyphe —
+part de blanc dans [0,09 ; 0,40], vraies cartes mesurées 0,179–0,242,
+poches d'aplat détachées par le symbole d'enseigne et fragments JPEG ≤ 0,004
+ou ≥ 0,556. Cette dernière garde rend au module sa propriété « le JPEG perd
+des cartes, il n'en invente pas » (sans elle : 7 fantômes à q75, 14 à q60 ;
+avec : 0, et la tranche q75 revient exactement à 53/84). Chaque seuil est
+posé au milieu d'un vide mesuré, chiffres dans les docstrings.
+
+Rôles : « les cartes du héros sont les plus basses » n'autorise pas la
+réciproque. `read_table` ne promeut plus la rangée la plus basse en « hero »
+que si son bas dépasse HERO_BOTTOM_MIN = 0,60 × la hauteur de l'image —
+seuil posé au milieu du vide mesuré sur tous les actifs du dépôt (plus haut
+non-héros : 0,543, board synthétique et dos du siège bas ; plus bas héros :
+0,658, la capture Twister elle-même). Sous le seuil, les cartes restent dans
+« autres » et le board n'est plus contraint d'être au-dessus d'un héros.
+
+Résultats, tous bancs rejoués :
+
+    capture Twister (2194 × 1660)        avant         après
+      cartes du héros localisées          0/2      2/2 (IoU 0,945 et 0,938)
+      lues (chaîne complète)               —       Kd sure (écart 90,
+                                                   marge 307), 8d sure
+                                                   (écart 125, marge 67)
+      dos adverses promus « hero »         3/3           0/3
+    57 captures réelles (banc vérité)
+      rappel de lecture                 243/258       243/258 (94,2 %)
+      précision                          100 %         100 %
+      cartes inventées                     0             0
+      boîtes rendues                      370           370  (aucune nouvelle)
+    banc synthétique (144 tables)
+      localisation                      664/672       664/672
+      boîtes fantômes                    0/986         0/986
+      dos promus                         0/720         0/720
+      rôles justes                      659/672       662/672  (le garde-fou
+                                        de promotion rend son rôle au board
+                                        des tables où la main est manquée)
+
+Coût, meilleur de passes alternées : la capture Twister passe de 1,64 s à
+1,78 s (+8,5 % : la source couleur coûte ~0,25 s sur 3,6 Mpx, partiellement
+compensée par une borne d'élagage pur sur la fenêtre d'appariement — une
+arête d'habillage de 1 355 px l'ouvrait à 1 492 colonnes pour 1 228
+segments, or aucune boîte plus large que √(1,10 × 0,10 × aire) ne peut
+survivre aux bornes d'aire et de rapport : 1,64 → 1,53 s à résultat
+identique par construction). La table 900 × 560 de référence passe de
+0,164 à 0,217 s. Le fond rayé, lui, n'explosait rien : le coût venait de
+cette arête de cadre.
+
+Actifs : découpe `tests/donnees/pmu_twister_feutre_raye.png` (540 × 400,
+78 Ko, cartes + plaque + jeton donneur + rayures) et classe
+`TestTwisterStripedFelt` (6 tests : localisation, rôles, lecture Kd/8d
+affirmée, rien d'autre annoncé, ablation de la source, ablation du seuil de
+promotion). Pas d'entrée dans `verite_captures.json` : ses `emplacements`
+sont globaux et liés à la fenêtre 1899 × 1348 des 57 captures, la frame
+Twister (2194 × 1660) n'y a pas sa place — le test dédié la couvre.
+
 ## v4.5.0 — 14 août 2026
 
 Session « faire marcher le logiciel » : sept agents en parallèle sur les

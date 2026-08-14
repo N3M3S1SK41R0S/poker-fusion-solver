@@ -19,8 +19,10 @@ Quatre propriétés sont vérifiées, dans l'ordre de leur importance :
 2. **Les cartes sont trouvées.** 664/672 = 98,8 % des cartes du héros et du
    board sont localisées à IoU ≥ 0,5. Les seuils gardent ici 2 à 3 points de
    marge, parce qu'un réglage voisin ne doit pas casser la suite.
-3. **Les rôles sont justes.** 659/672 = 98,1 %, et jamais un dos de carte
-   adverse promu en carte du héros ou du board (0/720).
+3. **Les rôles sont justes.** 662/672 = 98,5 % (659 avant HERO_BOTTOM_MIN,
+   qui rend son rôle au board des tables où la main du héros est manquée),
+   et jamais un dos de carte adverse promu en carte du héros ou du board
+   (0/720).
 4. **Les justifications écrites tiennent.** Chaque borne du détecteur est
    remise à sa valeur d'avant sur un sous-banc et doit redonner le défaut
    qu'elle corrige (`TestAblations`) ; la limite JPEG et le recouvrement des
@@ -548,7 +550,7 @@ class TestRoles(unittest.TestCase):
         cls.reads = _reads()
 
     def test_roles_are_right(self) -> None:
-        """Mesure : 659/672 = 98,1 %."""
+        """Mesure : 662/672 = 98,5 % (659 avant HERO_BOTTOM_MIN)."""
         right = total = 0
         for _, st, tr in self.reads:
             labelled = ([(b.box, "hero") for b in tr.hero]
@@ -730,6 +732,103 @@ class TestRealKoHeroBesideARail(unittest.TestCase):
         for g in self.HERO:
             self.assertLess(_best(g, boxes), 0.5,
                             f"l'ablation ne défait plus rien : {boxes}")
+
+
+class TestTwisterStripedFelt(unittest.TestCase):
+    """Les cartes du héros sur le tapis RAYÉ d'une table « Twister Flash ».
+
+    `donnees/pmu_twister_feutre_raye.png` est une découpe (540 × 400, 78 Ko)
+    de la capture PMU PLAY du 14 août 2026 (2194 × 1660, origine de la
+    découpe : 760, 780). La plaque « Temps : 14 / 10 BB » recouvre le bas des
+    deux cartes SUR TOUTE LEUR LARGEUR, et le jeton donneur mord le coin du
+    roi. Vérité-terrain mesurée sur la capture d'origine, ramenée au repère
+    de la découpe : K♦ en (145, 182, 119, 130), 8♦ en (270, 182, 119, 131).
+
+    Ce que le diagnostic a mesuré : les quatre bords portent chacun 4 à 6
+    segments verticaux — le tapis rayé n'empêche PAS de les trouver (ses
+    diagonales restent sous le seuil d'arête : densité 0,000 sur le feutre
+    nu) — mais la plaque coupe les DEUX arêtes de chaque carte À LA MÊME
+    HAUTEUR. Chaque paire est donc jugée « carte entière » (h ≥ 0,85 × span)
+    et son rapport recalé, 0,830 à 0,908 selon la paire, tombe dans le trou
+    entre MAX_RATIO = 0,82 et CUT_MIN_RATIO = 0,92 : zéro candidate, et le
+    chemin « carte coupée » ne s'ouvre jamais faute d'arête qui se prolonge.
+    Élargir ce trou est interdit par les avatars de siège (0,846–0,872).
+    C'est la source par COULEUR DE FOND (`_solid_background_boxes`) qui rend
+    les deux cartes ; sur la capture entière, elles sont en outre lues Kd et
+    8d, affirmées, et les trois dos adverses du haut de table restent dans
+    « autres » — ils étaient promus « hero » avant HERO_BOTTOM_MIN.
+    """
+
+    CAPTURE = DONNEES / "pmu_twister_feutre_raye.png"
+    HERO = ((145, 182, 119, 130), (270, 182, 119, 131))
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.read = read_table(str(cls.CAPTURE))
+
+    def test_both_hero_cards_are_located(self) -> None:
+        boxes = [b.box for b in self.read.all]
+        for g in self.HERO:
+            self.assertGreaterEqual(_best(g, boxes), 0.5,
+                                    f"carte {g} non localisée, boîtes {boxes}")
+
+    def test_they_carry_the_hero_role(self) -> None:
+        hero = [b.box for b in self.read.hero]
+        for g in self.HERO:
+            self.assertGreaterEqual(_best(g, hero), 0.5,
+                                    f"carte {g} localisée mais pas « hero »")
+
+    def test_nothing_else_is_announced(self) -> None:
+        """Les rayures, la plaque, le jeton donneur : aucun ne devient carte."""
+        self.assertEqual(len(self.read.all), 2,
+                         f"{[b.box for b in self.read.all]}")
+
+    def test_the_cards_read_kd_and_8d_sure(self) -> None:
+        """Le critère d'adoption complet : localisées ET lues, affirmées."""
+        from pfs.vision.lecteur_fond_plein import lire_carte_fond_plein
+
+        img = Image.open(self.CAPTURE)
+        lues = []
+        for b in sorted(self.read.hero, key=lambda c: c.x):
+            lu = lire_carte_fond_plein(
+                img.crop((b.x, b.y, b.x + b.w, b.y + b.h)))
+            self.assertTrue(lu.sure, f"boîte {b.box} : {lu.motif}")
+            lues.append(lu.carte)
+        self.assertEqual(lues, ["Kd", "8d"])
+
+    def test_without_the_colour_source_both_cards_are_lost(self) -> None:
+        """Ablation : sans la source par couleur, le trou de rapport reprend
+        les deux cartes — c'était l'état du dépôt, 0 boîte sur la capture."""
+        with patch.object(table_detector, "_solid_background_boxes",
+                          lambda rgb: []):
+            tr = read_table(str(self.CAPTURE))
+        boxes = [b.box for b in tr.all]
+        for g in self.HERO:
+            self.assertLess(_best(g, boxes), 0.5,
+                            f"l'ablation ne défait plus rien : {boxes}")
+
+    def test_backs_alone_in_the_top_half_are_not_promoted(self) -> None:
+        """Des dos de cartes adverses SEULS en haut de table ne font pas une
+        main de héros : c'est la promotion qui rendait « hero » les trois
+        dos de la capture Twister. Le bas de rangée le plus bas d'un
+        non-héros mesure 0,543 × H sur tous les actifs du dépôt, le héros le
+        plus haut 0,658 × H — HERO_BOTTOM_MIN = 0,60 est posé entre les
+        deux, et l'ablation (seuil neutre) doit rendre le défaut."""
+        from pfs.vision.synth_table import FELTS, _card_back
+
+        img = Image.new("RGB", (900, 560), FELTS["feutre vert"])
+        d = ImageDraw.Draw(img)
+        for x in (200, 247, 610, 657):
+            _card_back(d, x, 120, 42, 57)
+        tr = read_table(img)
+        self.assertEqual(tr.hero, [], f"dos promus : {[b.box for b in tr.hero]}")
+        self.assertEqual(len(tr.others), 4,
+                         f"{[b.box for b in tr.others]}")
+        with patch.object(table_detector, "HERO_BOTTOM_MIN", 0.0):
+            tr0 = read_table(img)
+        self.assertEqual(len(tr0.hero), 4,
+                         "l'ablation ne rend plus le défaut : la mesure du "
+                         "seuil est à refaire")
 
 
 class TestACoveredHandKeepsItsRole(unittest.TestCase):

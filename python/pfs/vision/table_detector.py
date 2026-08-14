@@ -9,7 +9,10 @@ arêtes droites**. On repère les segments verticaux longs, on les apparie, on
 recale le haut et le bas sur les arêtes horizontales, puis on trie. Une seule
 exception, et elle est chiffrée plus bas : une carte que l'interface RECOUVRE
 par le bas n'a plus qu'un rectangle VISIBLE, plus large que haut — on le rend
-tel quel, sans jamais deviner ce qui est caché.
+tel quel, sans jamais deviner ce qui est caché. Une SECONDE source de
+candidates, restreinte aux decks à fond plein et à la main du héros, complète
+les arêtes là où leur géométrie ne suffit plus : l'aplat exact d'une teinte
+du jeu (point 8, `_solid_background_boxes`).
 
 Ce qui a échoué, et pourquoi (gardé ici pour ne pas y revenir) :
   · « tout ce qui n'est pas le feutre » — une table a au moins deux tons
@@ -85,7 +88,24 @@ Ce qui a fait la différence, dans l'ordre où ça a été mesuré :
      sur les 57 captures réelles : 76,7 % → 94,2 %, à banc synthétique
      rigoureusement inchangé (664/672 localisées, 0 fantôme, 986 boîtes —
      la déduction n'y trouve aucun rail, et les garde-fous qui l'y rendent
-     muette sont mesurés dans `_quiet_density`).
+     muette sont mesurés dans `_quiet_density`) ;
+  8. une plaque d'interface qui recouvre le bas d'une carte SUR TOUTE SA
+     LARGEUR coupe ses deux arêtes verticales À LA MÊME HAUTEUR : la boîte
+     est alors jugée « carte entière » (les deux côtés couvrent la même
+     hauteur) et son rapport tombe dans le trou entre MAX_RATIO = 0,82 et
+     CUT_MIN_RATIO = 0,92 — un trou que les avatars de siège (0,846–0,872)
+     interdisent de refermer. Mesuré sur la capture « Twister Flash »
+     (tapis rayé, 2194 × 1660) : les quatre bords des deux cartes du héros
+     portent chacun 4 à 6 segments verticaux, et TOUTES les paires meurent
+     sur « entière : rapport 0,830–0,908 hors [0,60 ; 0,82] » — zéro
+     candidate, alors que la vérité mesure 0,915 et 0,908. Le chemin
+     « carte coupée » du point 6 ne s'ouvre pas, faute d'arête qui se
+     prolonge. La parade n'est pas géométrique mais COLORIMÉTRIQUE :
+     sur un deck à fond plein, l'aplat EST la signature — voir
+     `_solid_background_boxes`, qui rend les deux cartes (IoU 0,945 et
+     0,938) à bancs inchangés au chiffre près : 57 réelles 243/258 et 370
+     boîtes, synthétique 664/672 localisées et 0/986 fantômes, avant
+     comme après.
 
 Le prix des deux bornes, mesuré sur les 144 tables du fichier de tests
 (672 cartes) :
@@ -172,8 +192,10 @@ Taux mesurés sur le banc du fichier de tests (`tests/test_table_detector.py`,
 cachée). Ce banc-là est DANS le dépôt : chaque chiffre ci-dessous se rejoue.
 
   · **98,8 %** des cartes du héros et du board localisées (664/672, IoU ≥ 0,5) ;
-  · **98,1 %** de rôles héros/board corrects (659/672), et aucun dos de carte
-    adverse promu en carte du héros ou du board (0/720) ;
+  · **98,5 %** de rôles héros/board corrects (662/672 — 659 avant
+    HERO_BOTTOM_MIN, qui rend son rôle au board des tables où la main du
+    héros est manquée), et aucun dos de carte adverse promu en carte du
+    héros ou du board (0/720) ;
   · **0,0 %** de boîtes fantômes (aucune carte inventée sur 986 boîtes).
 
 Sur la SEULE capture réelle dont on dispose (PMU PLAY, 1899 × 1348, tournoi
@@ -276,6 +298,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy import ndimage
 
+from pfs.vision.lecteur_fond_plein import FAMILLES, SEUIL_BLANC
 from pfs.vision.phash import _rgb_array
 
 __all__ = ["CardBox", "TableRead", "detect_card_boxes", "read_table"]
@@ -377,6 +400,70 @@ CUT_MAX_RATIO = 1.10     # rapport apparent maximal d'une carte coupée par le b
 CUT_MIN_COVER = 0.60     # part de la plus longue arête que la boîte doit couvrir
 CUT_TOP_ALIGN = 0.06     # décalage toléré entre les deux arêtes, EN HAUT
 CUT_BACK_MIN = 32.0      # écart de couleur exigé entre le fond du haut et du bas
+
+# Source de candidates PAR COULEUR DE FOND (deck à fond plein) — quatre
+# constantes, toutes mesurées sur la capture « Twister Flash » du 14 août
+# 2026 (2194 × 1660, tapis rayé) et sur les gabarits `pmu_solid` :
+#
+# · FOND_TOL = 6. L'aplat d'une vraie carte est EXACT : médiane des pixels
+#   intérieurs = (2, 28, 195) = la référence carreau au chiffre près, 68 %
+#   des pixels intérieurs à distance ≤ 2 (le reste est le glyphe blanc, le
+#   jeton donneur et l'anti-crénelage). C'est aussi la tolérance qu'a
+#   utilisée l'annotation des 57 captures (« masque de couleur exact,
+#   tolérance RGB 6 », `verite_captures.json`). Distance du distracteur le
+#   plus proche dans la moitié basse de la capture : cœur 9,3, trèfle 17,2
+#   (les rayures claires du tapis vert approchent le trèfle à 8–12, jamais
+#   sous 8), carreau 45,7 — mais PIQUE 1,4 : l'interface sombre du client
+#   est quasiment de la teinte ardoise, et la tolérance ne protège PAS
+#   cette famille. Ce sont l'aire, le rapport et le remplissage qui s'en
+#   chargent, et le banc de vérité-terrain qui le vérifie ;
+# · FOND_FILL_MIN = 0,55. Part de la boîte englobante couverte par la
+#   composante. Une vraie carte mesure 0,71 à 0,73 — découpes Twister
+#   (jeton donneur et plaque compris) COMME gabarits entiers (0,711 à
+#   0,725 : les glyphes, coins arrondis et liserés mangent le reste). Les
+#   amas d'interface de la moitié basse d'au moins 400 px² mesurent 0,41
+#   au plus. Le seuil se place au milieu du vide [0,41 ; 0,71] ;
+# · FOND_CY_MIN = 0,50. La source ne vise que la MAIN DU HÉROS : centre de
+#   composante sous la mi-hauteur. Le board reste au chemin des arêtes
+#   (centres mesurés : 0,44 sur les 57 réelles, 0,46 sur le banc
+#   synthétique — tous exclus ; héros : 0,62 à 0,78 — tous couverts) ;
+# · le rapport accepté est [MIN_RATIO ; CUT_MAX_RATIO] = [0,60 ; 1,10] :
+#   une carte entière vaut 0,716, une carte tronquée par le bas monte
+#   jusqu'à 1,10 (même borne de sens que le chemin coupé). Les boutons
+#   d'action de la capture (les pièges annoncés) tombent à 2,4–3,6 de
+#   rapport ou 0,10–0,42 de remplissage : aucun ne passe, à aucune
+#   tolérance essayée (4, 8, 12) ;
+# · FOND_MIN_SIDE = 26. Plancher ABSOLU sur le petit côté, parce que
+#   l'aire minimale, RELATIVE à l'image, ne protège pas une découpe : sur
+#   `pmu_ko_hero_rail.png` (600 × 270), la barre d'équité et le chrono —
+#   qui sont peints DANS les teintes du jeu — passaient tous les autres
+#   filtres avec des fragments de 12 × 20, 12 × 15 et 13 × 20 px, rapports
+#   0,60 à 0,80, remplissage plein ; sur la capture entière, l'aire les
+#   éliminait (240 px² pour un plancher de 2185). Petit côté mesuré : 13 px
+#   au plus pour ces fragments, 52 px au moins pour la plus petite vraie
+#   carte du corpus (banc synthétique ; 106 px sur les captures réelles).
+#   Le seuil est au milieu géométrique du vide [13 ; 52] (√(13 × 52) = 26) ;
+# · FOND_BLANC = (0,09 ; 0,40). Une carte à fond plein porte l'ENCRE
+#   BLANCHE de ses glyphes ; un fragment d'aplat n'en porte pas — ou n'est
+#   qu'un anneau d'aplat autour du symbole blanc. Les deux cas existent et
+#   sont mesurés : en 4-connexité, le grand symbole d'enseigne détache une
+#   POCHE de 29 × 28 du bas de l'aplat sur les tables synthétiques mêmes
+#   PROPRES (39 poches sur 24 tables solides PNG — la 8-connexité ne les
+#   ressoude pas, essayé et mesuré) ; et le JPEG morcelle l'aplat en
+#   fragments (7 « cartes » de 26–36 px à q75, 14 à q60, toutes posées SUR
+#   une vraie carte mais à IoU < 0,3 — la propriété « la compression perd,
+#   elle n'invente pas » sautait). Part de pixels blancs (canal minimal
+#   ≥ SEUIL_BLANC) dans la boîte : vraies cartes 0,179 à 0,242 (72 cartes
+#   synthétiques des deux tailles + les deux découpes Twister, jeton
+#   donneur compris) ; poches et fragments ≤ 0,004 ou ≥ 0,556. Les bornes
+#   se posent au milieu des deux vides : [0,004 ; 0,179] → 0,09 et
+#   [0,242 ; 0,556] → 0,40. Avec elles, q75 revient à 53/84 localisées et
+#   0 fantôme — exactement le comportement d'avant la source.
+FOND_TOL = 6.0
+FOND_FILL_MIN = 0.55
+FOND_CY_MIN = 0.50
+FOND_MIN_SIDE = 26
+FOND_BLANC = (0.09, 0.40)
 
 
 @dataclass(frozen=True, slots=True)
@@ -718,6 +805,82 @@ def _covered_from_below(rgb: np.ndarray,
     return float(np.sqrt(((mh - mb) ** 2).sum())) >= CUT_BACK_MIN
 
 
+def _solid_background_boxes(rgb: np.ndarray) -> list[tuple[int, int, int, int]]:
+    """Candidates par COULEUR DE FOND — la voie que les arêtes ne voient pas.
+
+    Sur un deck à fond plein, une carte est un aplat rigoureusement uniforme
+    d'une des quatre teintes de `FAMILLES` (dispersion 0,0 mesurée par
+    `lecteur_fond_plein`). Une composante connexe de cette teinte exacte,
+    aux proportions d'une carte — entière OU tronquée par le bas — et dans
+    la moitié basse de l'image, est une carte du héros que la géométrie des
+    arêtes peut manquer : sur la capture « Twister Flash », la plaque
+    « Temps » coupe les deux arêtes verticales à la même hauteur et le
+    rapport recalé (0,83–0,91) tombe dans le trou entre carte entière
+    (≤ 0,82) et carte coupée (≥ 0,92) — voir le point 8 de l'en-tête.
+
+    Cette voie est VOLONTAIREMENT dispensée de `_looks_like_a_card` : un
+    aplat exact d'une teinte de famille est une signature plus forte que
+    des abords calmes, et c'est précisément quand les abords mentent
+    (tapis rayé, plaque posée sur le bas) qu'elle doit répondre. Les
+    garde-fous — aire, dimensions minimales du chemin des arêtes, rapport,
+    remplissage, moitié basse — sont chiffrés avec leurs constantes.
+
+    Chaque famille est étiquetée SÉPARÉMENT : deux cartes voisines de
+    familles différentes ne peuvent pas fusionner en une composante, et
+    deux cartes de même famille sont séparées par le feutre entre elles
+    (6 px sur la capture Twister, 9 px sur les 57 réelles, ≥ 3 px sur le
+    banc synthétique).
+
+    Returns
+    -------
+    list of tuple
+        Boîtes (x, y, w, h) candidates, à dédoublonner avec celles des
+        arêtes.
+    """
+    H, W = rgb.shape[:2]
+    area_img = float(H * W)
+    amin = MIN_AREA_FRAC * area_img
+    a = rgb.astype(np.int16)
+    # L'encre blanche des glyphes, comptée par boîte (voir FOND_BLANC) —
+    # même seuil que le lecteur, puisque c'est la même encre.
+    blanc = rgb.min(axis=2) >= SEUIL_BLANC
+    out: list[tuple[int, int, int, int]] = []
+    for ref in FAMILLES.values():
+        d = a - np.array(ref, dtype=np.int16)
+        mask = (d[..., 0].astype(np.int32) ** 2 + d[..., 1] ** 2
+                + d[..., 2] ** 2) <= FOND_TOL * FOND_TOL
+        # Une composante candidate couvre au moins FOND_FILL_MIN de la plus
+        # petite boîte admissible : moins de pixels que ça dans tout le
+        # masque, et il n'y a rien à étiqueter.
+        if int(mask.sum()) < FOND_FILL_MIN * amin:
+            continue
+        lab, n = ndimage.label(mask)
+        if not n:
+            continue
+        counts = np.bincount(lab.ravel())
+        for i, sl in enumerate(ndimage.find_objects(lab), start=1):
+            if sl is None:
+                continue
+            y0, x0 = sl[0].start, sl[1].start
+            bh, bw = sl[0].stop - y0, sl[1].stop - x0
+            if min(bw, bh) < FOND_MIN_SIDE:
+                continue
+            aire = bw * bh
+            if not (amin <= aire <= MAX_AREA_FRAC * area_img):
+                continue
+            if not (MIN_RATIO <= bw / bh <= CUT_MAX_RATIO):
+                continue
+            if y0 + bh / 2 <= FOND_CY_MIN * H:
+                continue
+            if counts[i] / aire < FOND_FILL_MIN:
+                continue
+            part_blanche = float(blanc[y0:y0 + bh, x0:x0 + bw].mean())
+            if not (FOND_BLANC[0] <= part_blanche <= FOND_BLANC[1]):
+                continue
+            out.append((int(x0), int(y0), int(bw), int(bh)))
+    return out
+
+
 def detect_card_boxes(image) -> list[CardBox]:
     """Localise les cartes d'une capture. Renvoie les boîtes, non triées.
 
@@ -734,13 +897,14 @@ def detect_card_boxes(image) -> list[CardBox]:
     rgb = _rgb_array(image)
     H, W = rgb.shape[:2]
     area_img = float(H * W)
+    kept: list[tuple[int, int, int, int]] = _solid_background_boxes(rgb)
     vm, hm = _edge_maps(rgb)
     edges = vm | hm
 
     hmin = max(14, int(np.sqrt(MIN_AREA_FRAC * area_img / MAX_RATIO)))
     seg = _vertical_segments(vm, hmin)
     if not len(seg):
-        return []
+        return [CardBox(*b) for b in _dedupe(kept)]
     seg = seg[np.argsort(seg[:, 0])]
     cols = seg[:, 0]
     # La plus large des cartes possibles, rapportée à la plus haute arête.
@@ -749,9 +913,22 @@ def detect_card_boxes(image) -> list[CardBox]:
     # longue est justement celle d'une carte coupée, la borne à MAX_RATIO
     # excluait la bonne paire de colonnes avant même de l'examiner (mesuré :
     # 121 px de large pour une fenêtre de 106).
-    width_max = int(CUT_MAX_RATIO * (seg[:, 2] - seg[:, 1] + 1).max()) + 2
+    #
+    # Deuxième borne, d'ÉLAGAGE PUR : aucune boîte gardée ne peut être plus
+    # large que √(CUT_MAX_RATIO × MAX_AREA_FRAC × aire de l'image), puisque
+    # l'aire et le rapport sont tous deux vérifiés plus bas (bw² ≤ ratio ×
+    # bw·bh). Sans elle, une arête d'habillage de 1355 px (le cadre de la
+    # fenêtre, sur la capture Twister 2194 × 1660) ouvrait la fenêtre
+    # d'appariement à 1492 colonnes pour 1228 segments — des paires que les
+    # bornes d'aire condamnaient toutes, mais après recalage. Mesuré sur
+    # cette capture (meilleur de 5 passes alternées, source couleur
+    # neutralisée) : 1,64 s → 1,53 s, à résultat identique par
+    # construction ; le banc synthétique, lui, ne change pas au chiffre
+    # près (ses arêtes les plus hautes sont déjà sous cette borne).
+    width_max = min(
+        int(CUT_MAX_RATIO * (seg[:, 2] - seg[:, 1] + 1).max()) + 2,
+        int(np.sqrt(CUT_MAX_RATIO * MAX_AREA_FRAC * area_img)) + 2)
 
-    kept: list[tuple[int, int, int, int]] = []
     seen: set[tuple[int, int, int, int, bool]] = set()
     for i in range(len(seg)):
         xl, top_l, bot_l = (int(v) for v in seg[i])
@@ -850,6 +1027,32 @@ SAME_SCALE = (0.78, 1.30)
 ROW_TOL = 0.5            # écart d'ordonnée toléré, en hauteurs de carte
 SPREAD_MAX = 1.6         # étalement d'un board, en largeurs de carte cumulées
 
+# Le bas de la rangée du héros doit dépasser cette fraction de la hauteur de
+# l'image. « Les cartes du héros sont les plus basses » n'autorise pas la
+# réciproque : quand la main du héros n'est PAS trouvée, la rangée la plus
+# basse est n'importe quoi d'autre — et sur la capture « Twister Flash »,
+# c'étaient les TROIS dos de cartes adverses du haut de table (bas à 0,27 de
+# la hauteur), promus « hero » faute de mieux. Le bas de rangée se mesure sur
+# tous les actifs du dépôt :
+#
+#     dos adverses Twister                 0,270
+#     bas de board (57 réelles)            0,500
+#     bas de board (banc synthétique)      0,504 et 0,543
+#     dos adverses (banc, siège le + bas)  0,543
+#     ------------------------------------------- vide mesuré
+#     héros Twister (bas sous la plaque)   0,658
+#     héros pmu_ko_hero_rail (découpe)     0,700
+#     héros des 57 réelles                 0,768
+#     héros pmu_hero_tronque (découpe)     0,785
+#     héros du banc synthétique            0,845 et 0,884
+#
+# Le seuil se place au milieu du vide [0,543 ; 0,658] : aucune rangée non
+# héros ne l'atteint, aucune rangée héros ne le manque, 0,058 de marge des
+# deux côtés. Sous le seuil, la rangée n'est promue NI héros ni rien : les
+# cartes restent dans « autres », et le board — qui n'est alors plus
+# contraint d'être au-dessus d'un héros — garde sa chance d'être reconnu.
+HERO_BOTTOM_MIN = 0.60
+
 
 def _rows(boxes: list[CardBox], tol: float = ROW_TOL) -> list[list[CardBox]]:
     """Regroupe en rangées horizontales des cartes de MÊME échelle."""
@@ -907,16 +1110,25 @@ def read_table(image) -> TableRead:
     TableRead
         Cartes du héros, du board, et le reste (dos adverses notamment).
     """
-    boxes = detect_card_boxes(image)
+    rgb = _rgb_array(image)
+    boxes = detect_card_boxes(rgb)
     if not boxes:
         return TableRead([], [], [])
 
     lowest = max(boxes, key=lambda c: c.y + c.h)
-    hero_row = sorted((b for b in boxes
-                       if abs(b.cy - lowest.cy) <= ROW_TOL * lowest.h
-                       and _same_scale(lowest.h, b.h)),
-                      key=lambda c: c.x)
-    hero_bottom = max(b.y + b.h for b in hero_row)
+    # La rangée la plus basse n'est la main du héros que si elle est BASSE
+    # dans l'image (voir HERO_BOTTOM_MIN) : sans ce garde-fou, une table où
+    # la main n'est pas trouvée promeut « hero » ce qui traîne le plus bas —
+    # les dos adverses du haut de table, sur la capture Twister.
+    if lowest.y + lowest.h > HERO_BOTTOM_MIN * rgb.shape[0]:
+        hero_row = sorted((b for b in boxes
+                           if abs(b.cy - lowest.cy) <= ROW_TOL * lowest.h
+                           and _same_scale(lowest.h, b.h)),
+                          key=lambda c: c.x)
+        hero_bottom = max(b.y + b.h for b in hero_row)
+    else:
+        hero_row = []
+        hero_bottom = rgb.shape[0] + 1
 
     cx_img = np.median([b.cx for b in boxes])
     board_row: list[CardBox] = []

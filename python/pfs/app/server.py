@@ -1378,6 +1378,84 @@ class API:
             "image_b64": lecture.image_b64,
         }
 
+    # ── Mode Live : conseil en direct, argent fictif prouvé uniquement ───
+    #
+    # Trois routes NOUVELLES, séparées des deux ci-dessus qui restent sans
+    # conseil. La frontière : `pfs.app.mode_live` (perception + gate, zéro
+    # import de conseil) rend un verdict, et le conseiller n'est convoqué
+    # qu'APRÈS `gate.mode == "live"` — jamais avant, jamais en cas de doute,
+    # jamais si la lecture est insuffisante. `tests/test_live_conseil_gate.py`
+    # verrouille chacun de ces « jamais ».
+    @staticmethod
+    def live_armer(p: dict) -> dict:
+        """Arme une fenêtre pour le mode Live — confirmation explicite exigée.
+
+        Payload : ``{"fenetre": "PMU PLAY", "confirme": true}``. La
+        confirmation porte l'hypothèse que ni badge ni titre ne peuvent
+        prouver : « cette table est en argent fictif ». Sans elle : refus.
+        """
+        titre = str(p.get("fenetre", "")).strip()
+        if not titre:
+            raise ValueError("champ 'fenetre' requis.")
+        return _mode_live().armer(titre, confirme=p.get("confirme") is True)
+
+    @staticmethod
+    def live_desarmer(p: dict) -> dict:
+        """Désarme une fenêtre (ou toutes si 'fenetre' est absent)."""
+        titre = str(p.get("fenetre", "")).strip() or None
+        return _mode_live().desarmer(titre)
+
+    @staticmethod
+    def live_table(p: dict) -> dict:
+        """Une itération du mode Live : preuve, lecture, et conseil si prouvé.
+
+        Payload : ``{"fenetre": "PMU PLAY"}``. Réponse : ``gate`` (verdict et
+        signaux), ``lecture`` (cartes + montants), ``conseil`` (le verdict du
+        conseiller) ou ``conseil_refus`` (pourquoi il n'y en a pas). Le
+        conseil n'existe QUE si le gate dit LIVE **et** que la lecture
+        suffit — un refus est explicite, jamais un conseil sur des chiffres
+        devinés.
+        """
+        from pfs.vision.live import CaptureImpossible, SondeIntrouvable
+
+        titre = str(p.get("fenetre", "")).strip()
+        if not titre:
+            raise ValueError("champ 'fenetre' requis.")
+        try:
+            resultat = _mode_live().table(titre)
+        except (CaptureImpossible, SondeIntrouvable) as e:
+            return {"erreur": str(e)}
+
+        resultat["conseil"] = None
+        if resultat["gate"]["mode"] != "live":
+            resultat["conseil_refus"] = ("table non prouvée fictive — "
+                                         + resultat["gate"]["raison"])
+            return resultat
+
+        lecture = resultat["lecture"]
+        m = lecture["montants"]
+        manquants = [nom for nom in ("pot", "mise", "tapis", "blinde")
+                     if m[nom]["valeur"] is None]
+        if len(lecture["main"]) != 2 or manquants:
+            causes = []
+            if len(lecture["main"]) != 2:
+                causes.append(f"main du héros : {len(lecture['main'])}/2 "
+                              "carte(s) sûre(s)")
+            causes += [f"{nom} : {m[nom]['refus']}" for nom in manquants]
+            resultat["conseil_refus"] = " ; ".join(causes)
+            return resultat
+
+        # Le gate a dit LIVE et la lecture est complète : le conseiller est
+        # convoqué MAINTENANT, sur les seuls chiffres lus — les mêmes que
+        # ceux journalisés dans `lecture`, rien d'autre.
+        resultat["conseil"] = API.advise({
+            "hero": " ".join(lecture["main"]),
+            "board": " ".join(lecture["tableau"]),
+            "pot": m["pot"]["valeur"], "bet": m["mise"]["valeur"],
+            "stack": m["tapis"]["valeur"], "big_blind": m["blinde"]["valeur"],
+        })
+        return resultat
+
     # ── Conseil sur un spot déjà joué (« qu'aurais-je dû faire ? ») ──────
     @staticmethod
     def advise(p: dict) -> dict:
@@ -1522,9 +1600,26 @@ ROUTES: dict[str, Callable[[dict], dict]] = {
     "lire_capture": API.lire_capture,
     "live/fenetres": API.live_fenetres,
     "live/lire": API.live_lire,
+    "live/armer": API.live_armer,
+    "live/desarmer": API.live_desarmer,
+    "live/table": API.live_table,
     "capture": API.capture,
     "archive": API.archive,
 }
+
+
+# Le mode Live est un état de processus (armements, mémoire du badge) : une
+# seule instance, créée au premier usage — le serveur reste importable sans
+# que le gate ni la vision du badge ne se construisent.
+_MODE_LIVE_INSTANCE = None
+
+
+def _mode_live():
+    global _MODE_LIVE_INSTANCE
+    if _MODE_LIVE_INSTANCE is None:
+        from pfs.app.mode_live import ModeLive
+        _MODE_LIVE_INSTANCE = ModeLive()
+    return _MODE_LIVE_INSTANCE
 
 
 # ═══════════════════════════════════════════════════════════════════════════

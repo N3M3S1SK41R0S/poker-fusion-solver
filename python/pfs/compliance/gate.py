@@ -352,6 +352,34 @@ class ComplianceGate:
         self._lock_reason = ""
         self._last: GateDecision | None = None
 
+    @classmethod
+    def profil_pmu_play(cls) -> "ComplianceGate":
+        """Gate adapté au client PMU PLAY : armement manuel + badge pixel.
+
+        Pourquoi un profil, mesuré sur les 57 captures réelles du 14 août
+        2026 : les tables PMU PLAY affichent des **euros fictifs** partout —
+        titre « 100€ - 6-max Turbo Re-buy … | Niveau 2 | 75/150 | Ante 15 »,
+        dotation, primes KO — et ce sont des tournois (niveau, ante, rang).
+        Le jeu de signaux générique y lirait donc une contradiction
+        permanente (devise + tournoi ⇒ REVIEW) alors que l'enjeu est fictif :
+        sur ce client, ces marqueurs ne discriminent RIEN. La preuve positive
+        devient l'**identité du client** — le badge pixel « PMU PLAY »
+        (filigrane du feutre + dos de cartes orange, `pfs.vision.badge_pmu`,
+        50/57 frames avec preuve immédiate, 0 faux positif) — TOUJOURS
+        combinée à l'armement manuel, qui reste obligatoire.
+
+        Le titre et les textes de devise ne deviennent pas muets pour
+        autant : l'appelant les JOURNALISE dans sa réponse (traçabilité),
+        ils ne votent simplement plus. Deux filets restent entiers :
+        l'hypothèse « PMU PLAY n'héberge que de l'argent fictif » doit être
+        confirmée explicitement par l'utilisateur à l'armement (l'appelant
+        l'exige), et `audit_hand`/`lock` verrouillent tout si une main
+        assistée s'avère réelle a posteriori.
+        """
+        gate = cls()
+        gate._signals = [gate._user_armed, PlayMoneyBadgeSignal()]
+        return gate
+
     # ── armement manuel ──────────────────────────────────────────────────
     def arm_window(self, hwnd: int) -> None:
         """Pierre déclare cette fenêtre comme table en argent fictif."""
