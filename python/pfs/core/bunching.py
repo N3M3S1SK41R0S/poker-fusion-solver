@@ -1,5 +1,21 @@
 r"""Effet de bunching — repondération des ranges restantes après les folds.
 
+Statut (audit du 14 août 2026) — bibliothèque validée, NON branchée
+-------------------------------------------------------------------
+Importée par aucun code applicatif ni script livré : seul
+``tests/test_bunching.py`` l'exerce. Pourquoi : le conseiller et le re-solve
+raisonnent héros contre UNE range adverse ; appliquer le bunching exige de
+construire les ranges de fold des positions couchées (qui a foldé, depuis
+où), information que ni ``advise`` ni ``resolve_spot`` ne reçoivent
+aujourd'hui. Ce qui existe déjà : MC à pondération d'importance et
+approximation pairwise validées l'une contre l'autre (corrélation 0,995),
+``fold_range_from_play`` — testés. Accroche naturelle si on branche :
+``pfs/analysis/spot_advisor.py:advise`` (déduire les ranges de fold des
+positions couchées via ``fold_range_from_play`` sur les presets, puis
+``apply_bunching`` sur la range vilain avant le calcul d'équité).
+Règle du projet : aucun module fusionné sans route + UI + test de bout en
+bout.
+
 Quand N joueurs ont foldé devant, les cartes muckées ne sont pas un
 échantillon uniforme du paquet : une range de fold regorge de petites
 cartes (les grosses mains sont jouées). Le paquet « résiduel » vu par les

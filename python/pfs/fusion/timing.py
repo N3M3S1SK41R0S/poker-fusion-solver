@@ -1,6 +1,20 @@
 r"""
 L2 — Tells temporels : le canal que personne n'exploite en direct.
 
+Statut (audit du 14 août 2026) — en attente de données réelles, NON branché
+---------------------------------------------------------------------------
+Importé par aucun code applicatif ni script livré : seul
+``tests/test_timing.py`` l'exerce. Pourquoi : rien ne produit encore de
+latences par décision — la calibration live (v4.4) lit l'état de la table
+sans horodater les actions adverses, et les hand histories iPoker ne portent
+pas de timestamp par action. Ce qui existe déjà : l'appareil complet
+(log-normal + Welford, CUSUM, tells conditionnés aux showdowns avec IC de
+Wilson), testé. Accroche naturelle si on branche : la boucle live de
+``pfs/app/server.py`` (``API.live_lire``), qui rafraîchit déjà la table à
+intervalle connu — en dériver des ``TimingObservation`` et alimenter
+``TimingProfile.observe``. Règle du projet : aucun module fusionné sans
+route + UI + test de bout en bout.
+
 La perception (Phase 1) horodate chaque action à la frame près. Ce module
 transforme ces latences en trois informations exploitables :
 

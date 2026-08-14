@@ -418,12 +418,16 @@ def test_le_banc_complet_ne_produit_aucune_affirmation_fausse(verite) -> None:
     assert bilan.fausses_affirmees.n == 0, bilan.fausses_affirmees.cas
     assert bilan.inventees.n == 0, bilan.inventees.cas
     assert bilan.cartes_reelles == 258
+    # 198/198/168 jusqu'au 14 août 2026 ; la déduction du décor dans les
+    # abords (`table_detector._quiet_density`) a récupéré les 45 cartes que
+    # QUIET_SIDES sacrifiait — réannoncé ici, au CHANGELOG et dans la
+    # docstring du détecteur le même jour.
     assert (bilan.localisees.n, bilan.lues_justes.n,
-            bilan.lues_justes_bon_role.n) == (198, 198, 168), (
+            bilan.lues_justes_bon_role.n) == (243, 243, 237), (
         f"le rappel a bougé : {bilan.localisees.n} localisées, "
         f"{bilan.lues_justes.n} lues justes, "
         f"{bilan.lues_justes_bon_role.n} avec le bon rôle, sur 258 cartes "
-        "réellement présentes (attendu 198/198/168, soit 76,7 % / 65,1 %). "
+        "réellement présentes (attendu 243/243/237, soit 94,2 % / 91,9 %). "
         "Vers le HAUT, c'est un progrès à mesurer et à réannoncer partout "
         "(README, CHANGELOG, docstring de table_detector) ; vers le BAS, "
         "c'est une régression silencieuse de la perception.")

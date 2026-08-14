@@ -43,13 +43,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from pfs.analysis import review_hands  # noqa: E402
+from pfs.data.emplacements import dossiers_connus  # noqa: E402
 from pfs.data.hand_history import ParsedHand, iter_hands  # noqa: E402
-
-#: Emplacements connus des historiques PMU, argent fictif puis argent réel.
-DOSSIERS_CONNUS = (
-    r"C:\Users\pierr\AppData\Local\PMU PLAY 100% Poker\data",
-    r"C:\Users\pierr\AppData\Local\PMU Poker\data",
-)
 
 _TABLE = re.compile(r"<tablename>([^<]+)</tablename>")
 
@@ -144,7 +139,9 @@ def main() -> int:
                     help="avec --detail, seuil de mains par tournoi (15)")
     a = ap.parse_args()
 
-    racines = a.dossier or DOSSIERS_CONNUS
+    # Détection partagée avec /api/emplacements (pfs.data.emplacements) :
+    # une seule liste d'endroits où chercher, pour le script comme pour l'UI.
+    racines = a.dossier or dossiers_connus()
     mains, par, echecs = collecter(racines)
     if not mains:
         print("Aucune main trouvée. Vérifie les dossiers d'historique.")

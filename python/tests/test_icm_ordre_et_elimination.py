@@ -6,11 +6,15 @@ A. **Le vilain est-il éliminé ?** La question était tranchée par un seuil
    ``s[v] <= 1e-12 · Σ tapis``, c'est-à-dire « zéro exact aux arrondis près ».
    Sur une table finale de MTT PKO réel (3 337 entrants × 5 000 jetons,
    6 685 000 jetons en jeu) ce seuil vaut 6,7e-6 jeton : le moindre résidu —
-   un millième de jeton d'arrondi d'ante — fait tomber la prime à zéro et
-   passer l'équité exigée de 49,95 % à 53,59 %. Un chiffre faux, plausible, et
-   du mauvais côté du fold. La réponse est maintenant DÉCLARÉE
-   (``villain_all_in``), ou à défaut lue en unités de jeton entier
-   (``unite_jeton``).
+   un millième de jeton d'arrondi d'ante, ou le jeton entier de l'exemple du
+   tour 4 — fait tomber la prime à zéro et passer l'équité exigée du mauvais
+   côté du fold (49,95 % → 53,59 % ici ; 36,6 % → 42,2 % sur l'exemple du
+   tour 4). La réponse est maintenant DÉCLARÉE (``villain_all_in``), à défaut
+   lue en unités de jeton entier (``unite_jeton``), et en dernier repli jugée
+   à l'échelle de la TRANSACTION qui a produit le résidu
+   (``SEUIL_RESIDU_TRANSACTION · max(pot, bet)``) — plus jamais aux tapis des
+   autres joueurs, qui n'entrent pas dans le ``stack − bet`` d'où sort le
+   nombre jugé.
 
 B. **Qui est sorti en dernier ?** Les joueurs à tapis nul se partageaient les
    places restantes à parts égales. C'est la bonne convention d'IGNORANCE,
@@ -98,31 +102,105 @@ def _spot_mtt(residu: float, **kw) -> PkoSpot:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-def test_le_seuil_relatif_est_aveugle_au_residu_sur_un_vrai_mtt() -> None:
-    """Le comportement RÉEL du repli, épinglé — c'est lui qu'on remplace.
+def test_le_repli_juge_le_residu_a_l_echelle_de_la_transaction() -> None:
+    """Un artefact de saisie ne fait plus tomber la prime — jeton du tour 4 inclus.
 
-    Sur 6 685 000 jetons, ``1e-12 · Σ tapis`` vaut 6,7e-6 jeton. Un millième
-    de jeton — cinq mille fois moins que le plus petit jeton qui existe à une
-    table — suffit à faire disparaître la prime. Ce test dit ce que cela coûte
-    en points d'équité, pour qu'on ne le redécouvre pas en jouant.
+    L'ancien repli ``s[v] <= 1e-12 · Σ tapis`` comparait le résidu aux tapis
+    des AUTRES joueurs, qui n'entrent jamais dans le ``stack − bet`` qui l'a
+    produit : sur cette table (6 685 000 jetons) il valait 6,7e-6 jeton, et
+    un millième de jeton d'arrondi d'ante — puis le jeton entier de l'exemple
+    du tour 4 — faisait tomber la prime en silence, l'équité exigée passant
+    de 49,95 % à 53,59 % (mesuré ici même, sur l'ancien code).
+
+    Le repli juge désormais le résidu devant ``max(pot, bet)`` — ici
+    1e-5 × 307 999 ≈ 3,08 jetons. Le bruit flottant (~1e-12 de la
+    transaction), le millième de jeton et le jeton de saisie passent
+    dessous ; un vrai tapis de 1 000 jetons — le pas des tapis de cette
+    table — reste un joueur vivant.
     """
-    seuil = 1e-12 * sum(MTT_TAPIS)
-    assert seuil < 1e-5, f"seuil {seuil:.3e} — bien au-dessous du jeton"
-
     plein = analyse_pko_spot(_spot_mtt(0.0))
     assert plein.villain_eliminated
+    assert plein.source_elimination == "échelle de la transaction (repli)"
     assert plein.required_with_bounty == pytest.approx(0.4995, abs=5e-4)
 
-    miette = analyse_pko_spot(_spot_mtt(1e-3))
-    assert not miette.villain_eliminated, (
-        "le repli relatif ne voit pas un millième de jeton comme du bruit")
-    assert miette.bounty_value == 0.0
-    assert miette.required_with_bounty == pytest.approx(0.5359, abs=5e-4)
+    for residu in (1e-3, 1.0):
+        a = analyse_pko_spot(_spot_mtt(residu))
+        assert a.villain_eliminated, (
+            f"un résidu de {residu:g} jeton devant un all-in de 288 000 est "
+            f"un artefact de saisie, pas un joueur")
+        assert a.bounty_value > 0.0
+        assert a.required_with_bounty == pytest.approx(
+            plein.required_with_bounty, abs=1e-5)
 
-    ecart = miette.required_with_bounty - plein.required_with_bounty
+    vrai = analyse_pko_spot(_spot_mtt(1000.0))
+    assert not vrai.villain_eliminated, (
+        "1 000 jetons — le pas des tapis de cette table — est un joueur vivant")
+    assert vrai.bounty_value == 0.0
+    ecart = vrai.required_with_bounty - plein.required_with_bounty
     assert ecart > 0.03, (
-        f"le résidu doit coûter plus de 3 points d'équité, mesuré "
+        f"perdre la prime doit coûter plus de 3 points d'équité, mesuré "
         f"{ecart * 100:.2f}")
+
+
+def test_l_artefact_et_le_vrai_jeton_sur_le_spot_calculable_a_la_main() -> None:
+    """Golden à la main : winner-take-all 3-way, tapis égaux, prime 50.
+
+    États (pot 100 déjà au milieu, bet 100, héros 0 contre vilain 1) :
+
+    * fold  → le pot revient au vilain : (100, 100, 100), trois tapis
+      égaux, d'où $EV_fold = 100/3 ;
+    * gagne → (200, ~0, 100) : $EV_gagne = 200/300 · 100 = 200/3 ;
+    * perd  → (0, 200, 100) : dernier d'un winner-take-all, $EV_perd = 0.
+
+    Prime capturée : BV = 50 · (1/2 + 1/2 · P(1er)) avec P(1er) = 200/300,
+    donc BV = 50 · 5/6 = 125/3. Équité requise avec prime :
+
+        r* = (100/3 − 0) / (200/3 + 125/3 − 0) = 100/325 = 4/13 ≈ 0,3077.
+
+    Un résidu de 1e-4 — un MILLIONIÈME de la transaction, donc un artefact —
+    doit rendre ce même 4/13. Un résidu de 1 jeton — un CENTIÈME de la
+    transaction, donc un joueur — doit rendre le spot sans prime :
+    r* = (100/301) / (200/301) = 1/2 exactement, quelle que soit l'échelle.
+    """
+    def spot(residu: float) -> PkoSpot:
+        return PkoSpot(stacks=(100.0, residu, 100.0), payouts=(100.0,),
+                       bounties=(50.0, 50.0, 50.0), hero=0, villain=1,
+                       pot=100.0, bet=100.0)
+
+    artefact = analyse_pko_spot(spot(1e-4))
+    assert artefact.villain_eliminated
+    assert artefact.bounty_value == pytest.approx(125 / 3, abs=1e-4)
+    assert artefact.required_with_bounty == pytest.approx(4 / 13, abs=1e-6)
+
+    joueur = analyse_pko_spot(spot(1.0))
+    assert not joueur.villain_eliminated
+    assert joueur.bounty_value == 0.0
+    assert joueur.required_with_bounty == pytest.approx(0.5, abs=1e-9)
+
+
+@pytest.mark.parametrize("k", [1e-3, 1.0, 1e3, 1e6])
+def test_le_repli_transaction_est_invariant_d_echelle(k) -> None:
+    """Le rapport résidu/transaction est sans dimension.
+
+    Compter en jetons, en blindes ou en millions ne doit changer aucun
+    verdict du repli — c'est le reproche qui a tué le seuil absolu, et que
+    le tour 4 a retourné contre ``1e-12 · Σ tapis`` : la somme des tapis des
+    autres joueurs est, pour le résidu du vilain, une unité aussi arbitraire
+    qu'une constante.
+    """
+    def analyser(facteur: float):
+        tapis = [t * facteur for t in MTT_TAPIS]
+        tapis[3] = 1.0 * facteur
+        engage = (MTT_TAPIS[3] - 1.0) * facteur
+        return analyse_pko_spot(PkoSpot(
+            stacks=tuple(tapis), payouts=MTT_GAINS, bounties=MTT_PRIMES,
+            hero=0, villain=3, pot=engage + 20_000.0 * facteur, bet=engage))
+
+    ref, got = analyser(1.0), analyser(k)
+    assert ref.villain_eliminated and got.villain_eliminated
+    assert got.bounty_value == pytest.approx(ref.bounty_value, abs=1e-9)
+    assert got.required_with_bounty == pytest.approx(ref.required_with_bounty,
+                                                     abs=1e-9)
 
 
 def test_l_unite_de_jeton_tranche_ce_que_le_seuil_relatif_devinait() -> None:
@@ -343,20 +421,64 @@ def _bf_partage_egal(stacks, payouts, hero: int, villain: int) -> float:
             / (icm_dollar_ev(win, p, hero) - base))
 
 
+def test_le_facteur_de_bulle_calcule_a_la_main() -> None:
+    """Malmuth-Harville à la main sur ``[100, 100, 0, 0]``, gains 50/30/20/10.
+
+    Base : deux vivants à tapis égaux, P(1er) = P(2e) = 1/2, donc
+    $EV_héros = (50 + 30)/2 = 40. All-in du héros 0 contre le vilain 1
+    (amt = 100) :
+
+    * gagne → (200, 0, 0, 0) : héros seul vivant, $EV_gagne = 50 ;
+    * perd  → (0, 200, 0, 0) : le héros sort en DERNIER (l'autre mort
+      l'était déjà avant la main), il prend la meilleure place restante,
+      la 2e : $EV_perd = 30. Le témoin du partage égal lui donne la
+      moyenne des places restantes : (30 + 20 + 10)/3 = 20.
+
+    D'où, exactement, sans machine :
+
+        BF_prod   = (40 − 30) / (50 − 40) = 1
+        BF_témoin = (40 − 20) / (50 − 40) = 2
+
+    Le cas minimal où la convention change le facteur du simple au double —
+    c'est lui qui ancre les goldens à 9 joueurs du test suivant.
+    """
+    stacks = (100.0, 100.0, 0.0, 0.0)
+    gains = (50.0, 30.0, 20.0, 10.0)
+    assert bubble_factor(stacks, gains, 0, 1) == pytest.approx(1.0, abs=1e-12)
+    assert _bf_partage_egal(stacks, gains, 0, 1) == pytest.approx(2.0,
+                                                                  abs=1e-12)
+
+
 @pytest.mark.parametrize("hero,villain,avant,apres", [
-    (3, 1, 1.900342, 1.611834),
-    (0, 1, 2.261386, 2.033441),
-    (2, 4, 1.939333, 1.708499),
-    (3, 0, 1.714123, 1.453889),
+    (3, 1, 1.9002683, 1.6118303),
+    (0, 1, 2.2613563, 2.0334389),
+    (2, 4, 1.9392982, 1.7084969),
+    (3, 0, 1.7140596, 1.4538859),
 ])
 def test_le_facteur_de_bulle_change_sur_une_vraie_table(
         hero, villain, avant, apres) -> None:
     """L'effet mesuré sur une table PMU à 9 joueurs dont un déjà éliminé.
 
     Les valeurs « avant » viennent du témoin `_bf_partage_egal`, les
-    « après » de la fonction de production. L'écart va de 10 à 15 %, soit 2,7
-    à 4,1 points d'équité requise — largement de quoi retourner une décision
-    push/fold.
+    « après » de la fonction de production. L'écart va de 10 à 15 %, soit
+    2,7 à 4,1 points d'équité requise — largement de quoi retourner une
+    décision push/fold.
+
+    PROVENANCE DES GOLDENS — l'arbitrage du 14 août 2026 : les valeurs
+    enregistrées à mi-chantier (avant : 1,900342 ; 2,261386 ; 1,939333 ;
+    1,714123) s'écartaient du témoin actuel de 1,3e-5 à 3,9e-5 en relatif.
+    Conformément à l'avertissement du chantier — ne JAMAIS élargir une
+    tolérance pour faire passer un test — les deux candidats ont été
+    départagés par un recalcul INDÉPENDANT : Malmuth-Harville par
+    énumération complète des 8! = 40 320 ordres d'arrivée des vivants
+    (P(ordre) = Π sᵢ/reste), sans aucun import de `pfs.core.icm`.
+    L'énumération reproduit le témoin actuel à mieux que 1e-9 en relatif
+    sur les quatre cas (p. ex. héros 3 contre vilain 0 : 1,7140596405
+    contre 1,7140596405) ; les goldens de mi-chantier étaient donc les
+    valeurs fausses, enregistrées contre une implémentation qui a bougé
+    ensuite. Ce sont les goldens qui ont été corrigés, pas le code. La
+    convention elle-même est ancrée par le calcul à la main du test
+    précédent.
     """
     temoin = _bf_partage_egal(PMU_UN_MORT, MTT_GAINS, hero, villain)
     prod = bubble_factor(PMU_UN_MORT, MTT_GAINS, hero, villain)
@@ -599,19 +721,21 @@ def test_les_mutations_font_tomber_ces_tests() -> None:
     """Ce que valent les tests ci-dessus, mesuré et non affirmé.
 
     Chaque correction a été remise dans son état d'AVANT, une à la fois, et
-    le fichier relancé. Résultats (pytest, ce fichier seul) :
+    le fichier relancé. Comptes re-mesurés le 14 août 2026, après l'ajout du
+    repli par transaction et des goldens à la main (pytest, ce fichier seul,
+    51 tests) :
 
     ======================================  ==========================
     mutation appliquée à `pfs/core/icm.py`  tests en échec
     ======================================  ==========================
-    A : ignorer `villain_all_in` et         5 échecs
+    A : ignorer `villain_all_in` et         11 échecs
         `unite_jeton`, revenir au seuil
-        relatif seul
+        relatif `1e-12 · Σ tapis` seul
     B : `bubble_factor` cesse de déclarer   9 échecs
         l'ordre (`_avec_ordre` rend `kw`)
-    B' : `_places_des_morts` ignore         7 échecs
+    B' : `_places_des_morts` ignore         12 échecs
         `ordre` (partage égal toujours)
-    C : `_validate` retronque en silence    4 échecs
+    C : `_validate` retronque en silence    3 échecs
     D : rétablir `min(max(r, 0), 1)` et     3 échecs
         les verdicts d'origine
     ======================================  ==========================
@@ -623,9 +747,11 @@ def test_les_mutations_font_tomber_ces_tests() -> None:
     from pfs.core import icm
 
     for nom in ("_places_des_morts", "_avec_ordre", "_vilain_elimine",
-                "_equite_requise", "_verdict_pko", "PayoutsTronques"):
+                "_equite_requise", "_verdict_pko", "PayoutsTronques",
+                "SEUIL_RESIDU_TRANSACTION"):
         assert hasattr(icm, nom), (
             f"{nom} a disparu : le protocole de mutation ci-dessus ne "
             f"s'applique plus tel quel")
     assert "ordre_elimination" in icm.icm_equities.__doc__
     assert np.isclose(icm.TOLERANCE_EQUITE, 1e-12)
+    assert np.isclose(icm.SEUIL_RESIDU_TRANSACTION, 1e-5)

@@ -467,6 +467,207 @@ def test_api_errors_are_surfaced_not_swallowed(server) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# ROUTE /api/postflop : nodelock (P2), rake (L8), feuille P3/EQR (L7)
+# ═══════════════════════════════════════════════════════════════════════
+#
+# Ces tests parlent au VRAI serveur en HTTP : ce sont les jointures
+# route ↔ solveur qui sont éprouvées ici, pas le solveur (déjà couvert par
+# tests/test_postflop_advanced.py et tests/test_rake.py en direct).
+
+
+def _post_longue(base: str, token: str, route: str,
+                 payload: dict) -> tuple[int, dict]:
+    """POST avec délai long (solves, entraînement EQR) ; les erreurs HTTP ne
+    lèvent pas — leur corps JSON est la réponse que l'interface reçoit."""
+    req = urllib.request.Request(
+        f"{base}/api/{route}?t={token}",
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=600) as rep:
+            return rep.status, json.loads(rep.read())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read())
+
+
+#: Spot de polarisation, le même que tests/test_rake.py : AA+33 (polarisé)
+#: contre QQ (bluff-catcheur), river sèche, pot 100, mise pot unique.
+_SPOT_POLAR = {"board": "2s 2d 7h 8h Kc", "pot": 100,
+               "bet_fracs": [1.0], "max_bets": 1}
+
+
+def test_api_postflop_nodelock_change_le_noeud_et_resolve_autour(server) -> None:
+    """Nodelock 2.0 par la route : le nœud verrouillé rend la stratégie
+    forcée, et le joueur NON verrouillé re-solve librement autour.
+
+    QQ (OOP) verrouillé à 90 % de fold face au bet : l'IP re-solvé bluffe
+    tout son air (fréquence de mise au nœud IP en forte hausse) et son EV
+    dépasse nettement le Nash — le comportement déjà prouvé du solveur
+    (test_overfolding_villain_gets_exploited), vérifié ICI à travers HTTP.
+    """
+    base, token = server
+    spot = {**_SPOT_POLAR, "oop_range": "QQ", "ip_range": "AA,33",
+            "stack": 300, "iterations": 600, "nodes": [["check"]]}
+    code, nash = _post_longue(base, token, "postflop", spot)
+    assert code == 200, nash
+    code, locke = _post_longue(base, token, "postflop", {
+        **spot,
+        "locks": [{"path": ["check", "bet 1p"],
+                   "strategy": {"fold": 0.9, "call": 0.1}}],
+    })
+    assert code == 200, locke
+
+    # 1) le nœud verrouillé rend EXACTEMENT la stratégie forcée
+    (verrou,) = locke["locks"]
+    assert verrou["path"] == ["check", "bet 1p"] and verrou["player"] == "OOP"
+    assert verrou["frequencies"]["fold"] == pytest.approx(0.9, abs=1e-9)
+    assert verrou["frequencies"]["call"] == pytest.approx(0.1, abs=1e-9)
+
+    # 2) le non-verrouillé re-solve autour : l'IP exploite l'overfold
+    assert locke["ev_ip"] > nash["ev_ip"] + 5.0, (
+        f"EV IP verrouillée {locke['ev_ip']:.1f} ≤ Nash {nash['ev_ip']:.1f}")
+
+    def freq_bet(rep: dict) -> float:
+        """Fréquence de mise au nœud IP après check (le nœud demandé)."""
+        (noeud,) = rep["nodes"]
+        assert noeud["player"] == "IP"
+        return next(v for k, v in noeud["frequencies"].items() if k != "check")
+
+    assert freq_bet(locke) > freq_bet(nash) + 0.1, (
+        "l'IP n'a pas ajusté ses bluffs autour du lock")
+
+    # 3) sans locks, la réponse n'en prétend pas
+    assert "locks" not in nash
+
+
+def test_api_postflop_lock_chemin_inconnu_est_nomme(server) -> None:
+    """Un chemin de lock inexistant → 400, l'action absente est NOMMÉE."""
+    base, token = server
+    code, rep = _post_longue(base, token, "postflop", {
+        **_SPOT_POLAR, "oop_range": "QQ", "ip_range": "AA,33", "stack": 300,
+        "iterations": 50,
+        "locks": [{"path": ["bet 7p"], "strategy": {"fold": 1.0}}],
+    })
+    assert code == 400
+    assert "bet 7p" in rep.get("error", ""), rep
+
+
+def test_api_postflop_rake_baisse_les_ev_et_deplace_l_equilibre(server) -> None:
+    """Rake par la route : EV en baisse, bluffs en HAUSSE, calls EFFONDRÉS.
+
+    Le piège n°4 de PASSATION.md, vérifié en forme close dans
+    tests/test_rake.py : β* = b/net(P+2b) > b/(P+2b) (bluffs ↑) et
+    c* = 1 − b/net(P+b) < 1/2 (calls ↓). Ici le polarisé est mis OOP pour
+    que ses bluffs se lisent à la racine de la réponse, et le nœud
+    ``["bet 1p"]`` est demandé pour lire la fréquence de call de QQ.
+    Stack 300 : le bet pot (100) garde son label « bet 1p » au lieu d'être
+    requalifié « all-in » (convention du solveur quand la mise = le tapis).
+    """
+    base, token = server
+    spot = {**_SPOT_POLAR, "oop_range": "AA,33", "ip_range": "QQ",
+            "stack": 300, "iterations": 800, "nodes": [["bet 1p"]]}
+    code, sans = _post_longue(base, token, "postflop", spot)
+    assert code == 200, sans
+    code, avec = _post_longue(base, token, "postflop", {
+        **spot, "rake": {"pct": 0.2, "cap": 1000.0}})
+    assert code == 200, avec
+
+    # 1) l'EV rendue baisse, pour les deux joueurs, et la comptabilité est
+    #    exacte : pot − (EV_OOP + EV_IP) = E[rake] (identité, pas convergence)
+    assert avec["ev_oop"] < sans["ev_oop"] - 1.0
+    assert avec["ev_ip"] < sans["ev_ip"] - 1.0
+    assert avec["rake"]["expected_rake"] > 0.0
+    assert avec["ev_oop"] + avec["ev_ip"] + avec["rake"]["expected_rake"] == (
+        pytest.approx(100.0, abs=1e-6))
+    assert "rake" not in sans, "sans rake demandé, la réponse n'en publie pas"
+
+    # 2) les bluffs MONTENT à l'équilibre (33 à la racine : ~0.50 → ~0.71)
+    def bluff_moyen(rep: dict) -> float:
+        (bet,) = [a for a in rep["root_actions"] if a["label"] != "check"]
+        vals = [v for k, v in bet["per_combo"].items()
+                if k[0] == "3" and k[2] == "3"]
+        assert vals, f"aucun combo 33 dans {sorted(bet['per_combo'])}"
+        return sum(vals) / len(vals)
+    assert bluff_moyen(avec) > bluff_moyen(sans) + 0.1
+
+    # 3) les calls S'EFFONDRENT (QQ face au bet : ~0.50 → ~0.375)
+    def call_qq(rep: dict) -> float:
+        (noeud,) = rep["nodes"]
+        assert noeud["player"] == "IP"
+        return noeud["frequencies"]["call"]
+    assert call_qq(avec) < call_qq(sans) - 0.05
+
+
+def test_api_postflop_rake_invalide_est_refuse(server) -> None:
+    base, token = server
+    charge = {**_SPOT_POLAR, "oop_range": "QQ", "ip_range": "AA,33",
+              "stack": 100, "iterations": 50}
+    code, rep = _post_longue(base, token, "postflop",
+                             {**charge, "rake": {"cap": 1.0}})
+    assert code == 400 and "pct" in rep.get("error", "")
+    code, rep = _post_longue(base, token, "postflop",
+                             {**charge, "rake": {"pct": 5, "cap": 1.0}})
+    assert code == 400, "pct=5 (au lieu de 0.05) doit être refusé"
+
+
+def test_api_postflop_leaf_model_eqr_est_atteignable_et_honnete(server) -> None:
+    """La feuille EQR (L7) par la route : entraînée au premier usage,
+    mémoïsée, et sa limite MESURÉE republiée dans la réponse.
+
+    Contrat DIRECTIONNEL seulement : l'EQR relève l'EV du joueur en position
+    par rapport au rollout nu (coefficient IP > 0), avec une dérive de la
+    somme des EV bornée. Le « plus proche du solve complet que le rollout »
+    du test direct (test_eqr_leaf_corrects_toward_full) ne vaut que pour SON
+    petit modèle (8 spots) : mesuré ici, le modèle canonique de la route
+    (train_eqr() par défaut, 24 spots) SUR-corrige sur ce spot artificiel
+    (|EV−full| 19,0 contre 14,2 pour le rollout) — c'est exactement la
+    limite que la réponse doit publier, et ce test vérifie qu'elle l'est.
+    """
+    base, token = server
+    spot = {"board": "2s 2d 7h 8h", "oop_range": "QQ, 99",
+            "ip_range": "KK, 55", "pot": 60, "stack": 180,
+            "bet_fracs": [0.75], "max_bets": 1, "iterations": 150}
+    code, full = _post_longue(base, token, "postflop", spot)
+    assert code == 200, full
+    code, roll = _post_longue(base, token, "postflop",
+                              {**spot, "leaf_model": "rollout"})
+    assert code == 200, roll
+    code, eqr = _post_longue(base, token, "postflop",
+                             {**spot, "leaf_model": "eqr"})
+    assert code == 200, eqr
+
+    # rollout : somme-exacte, arbre effondré, limite annoncée
+    assert roll["ev_oop"] + roll["ev_ip"] == pytest.approx(60.0, abs=1e-6)
+    assert roll["n_nodes"] < full["n_nodes"] / 20
+    assert roll["leaf"]["model"] == "rollout" and "limite" in roll["leaf"]
+
+    # eqr : directionnel (position ↑ vs rollout), dérive de la somme bornée
+    assert eqr["ev_ip"] > roll["ev_ip"]
+    assert abs(eqr["ev_oop"] + eqr["ev_ip"] - 60.0) < 0.5 * 60.0
+
+    # la limite est PUBLIÉE avec le R² et le n mesurés du modèle entraîné,
+    # y compris l'absence de garantie d'écart au solve complet
+    assert eqr["leaf"]["model"] == "eqr"
+    assert 0.0 < eqr["leaf"]["r2"] < 1.0 and eqr["leaf"]["n"] >= 8
+    assert "DIRECTIONNELLE" in eqr["leaf"]["limite"]
+    assert "sur-corriger" in eqr["leaf"]["limite"]
+    assert f"{eqr['leaf']['r2']:.2f}" in eqr["leaf"]["limite"]
+
+    # le mode complet, lui, n'annonce aucune feuille approchée
+    assert "leaf" not in full
+
+
+def test_api_postflop_leaf_model_refuse_la_river(server) -> None:
+    """Profondeur limitée = board turn : sur une river, refus nommé."""
+    base, token = server
+    code, rep = _post_longue(base, token, "postflop", {
+        **_SPOT_POLAR, "oop_range": "QQ", "ip_range": "AA,33",
+        "stack": 100, "iterations": 50, "leaf_model": "rollout"})
+    assert code == 400
+    assert "turn" in rep.get("error", ""), rep
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # PRIORS EXTERNES (SharkScope / OPR)
 # ═══════════════════════════════════════════════════════════════════════
 

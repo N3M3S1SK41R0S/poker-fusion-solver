@@ -1,0 +1,65 @@
+{
+  "quoi": "Badge « argent fictif » PMU PLAY — sprites et calibration, mesurés sur les 57 captures réelles des sessions des 10-11 août 2026 (deux tables PMU PLAY v.26.1.1.23)",
+  "taille_fenetre_calibree": [1920, 1361],
+  "sprites": {
+    "filigrane_clair": {
+      "fichier": "sprite_pmu_play_clair.png",
+      "source": "sessions/100_-_6-max_Turbo_Re-buy_1197329110/0000.png",
+      "boite_abs": [716, 584, 1156, 655],
+      "centre_relatif": [0.4875, 0.4552],
+      "theme": "feutre vert clair (disposition 6-max)"
+    },
+    "filigrane_sombre": {
+      "fichier": "sprite_pmu_play_sombre.png",
+      "source": "sessions/300_7-max_KO_1197327559/0010.png",
+      "boite_abs": [736, 634, 1174, 704],
+      "centre_relatif": [0.4974, 0.4915],
+      "theme": "feutre violet sombre (disposition 7-max KO)"
+    },
+    "dos_carte": {
+      "fichier": "sprite_dos_pmu_play.png",
+      "source": "sessions/100_-_6-max_Turbo_Re-buy_1197329110/0000.png",
+      "boite_abs": [950, 106, 1058, 210],
+      "canal": "R - B (l'orange du dos se détache de tout feutre)",
+      "recherche": "plein cadre (les sièges varient) ou ROI par siège une fois la disposition calibrée"
+    }
+  },
+  "methode": "ZNCC (corrélation croisée normalisée à moyenne nulle) ; filigrane : niveaux de gris, position fixe, jitter ±4 px ; dos : canal R-B, plancher de variance sigma>=5 niveaux",
+  "mesures_57_frames": {
+    "filigrane_position_fixe": {
+      "visibles": 17, "occultees_par_le_board": 40,
+      "scores_visibles": "0.417 à 1.000 (16 frames à 1.000 : pixels identiques, rendu statique)",
+      "scores_occultees": "<= 0.086",
+      "negatifs_synthetiques_max": 0.050,
+      "seuil": 0.25,
+      "marge": "pire positif 0.417 vs pire négatif 0.050 : rapport 8.3"
+    },
+    "dos_plein_cadre": {
+      "detectes": 49, "absents": 8,
+      "scores_detectes": ">= 0.975",
+      "scores_absents": "<= 0.673 (pics sur du contenu orange quelconque)",
+      "negatifs_synthetiques_max": 0.580,
+      "seuil": 0.80,
+      "marge": "pire positif 0.975 vs pire négatif 0.673 : écart 0.30"
+    },
+    "badge_combine": {
+      "couverture_immediate": "50/57",
+      "frames_sans_badge": [
+        "6-max 0026-0031 (abattage : board sur le filigrane + bandeau SIT OUT sur le texte des dos)",
+        "7-max 0024 (tous les adversaires couchés : plus aucun dos visible)"
+      ],
+      "consequence": "le badge n'est pas visible A CHAQUE frame ; il faut une mémoire courte liée à (hwnd, titre) — proposé : 60 s, purgée si le titre ou le hwnd change. C'est l'affaire du gate, pas du détecteur."
+    }
+  },
+  "couts_mesures_ms": {
+    "filigrane_position_fixe": 5.6,
+    "dos_plein_cadre": 325.4,
+    "dos_roi_par_siege_estime": "~10 (une fois les sièges calibrés)"
+  },
+  "limites_honnetes": [
+    "Les 57 frames viennent de DEUX tables du même client, même version (v.26.1.1.23), même taille de fenêtre 1920x1361. Autre taille de fenêtre => échelle différente => refus (fail-closed) tant qu'une recalibration multi-échelles n'est pas mesurée.",
+    "Aucune capture du client PMU argent réel n'est disponible : l'hypothèse « le client réel n'affiche pas la marque PMU PLAY » est plausible (c'est la marque du produit play money) mais NON prouvée ici.",
+    "Les négatifs sont des tables synthétiques du dépôt, pas de vrais clients concurrents ; la séparation dos (0.975 vs 0.673) est nette mais mesurée sur ce seul jeu."
+  ],
+  "rejouer": "python banc_badge_pmu.py (les 57 PNG ~108 Mo ne sont pas versionnés ; le banc dit où les chercher)"
+}

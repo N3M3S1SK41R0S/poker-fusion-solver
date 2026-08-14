@@ -8,6 +8,7 @@ Sert de contrôle d'intégrité après installation, sans avoir besoin de pytest
 from __future__ import annotations
 
 import math
+import sys
 
 CHECKS: list[tuple[str, callable, float, float]] = []
 
@@ -81,6 +82,15 @@ def run_selftest() -> bool:
     ]
 
     ok = True
+    # Une console Windows en cp1252 ne sait imprimer ni « ─ » ni « ✓ » : le
+    # selftest plantait AVANT de vérifier quoi que ce soit (UnicodeEncodeError),
+    # ce qui ressemblait à un échec des calculs alors que rien n'avait tourné.
+    # On force un flux UTF-8 avec remplacement — le verdict passe avant l'ornement.
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            pass
     print("─" * 62)
     print("  AUTO-VÉRIFICATION — valeurs golden du Plan Directeur v2.0")
     print("─" * 62)

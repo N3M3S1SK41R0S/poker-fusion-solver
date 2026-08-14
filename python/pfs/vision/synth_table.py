@@ -41,7 +41,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from pfs.vision.card_recognizer import _TEMPLATE_ROOT
 
@@ -77,6 +77,12 @@ class TableSpec:
     seed: int = 0
     decor: bool = True
     villains: int = 0
+    # 0 = police bitmap de PIL (~8 px de chiffres, comportement historique —
+    # les bancs de DÉTECTION s'en contentent, le texte n'y est qu'un piège à
+    # faux positifs). Une taille en pixels rend les montants avec la police
+    # d'interface du système : c'est ce qu'il faut pour tester leur LECTURE,
+    # digit_ocr refusant tout chiffre de moins de 10 px (son garde-fou).
+    taille_texte: int = 0
 
 
 @dataclass(slots=True)
@@ -235,9 +241,16 @@ def render_table(spec: TableSpec) -> SynthTable:
     # d'abord basse que la détection exige calme, et la localisation du banc
     # chute de 98,8 % à 97,0 %. C'est une limite du détecteur, mesurée ici.
     ink = (238, 238, 210)
-    d.text((W // 2 - 30, int(H * 0.30)), texts["pot"], fill=ink)
-    d.text((W // 2 - 24, hy + ch + 16), texts["hero_stack"], fill=ink)
-    d.text((int(W * 0.62), int(H * 0.90) - 14), texts["to_call"], fill=ink)
+    police = None
+    if spec.taille_texte > 0:
+        from pfs.vision.digit_ocr import _chemin_police
+        chemin = _chemin_police("segoeui.ttf") or _chemin_police("arial.ttf")
+        if chemin is not None:
+            police = ImageFont.truetype(str(chemin), spec.taille_texte)
+    d.text((W // 2 - 30, int(H * 0.30)), texts["pot"], fill=ink, font=police)
+    d.text((W // 2 - 24, hy + ch + 16), texts["hero_stack"], fill=ink, font=police)
+    d.text((int(W * 0.62), int(H * 0.90) - 14), texts["to_call"], fill=ink,
+           font=police)
 
     if spec.blur:
         img = img.filter(ImageFilter.GaussianBlur(spec.blur))

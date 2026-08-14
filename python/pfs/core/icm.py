@@ -892,13 +892,16 @@ class PkoSpot:
 
     ``None`` — le défaut — laisse `analyse_pko_spot` l'INFÉRER du tapis
     résiduel, ce qui est fragile : la convention de `PkoSpot` veut les jetons
-    du vilain à tapis dans ``pot`` et son tapis à zéro, mais un résidu d'un
-    seul jeton (arrondi d'ante, tapis lu à l'écran, saisie) suffit à faire
+    du vilain à tapis dans ``pot`` et son tapis à zéro, mais un résidu
+    (arrondi d'ante, tapis lu à l'écran, saisie) suffisait à faire
     disparaître la prime **en silence**. Mesuré sur une table finale de MTT
-    PKO réel (3 337 entrants × 5 000 jetons, 6 685 000 jetons en jeu) : un
-    résidu de 1 jeton — 0,0003 % du tapis du vilain — fait passer l'équité
-    exigée de 49,95 % à 53,59 %. Un chiffre faux et plausible, du côté du
-    fold.
+    PKO réel (3 337 entrants × 5 000 jetons, 6 685 000 jetons en jeu), du
+    temps du repli ``1e-12 · Σ tapis`` : un résidu de 1 jeton — 0,0003 % du
+    tapis du vilain — faisait passer l'équité exigée de 49,95 % à 53,59 %.
+    Un chiffre faux et plausible, du côté du fold. Le repli juge désormais le
+    résidu à l'échelle de la transaction (`SEUIL_RESIDU_TRANSACTION`), ce qui
+    neutralise cette classe d'artefacts — mais l'inférence reste une
+    inférence.
 
     Le déclarer coûte un booléen et supprime la classe entière de défauts.
     `spot_pko_face_a_tapis` le renseigne toujours.
@@ -922,9 +925,12 @@ class PkoSpot:
     les deux ne change aucun verdict. C'est l'invariance d'échelle qui prime,
     à condition de la porter sur la bonne quantité.
 
-    Laissée à ``None`` sans ``villain_all_in``, l'inférence retombe sur le
-    seuil relatif historique ``1e-12 · Σ tapis``, qui ne signifie rien de plus
-    que « zéro exact, aux arrondis près ».
+    Laissée à ``None`` sans ``villain_all_in``, l'inférence retombe sur
+    l'échelle de la TRANSACTION : un résidu inférieur à
+    ``SEUIL_RESIDU_TRANSACTION · max(pot, bet)`` est réputé nul au sens du
+    jeu. Voir `SEUIL_RESIDU_TRANSACTION` pour les deux bornes mesurées qui
+    encadrent ce seuil — et pourquoi l'ancien repli ``1e-12 · Σ tapis``
+    comparait le résidu à une grandeur qui n'a rien à voir avec lui.
     """
 
 
@@ -939,10 +945,10 @@ class PkoAnalysis:
     required_with_bounty: float  # équité requise avec la prime
     discount_pts: float          # points d'équité offerts par la prime
     verdict: str
-    source_elimination: str = "seuil relatif"
+    source_elimination: str = "échelle de la transaction (repli)"
     """D'où vient ``villain_eliminated`` : déclaration, unité de jeton, ou
-    seuil relatif. Sans cette trace, impossible de savoir si la prime a été
-    décidée ou devinée."""
+    repli sur l'échelle de la transaction. Sans cette trace, impossible de
+    savoir si la prime a été décidée ou devinée."""
     signaux: tuple[str, ...] = ()
     """Anomalies EXPLICITES là où le code tronquait en silence (``min``/``max``
     sur les équités requises). Vide dans le cas nominal."""
@@ -1064,6 +1070,45 @@ def _verdict_pko(r_pko: float, r_icm: float,
     return f"FOLD : {hero_equity * 100:.1f} % < {r_pko * 100:.1f} %."
 
 
+SEUIL_RESIDU_TRANSACTION = 1e-5
+"""Fraction de la transaction (``max(pot, bet)``) sous laquelle un tapis
+résiduel est réputé NUL AU SENS DU JEU, quand ni ``villain_all_in`` ni
+``unite_jeton`` ne sont fournis.
+
+POURQUOI la transaction et pas ``Σ tapis`` : le résidu du vilain sort de
+l'arithmétique de SA transaction — ``stack − engagement``, où l'engagement
+vit dans ``pot``/``bet``. Les tapis des autres joueurs n'entrent jamais dans
+cette soustraction ; en faire l'échelle du seuil, c'est rendre le verdict
+dépendant d'une grandeur étrangère au calcul qui a produit le nombre jugé —
+la dépendance à l'unité du seuil absolu, recréée en relatif (tour 4 du
+conseil). Mesuré sur l'exemple du tour 4 : un jeton de saisie résiduel sur
+un all-in de 288 000 (tournoi à 16,7 M) restait « vivant » pour le seuil
+``1e-12 · Σ``, la prime tombait à zéro et l'équité exigée montait de
+36,6 % à 42,2 % — un chiffre faux et plausible, du côté du fold.
+
+Le seuil est encadré par deux bornes MESURÉES :
+
+* **au-dessous, ce qui doit être vu comme zéro** — l'annulation flottante de
+  ``stack − bet`` pèse quelques ulp de l'opérande, soit ~1e-12 de la
+  transaction (7 ordres sous le seuil) ; un jeton de départ résiduel
+  (arrondi d'ante, tapis lu à l'écran, saisie) sur une table où l'all-in en
+  cours pèse ≥ 3e5 unités : ≤ 3,3e-6, soit 3× sous le seuil ;
+* **au-dessus, ce qui doit rester un joueur vivant** — le plus petit jeton
+  qui circule vaut au moins bb/100 (en ligne l'affichage ne descend pas
+  sous ce pas dans les structures réelles ; en live la chip race retire les
+  coupures inférieures), et un all-in ne dépasse pas ~300 bb : un vrai
+  résidu pèse au moins 1/(100 · 300) = 3,3e-5 de la transaction, soit 3× au
+  DESSUS du seuil.
+
+1e-5 est la moyenne géométrique de ces deux bornes (√(3,3e-6 · 3,3e-5) =
+1,04e-5). Le rapport résidu/transaction étant sans dimension, le critère est
+invariant d'échelle — c'est ce que le seuil absolu n'était pas. LIMITE
+ASSUMÉE : entre les deux bornes, aucune inférence n'est possible sans
+l'unité ; c'est exactement ce que ``villain_all_in`` et ``unite_jeton``
+fournissent, et ils PRIMENT toujours sur ce repli.
+"""
+
+
 def _vilain_elimine(spot: PkoSpot, s: tuple[float, ...],
                     v: int) -> tuple[bool, str]:
     """Le vilain est-il éliminable par ce call ? Et d'où vient la réponse ?
@@ -1074,11 +1119,17 @@ def _vilain_elimine(spot: PkoSpot, s: tuple[float, ...],
        qu'il ne contredit pas les tapis fournis. C'est le seul régime qui ne
        dépende ni de l'unité ni de l'échelle.
     2. ``spot.unite_jeton`` fourni : moins d'un demi-jeton = éliminé. Le
-       couple (tapis, unité) reste invariant d'échelle.
-    3. ni l'un ni l'autre : seuil relatif historique ``1e-12 · Σ tapis``, qui
-       ne dit rien de plus que « zéro exact aux arrondis près ». Sur une table
-       finale de MTT réel (6 685 000 jetons) il vaut 6,7e-6 jeton : tout
-       résidu réel, fût-il d'un millième de jeton, fait tomber la prime.
+       couple (tapis, unité) reste invariant d'échelle. La déclaration
+       d'unité est une ASSERTION que les tapis sont exacts en jetons
+       entiers : un résidu d'un jeton plein y est un joueur vivant, là où le
+       repli 3 le lirait comme un artefact.
+    3. ni l'un ni l'autre : le résidu est jugé à l'échelle de la TRANSACTION
+       qui l'a produit — nul au sens du jeu s'il pèse moins de
+       ``SEUIL_RESIDU_TRANSACTION · max(pot, bet)``. L'ancien repli
+       ``1e-12 · Σ tapis`` comparait le résidu aux tapis des AUTRES joueurs,
+       qui n'entrent jamais dans ``stack − bet`` : sur une table finale de
+       MTT réel il valait 6,7e-6 jeton, et tout artefact de saisie — fût-il
+       d'un millième de jeton — faisait tomber la prime en silence.
     """
     if spot.villain_all_in is not None:
         seuil = 1e-12 * sum(s)
@@ -1095,7 +1146,9 @@ def _vilain_elimine(spot: PkoSpot, s: tuple[float, ...],
             raise IcmError("unite_jeton doit être > 0.")
         return (s[v] < 0.5 * spot.unite_jeton,
                 f"unité de jeton ({spot.unite_jeton:g})")
-    return s[v] <= 1e-12 * sum(s), "seuil relatif (≈ zéro exact)"
+    transaction = max(spot.pot, spot.bet)
+    return (s[v] <= SEUIL_RESIDU_TRANSACTION * transaction,
+            "échelle de la transaction (repli)")
 
 
 def analyse_pko_spot(spot: PkoSpot, hero_equity: float | None = None) -> PkoAnalysis:

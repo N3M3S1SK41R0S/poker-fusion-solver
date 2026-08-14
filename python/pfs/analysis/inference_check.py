@@ -1,6 +1,23 @@
 r"""
 Validation prédictive de l'inférence adverse — le modèle bat-il le prior ?
 
+Statut (audit du 14 août 2026) — banc de validation, NON branché
+----------------------------------------------------------------
+Importé par aucun code applicatif ni script livré : seul
+``tests/test_inference_check.py`` l'exerce (et ce module est, hors tests,
+l'unique consommateur de ``pfs.data.population``). Pourquoi : c'est un
+instrument de mesure hors-ligne — il répond à « le modèle bat-il le
+prior ? » sur un corpus de hand histories, pas à une question qu'un joueur
+pose pendant ou après une session ; l'exécuter demande un corpus et du
+temps de calcul, pas un clic. Le banc reste dans le dépôt (règle « mesurer
+avant de publier ») même sans route. Ce qui existe déjà :
+``evaluer_inference`` / ``evaluer_dossiers``, quatre lectures de
+significativité, contrôles anti-fuite — testés. Accroche naturelle si on
+voulait l'exposer : un script CLI à côté de ``banc_corpus_pluribus.py``, ou
+un onglet « validation » de la route ``review``
+(``pfs/app/server.py:API.review``). Règle du projet : aucun module fusionné
+sans route + UI + test de bout en bout.
+
 C'est la thèse centrale du projet, et elle n'était jusqu'ici pas mesurée : le
 modèle adverse appris en ligne (trackers Beta-Binomiaux F1,
 :mod:`pfs.fusion.dynamic_beta`, qui alimentent le filtre particulaire F3)

@@ -13,6 +13,7 @@ from pfs.bench.solver_registry import (
     coverage_score,
     differentiators,
     gaps,
+    library_only,
 )
 
 
@@ -114,6 +115,44 @@ class TestCoverageState(unittest.TestCase):
         self.assertEqual(len(adv), 12)   # +tells temporels, +population (L2, L6)
         for p in adv:
             self.assertIs(p.coverage, Coverage.COVERED, p.name)
+
+
+class TestWiring(unittest.TestCase):
+    """Axe ``wired`` — ajouté par l'audit du 14 août 2026.
+
+    ``coverage`` dit « le code existe et il est testé » ; ``wired`` dit
+    « un chemin d'exécution utilisateur y passe ». Le registre laissait
+    croire que les deux coïncidaient : ces tests figent la liste des
+    modules-bibliothèques pour que tout branchement (ou débranchement)
+    futur DOIVE mettre le registre à jour.
+    """
+
+    #: Modules implémentés + testés mais importés par aucun code applicatif
+    #: (vérifié par grep des imports hors tests, audit du 14 août 2026).
+    #: ``fusion.eqr`` retiré le 14 août 2026 : branché dans /api/postflop
+    #: (``leaf_model="eqr"``, entraînement mémoïsé dans pfs/app/server.py).
+    ORPHANS = {
+        "core.bunching", "solver.abstraction", "solver.isomorphism",
+        "topology", "fusion.timing", "data.population",
+    }
+
+    def test_wired_false_iff_module_orphelin(self) -> None:
+        for p in PARAMETERS:
+            self.assertEqual(
+                not p.wired, p.module in self.ORPHANS,
+                f"{p.name} : wired={p.wired} mais module={p.module!r}")
+
+    def test_library_only_liste_les_sept_entrees(self) -> None:
+        # huit à l'audit du 14 août 2026 ; EQR branché le même jour → sept.
+        lib = library_only()
+        self.assertEqual(len(lib), 7)
+        for p in lib:
+            self.assertTrue(p.module, f"{p.name} en bibliothèque sans module")
+            self.assertIn(p.coverage, (Coverage.COVERED, Coverage.PARTIAL))
+
+    def test_les_absents_ne_sont_pas_comptes_bibliotheque(self) -> None:
+        for p in library_only():
+            self.assertIsNot(p.coverage, Coverage.ABSENT)
 
 
 class TestSolverProfiles(unittest.TestCase):

@@ -16,6 +16,23 @@ au flop — 990 runouts × la range adverse à chaque spot, soit ≈ 350 ms — 
 il n'est pas réductible sans renoncer à l'exactitude, donc au caractère
 rejouable au chiffre près.
 
+Résultat du rejeu complet au 14 août 2026 (icm.py corrigé du seuil PKO,
+range adverse « moyenne », intervalle de Wilson à 95 %) ::
+
+    préflop · tapis court (< 15 bb)       17 spots · accord 84,6 %
+    préflop · profond (≥ 15 bb)       10 282 spots · accord 86,3 % [12,9;14,4]
+    postflop · flop                    2 317 spots · accord 63,0 % [35,1;39,1]
+    postflop · turn                    1 513 spots · accord 63,8 % [33,8;38,7]
+    postflop · river                   1 040 spots · accord 64,4 % [32,7;38,5]
+    TOUS RÉGIMES                      15 169 spots · accord 78,0 % [21,3;22,7]
+
+Les intervalles portent le DÉSACCORD. Le désaccord postflop (~36 %) n'est
+pas une mesure du postflop seul : la famille la plus nombreuse d'un corpus
+6-max est la DÉFENSE face à une ouverture, à laquelle le conseiller répond
+avec la chart d'ouverture — un modèle appliqué hors de son domaine, compté
+tel quel (voir la section 9 du rapport). Cash 6-max à 100 bb sans ICM :
+aucun de ces chiffres ne valide le conseil en tournoi ni le tapis court.
+
 Pourquoi ce fichier existe
 --------------------------
 Le logiciel n'avait jamais été confronté à autre chose qu'aux mains de son
@@ -105,6 +122,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np  # noqa: E402
 
+from pfs.analysis.reperes import CORPUS_PLURIBUS  # noqa: E402
 from pfs.analysis.spot_advisor import Advice, Spot, advise, parse_cards  # noqa: E402
 from pfs.core.equity import evaluate5, evaluate7, hand_category  # noqa: E402
 from pfs.core.range_model import GTO_PRESETS, parse_range  # noqa: E402
@@ -124,8 +142,11 @@ from pfs.data.phh import (  # noqa: E402
     positions_par_siege,
 )
 
-CORPUS_DEFAUT = Path(
-    r"C:\Users\pierr\Documents\POKERFUSIONSOLVER\corpus\phh-dataset\data\pluribus")
+#: Même résolution que partout ailleurs — ``PFS_CORPUS``, sinon
+#: ``<parent du dépôt>/corpus`` (voir :func:`pfs.analysis.reperes.
+#: racine_corpus`) : une seule définition du chemin du corpus dans le projet.
+#: ``--corpus`` reste le moyen d'en désigner un autre.
+CORPUS_DEFAUT = CORPUS_PLURIBUS
 
 N_MIN_FAMILLE = 100
 """Effectif en deçà duquel une famille n'est jamais déclarée systématique.

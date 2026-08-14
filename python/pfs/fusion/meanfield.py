@@ -1,6 +1,22 @@
 """
 F11 — Pots multi-way par approximation de champ moyen.
 
+Statut (audit du 14 août 2026) — bibliothèque expérimentale, NON branchée
+-------------------------------------------------------------------------
+Importée par aucun code applicatif ni script livré : seul
+``tests/test_app_and_data.py`` l'exerce. Pourquoi : le solveur et le
+re-solve (``resolve_spot``) sont heads-up ; tant qu'aucun chemin applicatif
+ne résout un pot à 3+ joueurs, cette fusion n'a pas de consommateur — et sa
+propre docstring (ci-dessous) estime à 55 % la confiance dans son apport
+face à la ligne de base par agrégation, qu'elle implémente aussi.
+Ce qui existe déjà : point fixe amorti, baseline agrégée, mesure d'écart
+entre les deux — testés. Accroche naturelle si on branche :
+``pfs/engine.py:resolve_spot`` le jour où le re-solve devient multiway
+(la décision brancher/abandonner doit alors passer par
+``MeanFieldResult.worth_the_complexity``, pas par l'élégance de la théorie).
+Règle du projet : aucun module fusionné sans route + UI + test de bout en
+bout.
+
 Sources
 -------
 - Lasry, J-M. & Lions, P-L. (2007), *Mean field games*, Japan J. Math. 2

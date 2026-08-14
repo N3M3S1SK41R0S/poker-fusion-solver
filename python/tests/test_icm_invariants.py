@@ -818,7 +818,11 @@ def test_un_vilain_non_couvert_ne_devient_pas_eliminable_en_changeant_d_unite(
 
 
 def test_un_vilain_reellement_a_tapis_reste_eliminable_a_toute_echelle() -> None:
-    """Le pendant du test précédent : le seuil relatif ne doit rien perdre."""
+    """Le pendant du test précédent : l'inférence ne doit rien perdre.
+
+    Un résidu de zéro exact passe sous tout seuil d'inférence raisonnable —
+    y compris le repli actuel par transaction (`SEUIL_RESIDU_TRANSACTION`).
+    """
     for k in (1e-3, 1.0, 1e3, 1e6):
         a = analyse_pko_spot(PkoSpot(
             stacks=(100.0 * k, 0.0, 100.0 * k), payouts=(100.0,),
@@ -844,8 +848,12 @@ def test_l_invariant_d_echelle_pko_a_des_dents() -> None:
     assert eliminated_seuil_absolu(1.0 * 1e-13), (
         "le seuil absolu doit bien confondre « 1 jeton » et « zéro » à petite "
         "échelle — c'est le défaut que l'invariant relatif corrige")
-    # Le seuil relatif, lui, ne confond jamais : 1 jeton sur 201 reste 0,5 %.
+    # Un seuil RELATIF, lui, ne confond jamais : 1 jeton sur 201 reste 0,5 %.
+    # (Vrai pour l'ancien repli 1e-12 · Σ tapis comme pour l'actuel
+    # 1e-5 · max(pot, bet) : le rapport est sans dimension dans les deux cas ;
+    # ce qui les distingue est l'ÉCHELLE de référence, pas l'invariance.)
     assert not (1.0 * 1e-13 <= 1e-12 * (201.0 * 1e-13))
+    assert not (1.0 * 1e-13 <= 1e-5 * (100.0 * 1e-13))
 
 
 # ═══════════════════════════════════════════════════════════════════════════

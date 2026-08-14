@@ -7,13 +7,34 @@ raison pour laquelle la notion compte à la table.
 
 Le lexique est une DONNÉE, pas du texte d'interface : l'application le sert
 tel quel (``/api/lexique``), et les rapports peuvent y renvoyer.
+
+Chaque entrée porte en outre une CLÉ stable (``cle``) et d'éventuels alias :
+c'est par elle que le code — les infobulles du verdict notamment — retrouve
+un terme précis (``definir_par_cle("cote_du_pot")``, ``"btn"``,
+``"equite"``…). Quand elle n'est pas donnée explicitement, la clé se déduit
+du nom : minuscules, sans accents, tout séparateur devient ``_``.
 """
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from dataclasses import dataclass
 
-__all__ = ["Terme", "LEXIQUE", "chercher", "definir"]
+__all__ = ["Terme", "LEXIQUE", "PAR_CLE", "chercher", "definir",
+           "definir_par_cle"]
+
+
+def _slug(texte: str) -> str:
+    """Clé stable dérivée d'un nom : minuscules, sans accents, ``_``.
+
+    ``"cote du pot"`` → ``"cote_du_pot"``, ``"équité"`` → ``"equite"``.
+    Idempotente : une clé déjà en forme de clé ressort inchangée.
+    """
+    sans_accents = "".join(
+        c for c in unicodedata.normalize("NFKD", texte)
+        if not unicodedata.combining(c))
+    return re.sub(r"[^a-z0-9]+", "_", sans_accents.lower()).strip("_")
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,10 +46,19 @@ class Terme:
     definition: str
     pourquoi: str = ""
     aussi: tuple[str, ...] = ()
+    #: Clé stable pour la recherche programmée (infobulles). Dérivée du nom
+    #: si absente — les champs existants restent constructibles tels quels.
+    cle: str = ""
+    alias: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.cle:
+            object.__setattr__(self, "cle", _slug(self.nom))
 
 
-def _t(nom, categorie, definition, pourquoi="", aussi=()):
-    return Terme(nom, categorie, definition, pourquoi, tuple(aussi))
+def _t(nom, categorie, definition, pourquoi="", aussi=(), cle="", alias=()):
+    return Terme(nom, categorie, definition, pourquoi, tuple(aussi),
+                 cle, tuple(alias))
 
 
 LEXIQUE: tuple[Terme, ...] = (
@@ -38,33 +68,93 @@ LEXIQUE: tuple[Terme, ...] = (
        "à des blindes 10/20 vaut 20 bb.",
        "Compter en bb rend les situations comparables entre niveaux de "
        "blindes : « 10 bb » veut dire la même chose au niveau 1 et au niveau 9.",
-       ("tapis effectif",)),
+       ("tapis effectif", "grosse blinde (BB)"),
+       cle="bb", alias=("big_blind",)),
     _t("tapis effectif", "bases",
        "Le plus petit des deux tapis en jeu. Si tu as 50 bb et ton adversaire "
        "12 bb, vous ne jouez que 12 bb.",
        "C'est la seule profondeur qui compte : on ne peut pas gagner plus que "
        "ce que l'adversaire peut perdre.",
        ("bb (big blind)",)),
-    _t("position", "bases",
-       "L'ordre de parole. Être « en position » signifie parler APRÈS "
-       "l'adversaire sur toutes les rues suivantes.",
-       "Parler en dernier, c'est décider en sachant ce que l'autre a fait. "
-       "C'est l'avantage structurel le plus rentable du jeu."),
-    _t("préflop / flop / turn / river", "bases",
-       "Les quatre tours d'enchères : avant toute carte commune (préflop), "
-       "puis après 3 cartes (flop), une 4ᵉ (turn), une 5ᵉ (river)."),
+    _t("street (préflop / flop / turn / river)", "bases",
+       "Un tour d'enchères — de l'anglais « rue ». Il y en a quatre : avant "
+       "toute carte commune (préflop), puis après 3 cartes (flop), une 4ᵉ "
+       "(turn), une 5ᵉ (river).",
+       cle="street", alias=("preflop", "flop", "turn", "river", "rue")),
     _t("board", "bases",
        "Les cartes communes posées au centre, partagées par tous les joueurs."),
     _t("assorti / dépareillé (suited / offsuit)", "bases",
        "Deux cartes de la même couleur (assorties, notées « s ») ou non "
        "(dépareillées, notées « o »). « A5s » = as et 5 assortis.",
        "Une main assortie vaut nettement plus qu'elle n'en a l'air : la "
-       "possibilité de couleur ajoute de l'équité et de la jouabilité."),
+       "possibilité de couleur ajoute de l'équité et de la jouabilité.",
+       cle="assorti", alias=("suited", "offsuit", "depareille")),
     _t("SPR (stack-to-pot ratio)", "bases",
        "Rapport entre le tapis restant et le pot. SPR 2 = il reste deux fois "
        "le pot derrière.",
        "Il dicte l'engagement : à SPR bas, une top paire suffit souvent à "
-       "jouer son tapis ; à SPR élevé, il faut bien plus."),
+       "jouer son tapis ; à SPR élevé, il faut bien plus.",
+       cle="spr"),
+    _t("mise à payer", "bases",
+       "Ce qu'il faut ajouter MAINTENANT pour rester dans le coup. Si "
+       "l'adversaire mise 6 et que tu as déjà posé 2, la mise à payer est 4.",
+       "C'est le prix du billet : comparé à ce que contient le pot, il donne "
+       "le seuil de rentabilité de ton call.",
+       ("cote du pot",),
+       alias=("a_payer", "call")),
+
+    # ── les positions ────────────────────────────────────────────────────
+    _t("position", "positions",
+       "L'ordre de parole. Être « en position » signifie parler APRÈS "
+       "l'adversaire sur toutes les rues suivantes.",
+       "Parler en dernier, c'est décider en sachant ce que l'autre a fait. "
+       "C'est l'avantage structurel le plus rentable du jeu."),
+    _t("bouton (BTN)", "positions",
+       "La place du croupier, marquée par un jeton « dealer ». Le bouton "
+       "parle en dernier après le flop, sur toutes les rues, et avance d'un "
+       "siège à chaque main.",
+       "C'est la meilleure place de la table : décider après tout le monde, "
+       "c'est décider en sachant ce qu'ils ont fait. On y joue bien plus de "
+       "mains qu'ailleurs.",
+       ("position",),
+       cle="btn", alias=("bouton", "dealer")),
+    _t("petite blinde (SB)", "positions",
+       "Le siège juste à gauche du bouton. Avant de voir ses cartes, il pose "
+       "une demi-mise obligatoire ; après le flop, il parle en premier.",
+       "La pire place du jeu : de l'argent déjà engagé et la parole en "
+       "premier sur toutes les rues. Y perdre un peu sur la durée est "
+       "normal — tout le monde y perd.",
+       ("grosse blinde (BB)", "position"),
+       cle="sb", alias=("petite_blinde",)),
+    _t("grosse blinde (BB)", "positions",
+       "Le siège à gauche de la petite blinde. Il pose la mise obligatoire "
+       "pleine — celle qui sert d'unité de compte partout dans le logiciel.",
+       "Préflop, une partie du prix est déjà payée : la grosse blinde peut "
+       "donc défendre avec plus de mains. Après le flop, elle reste mal "
+       "placée.",
+       ("bb (big blind)", "petite blinde (SB)"),
+       cle="grosse_blinde", alias=("bb_position",)),
+    _t("UTG (under the gun)", "positions",
+       "« Sous le pistolet » : le premier siège à parler préflop, juste à "
+       "gauche de la grosse blinde.",
+       "Parler en premier avec toute la table encore à s'exprimer force à ne "
+       "jouer que des mains fortes : c'est la position la plus serrée.",
+       ("position",),
+       cle="utg"),
+    _t("MP / lojack / hijack", "positions",
+       "Les sièges du milieu, entre UTG et le cutoff. À une table de 6, ils "
+       "s'appellent lojack (MP) puis hijack.",
+       "Plus on se rapproche du bouton, moins il reste de joueurs à parler "
+       "derrière : on élargit son jeu progressivement, siège après siège.",
+       ("position",),
+       cle="mp", alias=("lojack", "hijack", "lj", "hj")),
+    _t("cutoff (CO)", "positions",
+       "Le siège juste à droite du bouton — l'avant-dernier à parler.",
+       "La deuxième meilleure place : si le bouton se couche, le cutoff "
+       "hérite de la parole en dernier. C'est de là qu'on commence à "
+       "attaquer les blindes.",
+       ("bouton (BTN)", "position"),
+       cle="co", alias=("cutoff",)),
 
     # ── les actions ──────────────────────────────────────────────────────
     _t("limp", "actions",
@@ -75,15 +165,18 @@ LEXIQUE: tuple[Terme, ...] = (
     _t("jam / shove / tapis", "actions",
        "Miser tout son tapis d'un coup.",
        "En dessous de ~25 bb, c'est souvent la seule bonne mise : relancer "
-       "petit t'engage sans te laisser de porte de sortie."),
+       "petit t'engage sans te laisser de porte de sortie.",
+       cle="jam", alias=("shove", "tapis")),
     _t("c-bet (continuation bet)", "actions",
        "Mise au flop par celui qui avait relancé préflop.",
        "C'est l'action la plus fréquente du poker moderne : l'initiative "
-       "préflop se prolonge, que le flop ait aidé ou non."),
+       "préflop se prolonge, que le flop ait aidé ou non.",
+       cle="cbet", alias=("c_bet", "continuation_bet")),
     _t("3-bet", "actions",
        "La deuxième relance préflop : quelqu'un ouvre, tu re-relances.",
        "Un 3-bet trop rare (sous 8 %) signale un jeu passif, facilement "
-       "volé par les adversaires attentifs."),
+       "volé par les adversaires attentifs.",
+       cle="3bet", alias=("3_bet",)),
     _t("bluff-catch", "actions",
        "Payer avec une main qui ne bat que les bluffs — elle perd contre "
        "toute main de valeur.",
@@ -92,28 +185,55 @@ LEXIQUE: tuple[Terme, ...] = (
 
     # ── les mesures ──────────────────────────────────────────────────────
     _t("équité", "mesures",
-       "Ta part du pot en pourcentage, si la main allait à l'abattage sans "
-       "aucune mise supplémentaire. AA contre KK préflop : 81,5 %.",
+       "Tes chances de gagner le pot, en pourcentage, si plus personne ne "
+       "misait et qu'on retournait les cartes. AA contre KK préflop : 81,5 %.",
        "C'est la brique de toute décision : on la compare à ce que coûte de "
        "continuer.",
-       ("cotes du pot", "équité requise")),
-    _t("cotes du pot / équité requise", "mesures",
-       "Le pourcentage minimum d'équité qui rend un call rentable. Payer 75 "
-       "dans un pot de 100 exige 75/(100+75+75) = 30 %.",
-       "C'est le seuil de bascule d'une décision : au-dessus tu paies, en "
+       ("cote du pot", "équité requise (seuil)")),
+    _t("cote du pot", "mesures",
+       "Le rapport entre ce que le pot t'offre et ce que tu dois payer. Avec "
+       "un pot de 10 et 2 à payer, tu risques 2 pour en gagner 10 : il te "
+       "suffit de gagner plus d'1 fois sur 6 (17 %).",
+       "C'est elle qui explique qu'on puisse payer avec une main souvent "
+       "battue : quand le pot offre beaucoup pour pas cher, gagner rarement "
+       "suffit.",
+       ("équité requise (seuil)", "mise à payer"),
+       alias=("cotes_du_pot", "pot_odds")),
+    _t("équité requise (seuil)", "mesures",
+       "Le pourcentage minimum de chances de gagner qui rend un call "
+       "rentable — la cote du pot traduite en pourcentage. Payer 2 dans un "
+       "pot de 10 : 2/(10+2) = 17 %.",
+       "C'est le seuil de bascule de la décision : au-dessus tu paies, en "
        "dessous tu passes. Le logiciel te le donne à chaque verdict.",
-       ("équité",)),
+       ("équité", "cote du pot", "marge"),
+       cle="equite_requise", alias=("seuil", "requise")),
+    _t("marge", "mesures",
+       "L'écart entre ton équité et l'équité requise, en points. Équité de "
+       "40 % pour un seuil de 30 % : +10 points de marge. Négative, le call "
+       "perd de l'argent.",
+       "Elle dit si la décision est évidente ou limite : à +15 points on "
+       "paie sans réfléchir, à +1 le moindre détail peut faire basculer.",
+       ("équité", "équité requise (seuil)")),
+    _t("outs", "mesures",
+       "Les cartes encore cachées qui amélioreraient ta main. Un tirage "
+       "couleur au flop en a 9 : environ 36 % de chances de toucher d'ici "
+       "la river (astuce : outs × 4).",
+       "Compter ses outs transforme « j'ai un tirage » en un chiffre "
+       "comparable au seuil : 9 outs contre un seuil de 30 %, le call tient.",
+       ("équité", "équité requise (seuil)")),
     _t("EV (espérance de gain)", "mesures",
        "Le gain moyen d'une décision si on la répétait un très grand nombre "
        "de fois. Exprimée en bb.",
        "Une décision se juge à son EV, jamais à son résultat : perdre un "
-       "coup à +3 bb d'EV reste la bonne décision."),
+       "coup à +3 bb d'EV reste la bonne décision.",
+       cle="ev", alias=("esperance",)),
     _t("MDF (fréquence de défense minimale)", "mesures",
        "La part de ta range que tu dois continuer à jouer face à une mise "
        "pour ne pas être exploitable par le bluff. Face à une mise de b dans "
        "un pot P : 1 − b/(P+b).",
        "Si tu te couches plus souvent que la MDF, l'adversaire gagne en "
-       "misant n'importe quoi."),
+       "misant n'importe quoi.",
+       cle="mdf"),
     _t("VPIP", "mesures",
        "Part des mains où tu mets volontairement de l'argent préflop "
        "(les blindes ne comptent pas).",
@@ -151,18 +271,20 @@ LEXIQUE: tuple[Terme, ...] = (
        "C'est la mesure qui répond à « ai-je mal joué, ou mal fini ? »."),
 
     # ── ranges et solveur ────────────────────────────────────────────────
-    _t("range", "solveur",
+    _t("range (éventail)", "solveur",
        "L'ensemble des mains qu'un joueur peut avoir dans une situation "
        "donnée, chacune avec sa fréquence.",
-       "On ne joue jamais contre une main précise mais contre une "
-       "distribution : c'est le cœur du raisonnement moderne."),
+       "On ne joue jamais contre une main précise mais contre tout un "
+       "éventail de possibilités : c'est le cœur du raisonnement moderne.",
+       cle="range", alias=("eventail",)),
     _t("GTO (équilibre de Nash)", "solveur",
        "Une stratégie que personne ne peut exploiter : même en la montrant à "
        "l'adversaire, il ne peut pas faire mieux que l'égalité.",
        "C'est un maximin — une garantie de ne pas perdre, pas une promesse "
        "de gagner le plus. Contre un adversaire faible, s'en écarter "
        "rapporte davantage.",
-       ("exploitation",)),
+       ("exploitation",),
+       cle="gto", alias=("nash",)),
     _t("exploitation", "solveur",
        "S'écarter volontairement de l'équilibre pour punir un défaut précis "
        "de l'adversaire.",
@@ -176,7 +298,8 @@ LEXIQUE: tuple[Terme, ...] = (
        "Le jeu simplifié des tapis courts : la seule question préflop est "
        "« pousser tout son tapis, ou passer ? ».",
        "Dans cette zone, l'équilibre se calcule EXACTEMENT. C'est pour ça "
-       "que le logiciel y annonce des verdicts « certains »."),
+       "que le logiciel y annonce des verdicts « certains ».",
+       alias=("pushfold",)),
     _t("nodelock", "solveur",
        "Figer la stratégie de l'adversaire à un endroit de l'arbre, puis "
        "re-résoudre le reste contre cette contrainte.",
@@ -189,7 +312,8 @@ LEXIQUE: tuple[Terme, ...] = (
     _t("EQR (equity realization)", "solveur",
        "La part de ton équité brute que tu encaisses réellement, une fois "
        "les mises jouées. Une main hors de position en réalise moins.",
-       "Explique pourquoi deux mains de même équité ne valent pas pareil."),
+       "Explique pourquoi deux mains de même équité ne valent pas pareil.",
+       cle="eqr"),
 
     # ── tournoi ──────────────────────────────────────────────────────────
     _t("ICM", "tournoi",
@@ -206,15 +330,21 @@ LEXIQUE: tuple[Terme, ...] = (
        "de risques.",
        ("ICM",)),
     _t("prime de risque", "tournoi",
-       "L'équité supplémentaire exigée par l'ICM au-delà des simples cotes "
-       "du pot.",
-       "C'est la traduction concrète du bubble factor en seuil de décision."),
+       "L'équité qu'il faut EN PLUS du seuil normal quand les jetons valent "
+       "de l'argent réel de tournoi. Si la cote du pot demande 33 % et que "
+       "l'ICM en exige 40, la prime de risque est de 7 points.",
+       "C'est la traduction concrète du bubble factor : près des places "
+       "payées, une équité qui suffirait en partie d'argent ne suffit plus.",
+       ("ICM", "bubble factor", "équité requise (seuil)"),
+       alias=("prime_de_risque_icm", "prime_icm")),
     _t("PKO / bounty", "tournoi",
        "Format où éliminer un joueur rapporte immédiatement une prime, "
-       "généralement moitié encaissée, moitié ajoutée à ta propre tête."),
+       "généralement moitié encaissée, moitié ajoutée à ta propre tête.",
+       cle="pko", alias=("bounty",)),
     _t("FGS (future game simulation)", "tournoi",
        "Raffinement de l'ICM qui simule les tours de blindes à venir au lieu "
-       "de figer la situation."),
+       "de figer la situation.",
+       cle="fgs"),
 
     # ── lecture d'adversaire ─────────────────────────────────────────────
     _t("filtre particulaire", "adversaire",
@@ -227,16 +357,39 @@ LEXIQUE: tuple[Terme, ...] = (
        "tire une estimation bruitée vers cette croyance.",
        "Sur 20 mains, une fréquence observée ne vaut rien seule. Le "
        "rétrécissement évite de conclure trop vite — et c'est mesuré : sans "
-       "lui, le modèle fait PIRE que le prior."),
+       "lui, le modèle fait PIRE que le prior.",
+       cle="prior", alias=("retrecissement",)),
     _t("ESS (taille d'échantillon efficace)", "adversaire",
        "Combien d'hypothèses restent réellement vivantes dans le filtre.",
        "Quand elle s'effondre, la lecture n'est plus fiable et le logiciel "
-       "revient à la range de référence."),
+       "revient à la range de référence.",
+       cle="ess"),
     _t("λ (lambda) — confiance", "adversaire",
        "Le curseur entre jouer l'équilibre et exploiter la lecture, dérivé "
        "de l'incertitude sur cette lecture.",
-       "On n'exploite qu'à hauteur de ce qu'on sait vraiment."),
+       "On n'exploite qu'à hauteur de ce qu'on sait vraiment.",
+       cle="lambda", alias=("confiance",)),
 )
+
+
+def _indexer(termes: tuple[Terme, ...]) -> dict[str, Terme]:
+    """Index clé → terme, alias compris. Refuse doublons et clés vides."""
+    index: dict[str, Terme] = {}
+    for t in termes:
+        for brute in (t.cle, *t.alias):
+            c = _slug(brute)
+            if not c:
+                raise ValueError(f"clé vide pour « {t.nom} »")
+            if c in index:
+                raise ValueError(
+                    f"clé « {c} » en double : « {index[c].nom} » "
+                    f"et « {t.nom} »")
+            index[c] = t
+    return index
+
+
+#: Accès direct par clé stable (alias compris) — pour les infobulles.
+PAR_CLE: dict[str, Terme] = _indexer(LEXIQUE)
 
 
 def chercher(motif: str) -> list[Terme]:
@@ -263,3 +416,14 @@ def definir(nom: str) -> Terme | None:
         if n and n in t.nom.lower():
             return t
     return None
+
+
+def definir_par_cle(cle: str) -> Terme | None:
+    """Entrée dont la clé stable (ou un alias) correspond exactement.
+
+    L'argument est normalisé comme les clés elles-mêmes :
+    ``definir_par_cle("Cote du pot")`` trouve la même entrée que
+    ``definir_par_cle("cote_du_pot")``. Rend ``None`` si la clé est
+    inconnue — l'appelant (une infobulle) affiche alors simplement rien.
+    """
+    return PAR_CLE.get(_slug(cle or ""))

@@ -77,6 +77,7 @@ comptage entier, taux dérivés au moment de l'affichage.
 from __future__ import annotations
 
 import math
+import os
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -101,6 +102,7 @@ __all__ = [
     "calculer_jeu",
     "compter_agression",
     "jeu_par_defaut",
+    "racine_corpus",
     "situer",
     "wilson",
 ]
@@ -110,10 +112,31 @@ class ReperesError(ValueError):
     """Corpus introuvable, ou repère demandé qui n'existe pas."""
 
 
-CORPUS_PLURIBUS = Path(
-    r"C:\Users\pierr\Documents\POKERFUSIONSOLVER\corpus\phh-dataset\data\pluribus")
-CORPUS_WSOP_2023 = Path(
-    r"C:\Users\pierr\Documents\POKERFUSIONSOLVER\corpus\phh-dataset\data\wsop\2023")
+def racine_corpus() -> Path:
+    """Racine du dossier ``corpus`` — celui qui contient ``phh-dataset``.
+
+    Résolution, dans l'ordre :
+
+    1. la variable d'environnement ``PFS_CORPUS``, pour une machine où le
+       corpus vit ailleurs ;
+    2. ``<parent du dépôt>/corpus`` — le corpus pèse 500 Mo et vit
+       volontairement HORS du dépôt, en frère de celui-ci.
+
+    L'existence du dossier n'est PAS vérifiée ici : c'est
+    :func:`calculer_jeu` qui lève :class:`ReperesError` avec le chemin fautif
+    dans le message, et les consommateurs sans corpus (la table gelée
+    :data:`REPERES`, la route ``/api/reperes``) ne touchent jamais le disque.
+    Vérifier ici casserait leur import sur toute machine sans corpus.
+    """
+    env = os.environ.get("PFS_CORPUS", "").strip()
+    if env:
+        return Path(env)
+    # reperes.py = <dépôt>/python/pfs/analysis/reperes.py → parents[3] = dépôt.
+    return Path(__file__).resolve().parents[3].parent / "corpus"
+
+
+CORPUS_PLURIBUS = racine_corpus() / "phh-dataset" / "data" / "pluribus"
+CORPUS_WSOP_2023 = racine_corpus() / "phh-dataset" / "data" / "wsop" / "2023"
 
 POSITIONS_TABLE_COURTE = ("BTN", "SB", "BB")
 """Les trois positions d'une table à trois joueurs.

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import unittest
 
-from pfs.lexique import LEXIQUE, chercher, definir
+from pfs.lexique import LEXIQUE, PAR_CLE, chercher, definir, definir_par_cle
 from pfs.train.simulateur import (
     MainSimulee,
     simuler,
@@ -116,17 +116,68 @@ class TestLexique(unittest.TestCase):
             self.assertGreater(len(t.definition), 30,
                                f"définition trop courte : {t.nom}")
             self.assertTrue(t.categorie.strip(), f"{t.nom} sans catégorie")
+            self.assertRegex(t.cle, r"^[a-z0-9_]+$",
+                             f"clé mal formée : {t.nom} → {t.cle!r}")
+            for a in t.alias:
+                self.assertRegex(a, r"^[a-z0-9_]+$",
+                                 f"alias mal formé : {t.nom} → {a!r}")
+
+    def test_nombre_de_termes(self) -> None:
+        """Le compte est un garde-fou : une entrée supprimée par mégarde
+        (fusion de sections, résolution de conflit) doit se voir ici."""
+        self.assertEqual(len(LEXIQUE), 49)
 
     def test_pas_de_doublon(self) -> None:
         noms = [t.nom.lower() for t in LEXIQUE]
         self.assertEqual(len(noms), len(set(noms)))
+        cles = [c for t in LEXIQUE for c in (t.cle, *t.alias)]
+        self.assertEqual(len(cles), len(set(cles)), "clé ou alias en double")
 
     def test_les_termes_du_logiciel_sont_couverts(self) -> None:
         """Tout jargon affiché par l'application doit être explicable."""
         for terme in ("VPIP", "PFR", "MDF", "ICM", "équité", "range",
                       "bubble factor", "limp", "push/fold", "EV",
-                      "all-in adjusted", "WTSD", "blocker", "EQR"):
+                      "all-in adjusted", "WTSD", "blocker", "EQR",
+                      "cote du pot", "équité requise", "marge", "outs",
+                      "mise à payer", "tapis effectif", "prime de risque",
+                      "bouton", "petite blinde", "grosse blinde", "UTG",
+                      "hijack", "cutoff", "street"):
             self.assertIsNotNone(definir(terme), f"« {terme} » absent")
+
+    def test_acces_par_cle_pour_les_infobulles(self) -> None:
+        """Le futur verdict visuel cherche par clé stable : chacune des
+        clés qu'il utilisera doit résoudre, aujourd'hui et demain."""
+        for cle in ("btn", "sb", "grosse_blinde", "utg", "mp", "co",
+                    "position", "equite", "equite_requise", "marge",
+                    "cote_du_pot", "ev", "range", "bubble_factor",
+                    "prime_de_risque", "push_fold", "outs", "street",
+                    "tapis_effectif", "mise_a_payer", "bb", "icm", "spr"):
+            self.assertIsNotNone(definir_par_cle(cle), f"clé « {cle} » morte")
+        # Les alias prévisibles doivent mener au même terme que la clé.
+        for alias, cle in (("bouton", "btn"), ("dealer", "btn"),
+                           ("cutoff", "co"), ("hijack", "mp"),
+                           ("seuil", "equite_requise"),
+                           ("requise", "equite_requise"),
+                           ("preflop", "street"), ("river", "street"),
+                           ("pot_odds", "cote_du_pot"),
+                           ("a_payer", "mise_a_payer")):
+            self.assertIs(definir_par_cle(alias), definir_par_cle(cle),
+                          f"alias « {alias} » ≠ clé « {cle} »")
+
+    def test_cle_normalisee_et_inconnue(self) -> None:
+        """La recherche par clé pardonne accents, casse et espaces —
+        et rend None (pas d'exception) sur une clé inconnue ou vide."""
+        self.assertIs(definir_par_cle("Équité"), definir_par_cle("equite"))
+        self.assertIs(definir_par_cle("cote du pot"),
+                      definir_par_cle("cote_du_pot"))
+        self.assertIsNone(definir_par_cle("zzzzz"))
+        self.assertIsNone(definir_par_cle(""))
+
+    def test_index_couvre_tout_le_lexique(self) -> None:
+        """Chaque terme est joignable par sa propre clé — aucune entrée
+        orpheline, et l'index rend bien l'objet du tuple, pas une copie."""
+        for t in LEXIQUE:
+            self.assertIs(PAR_CLE[t.cle], t)
 
     def test_recherche(self) -> None:
         self.assertTrue(chercher("icm"))

@@ -1,6 +1,22 @@
 r"""
 L6 — Population mining privé : le prior des inconnus, tiré de TES mains.
 
+Statut (audit du 14 août 2026) — en attente de données réelles, NON branché
+---------------------------------------------------------------------------
+Hors tests (``tests/test_population.py``), l'unique consommateur est
+``pfs.analysis.inference_check`` — lui-même un banc non branché. Pourquoi :
+dans l'application, les trackers F1 démarrent sur Jeffreys ; injecter un
+prior de population suppose d'avoir miné un corpus de SES mains, et ce
+corpus n'est pas encore constitué en volume utile (le plafond
+``n0_eff = min(n0, n_pop/10)`` rend d'ailleurs le module quasi muet sous
+~300 occasions par stat — assumé). Ce qui existe déjà : ingestion iPoker,
+persistance SQLite locale, priors plafonnés, ``stake_band`` — testés.
+Accroche naturelle si on branche : ``recuperer_mains.py`` pour l'ingestion,
+puis ``pfs/engine.py:FusionEngine`` (créer les ``DynamicBetaTracker`` d'un
+inconnu sur ``PopulationMiner.prior_for`` au lieu de Jeffreys).
+Règle du projet : aucun module fusionné sans route + UI + test de bout en
+bout.
+
 Hand2Note vend l'analyse de population ; GTO Wizard vend des solutions
 « vs population » agrégées mondialement. Ici : la même idée, locale, privée,
 sur les hand histories de Pierre — les tendances du POOL qu'il affronte

@@ -175,6 +175,44 @@ kbd{font:11px ui-monospace,monospace;background:#1a1a28;border:1px solid var(--l
  font-family:ui-monospace,monospace;font-size:15px;margin-right:3px;
  border:1px solid #c8c8d4}
 .carte.r{color:#c81e2a}
+/* Vignettes de cartes du verdict : de vraies petites cartes — rang en tête,
+   enseigne dessous, rouge/noir — pour que la situation se lise sans décoder
+   la notation. Le dos sert aux mains adverses inconnues. */
+.cartev{display:inline-flex;flex-direction:column;align-items:center;justify-content:center;
+ width:46px;height:64px;border-radius:7px;background:linear-gradient(#ffffff,#eef0f4);
+ color:#181826;border:1px solid #b9bdc9;box-shadow:0 2px 5px #0006;
+ font-family:ui-monospace,monospace;font-weight:800;line-height:1;
+ margin-right:5px;vertical-align:middle;user-select:none}
+.cartev .rg{font-size:20px}
+.cartev .en{font-size:19px;margin-top:3px}
+.cartev.r{color:#c81e2a}
+.cartev.dos{background:repeating-linear-gradient(135deg,#3a2a6e 0 6px,#2c2054 6px 12px);
+ border-color:#57499a;color:#b7a8ef}
+.cartev.dos .en{font-size:22px;margin:0}
+.streets{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap}
+.street-g{display:flex;flex-direction:column;gap:5px}
+.street-lbl{font-size:11px;letter-spacing:.08em;text-transform:uppercase;
+ color:var(--dim);text-align:center}
+.pos-pill{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;
+ border-radius:99px;background:#2d2547;border:1px solid #57499a;color:#cfc4f5;
+ font-size:12px;font-weight:700;vertical-align:middle;cursor:help}
+.jeton-d{display:inline-flex;align-items:center;justify-content:center;
+ width:22px;height:22px;border-radius:50%;background:#f5d442;color:#403000;
+ font-weight:900;font-size:12px;border:2px solid #b89a17;cursor:help}
+/* Infobulles pédagogiques : chaque chiffre du verdict s'explique au survol,
+   en français simple — le texte vient du lexique (une seule source). */
+[data-tt]{cursor:help;border-bottom:1px dotted var(--dim)}
+#tt{position:fixed;z-index:99;max-width:340px;padding:10px 12px;border-radius:9px;
+ background:#221c38;border:1px solid #57499a;color:var(--txt);font-size:13px;
+ line-height:1.45;box-shadow:0 8px 24px #000a;pointer-events:none;display:none}
+#tt b{color:#cfc4f5}
+.frise{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap;margin-top:10px}
+.frise .pt{flex:1;min-width:96px;text-align:center;padding:8px 6px;border-radius:9px;
+ background:var(--panel2);border:1px solid var(--line)}
+.frise .pt.cur{border-color:var(--p);box-shadow:0 0 0 1px var(--p) inset}
+.frise .pt .st{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--dim)}
+.frise .pt .eq{font-size:19px;font-weight:800;margin-top:3px}
+.frise .pt .dl{font-size:11px;color:var(--dim);margin-top:2px}
 .diffgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:10px}
 
 /* ═══ MOBILE ═══════════════════════════════════════════════════════════
@@ -588,6 +626,18 @@ kbd{font:11px ui-monospace,monospace;background:#1a1a28;border:1px solid var(--l
              id="d-buttons"></div>
         <div id="d-feedback"></div>
       </div>
+      <!-- Drills ciblés : TES fuites, générées depuis l'onglet Mes sessions
+           (bouton « M'entraîner sur mes fuites »). Le spot est rejoué tel
+           qu'il a été joué ; la bonne réponse vient du solveur, jamais d'une
+           heuristique. -->
+      <div class="card" id="fuites-q" style="display:none">
+        <h2 style="margin-top:0">Tes fuites — le spot rejoué</h2>
+        <div class="muted" id="fq-corpus"></div>
+        <div class="muted" id="fq-meta" style="margin-top:6px"></div>
+        <pre id="fq-question" style="font-size:13px;margin-top:10px;color:var(--txt)"></pre>
+        <div style="margin:14px 0;display:flex;gap:10px;flex-wrap:wrap" id="fq-buttons"></div>
+        <div id="fq-feedback"></div>
+      </div>
     </div>
     <div class="col"><div id="drill-report"><div class="card">
       <h2 style="margin-top:0">Comment ça marche</h2>
@@ -923,11 +973,107 @@ function gaugeHTML(eq,need){
     </div></div>`;
 }
 
+/* ── Vignettes, positions, infobulles, frise : le verdict qui se lit ──────
+   Les textes des infobulles viennent du lexique (une seule source de
+   pédagogie) ; les vignettes remplacent le décodage mental de « AKo » ;
+   la frise rappelle comment l'équité a évolué street par street — calculée
+   par LA MÊME route advise (même range adverse), jamais recopiée en JS. */
+const ENSEIGNES={s:"♠",h:"♥",d:"♦",c:"♣"};
+function vignette(code){
+  if(!code||code.length<2)return "";
+  const en=code[1].toLowerCase(), rouge="hd".includes(en);
+  const rang=code[0].toUpperCase()==="T"?"10":code[0].toUpperCase();
+  return `<span class="cartev${rouge?" r":""}"><span class="rg">${rang}</span>
+    <span class="en">${ENSEIGNES[en]||en}</span></span>`;
+}
+function vignetteDos(){return `<span class="cartev dos"><span class="en">♠</span></span>`;}
+function parseCartes(s){return (String(s||"").match(/[2-9TJQKAtjqka][cdhsCDHS]/g)||[])
+  .map(c=>c[0].toUpperCase()+c[1].toLowerCase());}
+function boardStreets(codes){
+  if(!codes.length)return `<div class="street-g"><div class="street-lbl">Préflop</div>
+    <div><span class="muted">aucune carte commune</span></div></div>`;
+  const gs=[["Flop",codes.slice(0,3)],["Turn",codes.slice(3,4)],["River",codes.slice(4,5)]];
+  return gs.filter(([,c])=>c.length).map(([lbl,c])=>
+    `<div class="street-g"><div class="street-lbl">${lbl}</div>
+     <div>${c.map(vignette).join("")}</div></div>`).join("");
+}
+
+// Lexique → infobulles. Chargé une fois ; on retrouve un terme par un
+// fragment de son nom (les clés stables du lexique ne sont pas exposées par
+// la route — on reste rétrocompatible avec elle).
+let LEX=null;
+const TT_FRAGMENTS={equite:"équité",equite_requise:"équité requise",
+  cote_du_pot:"cote du pot",marge:"marge",ev:"ev (",mdf:"mdf",
+  range:"range",mise_a_payer:"mise à payer",street:"street",
+  outs:"outs",prime:"prime de risque",
+  btn:"bouton",sb:"petite blinde",bb:"grosse blinde",utg:"utg",
+  mp:"mp / lojack",co:"cutoff",position:"position"};
+async function chargerLexique(){
+  if(LEX)return LEX;
+  try{const r=await api("lexique",{});LEX=r.termes||r.items||r||[];}
+  catch(e){LEX=[];}
+  return LEX;
+}
+function ttTexte(cle){
+  const frag=TT_FRAGMENTS[cle]||cle;
+  const t=(LEX||[]).find(t=>(t.nom||"").toLowerCase().includes(frag));
+  if(!t)return null;
+  return `<b>${esc(t.nom)}</b><br>${esc(t.definition||"")}`+
+         (t.pourquoi?`<br><span class="muted">${esc(t.pourquoi)}</span>`:"");
+}
+function tt(label,cle){return `<span data-tt="${cle}">${label}</span>`;}
+(function initTT(){
+  const el=document.createElement("div");el.id="tt";document.body.appendChild(el);
+  document.addEventListener("mouseover",e=>{
+    const c=e.target.closest("[data-tt]");
+    if(!c){el.style.display="none";return;}
+    const html=ttTexte(c.dataset.tt);
+    if(!html){el.style.display="none";return;}
+    el.innerHTML=html;el.style.display="block";
+    const r=c.getBoundingClientRect();
+    el.style.left=Math.min(innerWidth-360,Math.max(8,r.left))+"px";
+    el.style.top=(r.bottom+8)+"px";
+  });
+  document.addEventListener("scroll",()=>{el.style.display="none";},true);
+})();
+
+const POS_TT={BTN:"btn",SB:"sb",BB:"bb",UTG:"utg",MP:"mp",CO:"co"};
+function posPill(pos){
+  if(!pos)return "";
+  const jeton=pos==="BTN"?`<span class="jeton-d" data-tt="btn">D</span> `:"";
+  return `${jeton}<span class="pos-pill" data-tt="${POS_TT[pos]||"position"}">${pos}</span>`;
+}
+
+// La frise : advise rejoué sur les boards tronqués — même moteur, même range.
+async function friseEquite(base,codes,streetActuelle){
+  const zone=document.getElementById("frise");
+  if(!zone)return;
+  const etapes=[["Préflop",[]],["Flop",codes.slice(0,3)],
+                ["Turn",codes.slice(0,4)],["River",codes.slice(0,5)]]
+    .filter(([,b],i)=>i===0||b.length===Math.min(codes.length,[0,3,4,5][i])&&b.length>0
+            &&(i!==1||codes.length>=3));
+  for(const [nom,b] of etapes){
+    const id=`fr-${nom}`;
+    if(!document.getElementById(id))continue;
+    if(nom===streetActuelle){continue;}     // déjà rendue avec le verdict
+    try{
+      const r=await api("advise",{...base,board:b.join("")});
+      const c=document.getElementById(id);
+      if(c&&r.equity!=null){
+        c.querySelector(".eq").textContent=(r.equity*100).toFixed(1)+" %";
+        c.querySelector(".dl").textContent=r.required!=null
+          ?`seuil ${(r.required*100).toFixed(1)} %`:"";
+      }else if(c){c.remove();}   // pas d'équité à cette street : pas de case vide
+    }catch(e){const c=document.getElementById(id);if(c)c.remove();}
+  }
+}
+
 async function adviseRun(){
   const g=id=>document.getElementById(id).value;
   const out=document.getElementById("sp-out");
   if(!g("sp-hero").trim()){out.innerHTML='<div class="skel">Entre d\'abord ta main.</div>';return;}
   out.innerHTML='<div class="skel">⟳ calcul en cours…</div>';
+  chargerLexique();
   // Les tapis et les gains font basculer le conseil en régime ICM. Ils
   // étaient jetés par la route : sur une bulle, le verdict rendu était
   // celui du cash game, parfois l'inverse du bon.
@@ -938,7 +1084,54 @@ async function adviseRun(){
   if(r.error){out.innerHTML=`<div class="warn"><b>Impossible de juger ce spot.</b><br>${r.error}</div>`;return;}
   const [cls,ico,word]=verdictClass(r.action);
   const certain=r.confidence==="certain";
+
+  // ── La table, en images : ta main, ta position, l'adversaire, le board ──
+  const heroCodes=parseCartes(g("sp-hero"));
+  const boardCodes=parseCartes(g("sp-board"));
+  const streetNom=["Préflop","","","Flop","Turn","River"][boardCodes.length]||"Préflop";
+  const profil=document.getElementById("sp-villain").selectedOptions[0].text;
+  const pot=+g("sp-pot")||0, mise=+g("sp-bet")||0;
+  const table=`
+    <div class="card" style="margin-bottom:10px">
+      <div class="streets">
+        <div class="street-g"><div class="street-lbl">${tt("Ta main","range")}</div>
+          <div>${heroCodes.map(vignette).join("")} ${posPill(g("sp-pos"))}</div></div>
+        <div class="street-g"><div class="street-lbl">Adversaire</div>
+          <div>${vignetteDos()}${vignetteDos()}
+            <span class="pos-pill" data-tt="range">${esc(profil)}</span></div></div>
+        ${boardStreets(boardCodes)}
+      </div>
+    </div>`;
+
+  // ── Les tuiles : chaque chiffre expliqué au survol ──────────────────────
+  const marge=(r.equity!=null&&r.required!=null)?(r.equity-r.required)*100:null;
+  const cote=mise>0?pot/mise:null;
+  const tuiles=`
+    <div class="row">
+      ${r.ev_bb!=null?`<div class="kpi col"><div class="v" style="color:${r.ev_bb>=0?"#22c55e":"#ef4444"}">${r.ev_bb>=0?"+":""}${r.ev_bb.toFixed(2)}</div><div class="l">${tt("EV (bb)","ev")}</div></div>`:""}
+      ${r.equity!=null?`<div class="kpi col"><div class="v">${(r.equity*100).toFixed(1)} %</div><div class="l">${tt("ton équité","equite")}</div></div>`:""}
+      ${r.required!=null?`<div class="kpi col"><div class="v" style="color:#eab308">${(r.required*100).toFixed(1)} %</div><div class="l">${tt("équité requise","equite_requise")}</div></div>`:""}
+      ${marge!=null?`<div class="kpi col"><div class="v" style="color:${marge>=0?"#22c55e":"#ef4444"}">${marge>=0?"+":""}${marge.toFixed(1)} pts</div><div class="l">${tt("marge","marge")}</div></div>`:""}
+      ${cote!=null?`<div class="kpi col"><div class="v">${cote.toFixed(1)} : 1</div><div class="l">${tt("cote du pot","cote_du_pot")}</div></div>`:""}
+      ${r.mdf!=null?`<div class="kpi col"><div class="v">${(r.mdf*100).toFixed(1)} %</div><div class="l">${tt("MDF","mdf")}</div></div>`:""}
+    </div>`;
+
+  // ── La frise : l'équité street par street (remplie en arrière-plan) ─────
+  const etapesFrise=[["Préflop",0],["Flop",3],["Turn",4],["River",5]]
+    .filter(([,n])=>n<=boardCodes.length&&(n>0?boardCodes.length>=n:true));
+  const frise=etapesFrise.length>1?`
+    <div class="frise" id="frise">
+      ${etapesFrise.map(([nom])=>{
+        const cur=nom===streetNom;
+        const eq=cur&&r.equity!=null?(r.equity*100).toFixed(1)+" %":"⟳";
+        const dl=cur&&r.required!=null?`seuil ${(r.required*100).toFixed(1)} %`:"";
+        return `<div class="pt${cur?" cur":""}" id="fr-${nom}">
+          <div class="st">${tt(nom,"street")}</div>
+          <div class="eq">${eq}</div><div class="dl">${dl}</div></div>`;}).join("")}
+    </div>`:"";
+
   out.innerHTML=`
+    ${table}
     <div class="verdict ${cls}">
       <div>
         <div class="act"><span class="ico">${ico}</span>${r.action}</div>
@@ -949,12 +1142,8 @@ async function adviseRun(){
         ${gaugeHTML(r.equity,r.required)}
       </div>
     </div>
-    <div class="row">
-      ${r.ev_bb!=null?`<div class="kpi col"><div class="v" style="color:${r.ev_bb>=0?"#22c55e":"#ef4444"}">${r.ev_bb>=0?"+":""}${r.ev_bb.toFixed(2)}</div><div class="l">EV (bb)</div></div>`:""}
-      ${r.equity!=null?`<div class="kpi col"><div class="v">${(r.equity*100).toFixed(1)} %</div><div class="l">ton équité</div></div>`:""}
-      ${r.required!=null?`<div class="kpi col"><div class="v" style="color:#eab308">${(r.required*100).toFixed(1)} %</div><div class="l">équité requise</div></div>`:""}
-      ${r.mdf!=null?`<div class="kpi col"><div class="v">${(r.mdf*100).toFixed(1)} %</div><div class="l">MDF</div></div>`:""}
-    </div>
+    ${tuiles}
+    ${frise}
     <div class="${certain?"ok":"card"}" style="margin-top:10px">
       <b>${certain?"✓ Verdict certain":"⚠ Verdict indicatif"}</b> — ${r.regime}.
       ${certain?"C'est l'équilibre de Nash : une vérité de théorie des jeux, pas un avis."
@@ -962,14 +1151,18 @@ async function adviseRun(){
       ${(r.assumptions||[]).length?`<div class="muted" style="margin-top:6px">${
         r.assumptions.map(a=>"– "+a).join("<br>")}</div>`:""}
     </div>`;
+
+  if(etapesFrise.length>1){
+    friseEquite({hero:g("sp-hero"),pot:+g("sp-pot")||0,bet:+g("sp-bet")||0,
+      stack:+g("sp-stack")||0,big_blind:+g("sp-bb")||1,position:g("sp-pos"),
+      villain:g("sp-villain"),stacks:g("sp-stacks"),payouts:g("sp-payouts")},
+      boardCodes,streetNom);
+  }
 }
 
 // ══ SIMULATEUR ══════════════════════════════════════════════════════════
-function carteHTML(c){
-  const rouge="hd".includes(c[1]);
-  const sym={s:"♠",h:"♥",d:"♦",c:"♣"}[c[1]]||c[1];
-  return `<span class="carte${rouge?" r":""}">${c[0]}${sym}</span>`;
-}
+// Mêmes vignettes que le verdict : une carte se montre, elle ne se décode pas.
+function carteHTML(c){return vignette(c);}
 
 async function simuRun(){
   const g=id=>document.getElementById(id).value;
@@ -1131,6 +1324,12 @@ async function calFenetres(){
     const o=document.createElement("option"); o.value=t; o.textContent=t;
     sel.appendChild(o);});
   sel.value=garde;
+  // Restaure la fenêtre mémorisée si rien n'était déjà choisi ET qu'elle
+  // figure parmi les fenêtres réellement présentes — jamais un titre
+  // fantôme qui viserait une fenêtre fermée depuis.
+  const memoCal=lsGet(LS.cal);
+  if(!sel.value&&memoCal&&[...sel.options].some(o=>o.value===memoCal))
+    sel.value=memoCal;
 }
 
 function calStop(){
@@ -1230,22 +1429,39 @@ async function lireCaptureAuto(blob){
   log.insertAdjacentHTML("beforeend"," "+bilan+" "+detail);
   if(rates.length) majArchive();
 
-  // NE PAS juger tout seul : la capture ne donne QUE les cartes. Le pot, la
-  // mise et les tapis restent ceux du formulaire — des valeurs par défaut
-  // que l'utilisateur n'a pas saisies. Déclencher le verdict dessus rendait
-  // un conseil calculé sur des chiffres inventés, sans le dire. Les lire sur
-  // l'image est possible (pfs/vision/digit_ocr.py, 99,5 % d'exactitude sur
-  // son banc) mais pas encore branché : d'ici là, c'est à toi de confirmer.
+  // Les montants sont désormais LUS sur l'image (pfs/vision/zones_montants,
+  // visé par digit_ocr — refus explicite plutôt que valeur inventée). Un
+  // champ lu est prérempli et marqué « image » ; une saisie manuelle a
+  // toujours le dernier mot (dataset.saisi === "1" n'est jamais écrasé).
+  // Le verdict ne part tout seul que si les QUATRE champs sont couverts —
+  // sinon on dit précisément ce qui manque, et pourquoi la lecture a refusé.
+  const champs={pot:"sp-pot",mise:"sp-bet",tapis:"sp-stack",blinde:"sp-bb"};
+  const noms={pot:"pot",mise:"mise",tapis:"tapis",blinde:"blinde"};
+  const lus=[],arefus=[];
+  for(const [k,id] of Object.entries(champs)){
+    const z=(r.montants||{})[k], el=document.getElementById(id);
+    if(z&&z.valeur!=null&&el.dataset.saisi!=="1"){
+      el.value=z.valeur;
+      el.dataset.saisi="image";
+      lus.push(`${noms[k]} ${z.valeur}`);
+    }else if(z&&z.refus&&!el.dataset.saisi){
+      arefus.push(`${noms[k]} : ${z.refus}`);
+    }
+  }
+  if(lus.length)
+    log.insertAdjacentHTML("beforeend",
+      ` <span class="chip ok">lu sur l'image : ${esc(lus.join(" · "))}</span>`);
+
   if(shotHero.length===2){
     const manquants=["sp-pot","sp-bet","sp-stack","sp-bb"]
       .filter(id=>!document.getElementById(id).dataset.saisi);
     if(manquants.length){
       log.insertAdjacentHTML("beforeend",
-        ` <span class="chip amb">cartes lues — <b>vérifie le pot, la mise,
-          ton tapis et la blinde</b> avant de juger : ils ne sont pas lus sur
-          l'image</span>`);
-      document.getElementById("sp-pot").focus();
-      document.getElementById("sp-pot").select();
+        ` <span class="chip amb">cartes lues — <b>complète ce qui n'a pas pu
+          être lu</b> avant de juger${arefus.length?` : ${esc(arefus.join(" ; "))}`:""}</span>`);
+      const premier=manquants[0];
+      document.getElementById(premier).focus();
+      document.getElementById(premier).select();
     }else{
       adviseRun();
     }
@@ -1461,6 +1677,7 @@ async function reviewRun(){
   const path=document.getElementById("rv-path").value.trim();
   const out=document.getElementById("rv-out");
   if(!path){out.innerHTML='<div class="skel">Indique un dossier d\'historiques.</div>';return;}
+  lsSet(LS.rv,path);   // un chemin réellement analysé devient le chemin mémorisé
   out.innerHTML='<div class="skel">⟳ lecture des mains et calcul des équités…</div>';
   const r=await api("review",{path});
   if(r.error){out.innerHTML=`<div class="warn"><b>Lecture impossible.</b><br>${r.error}</div>`;return;}
@@ -1500,8 +1717,7 @@ async function reviewRun(){
     </div>`;
   // enchaîne sur la revue shove/fold
   const s=await api("review/pushfold",{path});
-  if(s.error||!s.judged) return;
-  out.insertAdjacentHTML("beforeend",`
+  if(!s.error&&s.judged) out.insertAdjacentHTML("beforeend",`
     <div class="card">
       <h2 style="margin-top:0">Tes tapis préflop face au Nash</h2>
       <div class="row">
@@ -1520,6 +1736,20 @@ async function reviewRun(){
       <div class="muted" style="margin-top:8px">${s.skipped_multiway} spots multiway et
       ${s.skipped_deep} au-delà de 25 bb ne sont pas jugés — le solveur push/fold est
       heads-up. Rien n'est approximé en silence.</div>
+    </div>`);
+  // Le chaînon revue → entraînement : les erreurs chiffrées ci-dessus
+  // deviennent des exercices ciblés, planifiés par la répétition espacée.
+  out.insertAdjacentHTML("beforeend",`
+    <div class="card" style="border-left:3px solid var(--p)">
+      <b>Transforme cette revue en entraînement.</b>
+      <div class="hint" style="margin-top:4px">Chaque erreur chiffrée devient un
+      exercice : le spot est rejoué tel que tu l'as joué, la bonne réponse est
+      celle du solveur, et un spot raté revient jusqu'à être acquis (SM-2).
+      Seuls les spots où le solveur tranche avec certitude sont entraînés —
+      le reste est compté, jamais approximé.</div>
+      <button id="rv-train-btn" style="width:auto;margin-top:8px"
+        onclick="drillFuitesStart()">M'entraîner sur mes fuites</button>
+      <div id="rv-train-info" style="margin-top:8px"></div>
     </div>`);
 }
 
@@ -1781,6 +2011,91 @@ async function drillReport(){
       </tbody></table>`:""}
     ${r.cognitive&&r.cognitive.n>=12?`<h2>État cognitif — mesuré</h2>
       <p class="muted">${r.cognitive.advice}</p>`:""}
+  </div>`;
+}
+
+// ── drills ciblés : les fuites d'une revue, remises à l'entraînement ──
+// Démarrés depuis l'onglet Mes sessions (le dossier analysé est réutilisé
+// tel quel), joués ici. La question vient du serveur et ne contient jamais
+// la bonne réponse ; le corrigé n'arrive qu'après avoir répondu.
+let fuitesT0=0, fuitesNext=null;
+
+function goTab(id){
+  const i=TABS.findIndex(t=>t[0]===id);
+  const t=document.querySelectorAll(".tab")[i];
+  if(t)t.click();
+}
+
+async function drillFuitesStart(){
+  const path=document.getElementById("rv-path").value.trim();
+  const info=document.getElementById("rv-train-info");
+  if(!path){if(info)info.innerHTML='<div class="warn">Indique d\'abord le dossier d\'historiques.</div>';return;}
+  const btn=document.getElementById("rv-train-btn");
+  if(btn){btn.disabled=true;btn.textContent="⟳ revue des mains et solve des spots…";}
+  const r=await api("drill/fuites",{dossier:path});
+  if(btn){btn.disabled=false;btn.textContent="M'entraîner sur mes fuites";}
+  if(r.error){if(info)info.innerHTML=`<div class="warn"><b>Génération impossible.</b><br>${esc(r.error)}</div>`;return;}
+  if(!r.session){
+    if(info)info.innerHTML=`<div class="ok"><b>Aucune fuite chiffrable à entraîner</b> —
+      ${r.n_corrects} décision(s) correcte(s), ${r.n_erreurs} erreur(s) chiffrée(s),
+      ${r.n_ecartes} écartée(s) (hors du périmètre où le solveur tranche avec certitude).</div>`;
+    return;
+  }
+  if(info)info.innerHTML="";
+  const nm=r.bb_non_mesurees>0?` (dont ${r.bb_non_mesurees} non mesurées — limps)`:"";
+  document.getElementById("fq-corpus").innerHTML=
+    `${r.drills} drill(s) tirés de ${r.n_mains} mains · <b>${r.bb_ciblees} bb ciblées</b>${nm} · `
+    +r.fuites.map(f=>`${esc(f.fuite)} ×${f.n} (${f.cout_bb} bb${f.mesure?"":", non mesuré"})`).join(" · ");
+  goTab("s-train");
+  fuitesShow(r.next);
+}
+
+function fuitesShow(q){
+  document.getElementById("fuites-q").style.display="";
+  const fb=document.getElementById("fq-feedback");
+  if(!q)return;
+  if(q.error){fb.innerHTML=`<div class="warn">${esc(q.error)}</div>`;return;}
+  if(q.fini){
+    document.getElementById("fq-question").textContent="";
+    document.getElementById("fq-buttons").innerHTML="";
+    document.getElementById("fq-meta").textContent="";
+    fb.innerHTML=`<div class="ok"><b>Session bouclée.</b>
+      ${q.score.n} réponse(s) · exactitude ${(q.score.exactitude*100).toFixed(0)} %
+      · ${q.score.bb_manquees.toFixed(2)} bb encore lâchées sur
+      ${q.score.bb_ciblees.toFixed(2)} bb ciblées.
+      Les spots réussis reviendront espacés (SM-2) : régénère la session depuis
+      <b>Mes sessions</b> pour la prochaine révision.</div>`;
+    return;
+  }
+  document.getElementById("fq-meta").textContent=
+    `${q.n_reponses} réponse(s) · ${q.dus} à revoir · vu ${q.vu}× · `
+    +`fuite : ${q.fuite} — ${q.cout_total_bb} bb${q.cout_mesure?"":" (non mesuré)"}`
+    +` sur ${q.occurrences} occurrence(s)`;
+  document.getElementById("fq-question").textContent=q.question;
+  document.getElementById("fq-buttons").innerHTML=(q.options||[]).map(o=>
+    `<button style="width:auto;font-size:16px;font-weight:800;padding:10px 26px"
+       onclick="fuitesAnswer('${o}')">${o}</button>`).join("");
+  fb.innerHTML="";
+  fuitesT0=performance.now();
+}
+
+async function fuitesAnswer(rep){
+  const secs=(performance.now()-fuitesT0)/1000;
+  document.getElementById("fq-buttons").innerHTML="";
+  const r=await api("drill/fuites/answer",{reponse:rep,seconds:secs});
+  const fb=document.getElementById("fq-feedback");
+  if(r.error){fb.innerHTML=`<div class="warn">${esc(r.error)}</div>`;return;}
+  fuitesNext=r.next;
+  // Le corrigé mérite d'être lu (surtout raté) : pas d'avance automatique,
+  // c'est le bouton « Spot suivant » qui enchaîne.
+  fb.innerHTML=`<div class="${r.correcte?"ok":"warn"}" style="margin-bottom:0">
+    <span class="pill ${r.correcte?"g":"r"}">${r.correcte?"JUSTE":"RATÉ"}</span>${
+      r.correcte?"":" — ce spot revient immédiatement."}
+    <pre style="margin-top:8px">${esc(r.explication)}</pre>
+    <div class="muted" style="margin:6px 0 8px">exactitude ${
+      (r.score.exactitude*100).toFixed(0)} % · ${
+      r.score.bb_manquees.toFixed(2)} bb lâchées dans cette session</div>
+    <button class="sm" style="width:auto" onclick="fuitesShow(fuitesNext)">Spot suivant</button>
   </div>`;
 }
 
@@ -2068,6 +2383,34 @@ document.addEventListener("keydown",e=>{
     el.addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();adviseRun();}});});
 document.getElementById("rv-path")
   .addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();reviewRun();}});
+
+/* ═══ PERSISTANCE LOCALE ══════════════════════════════════════════════════
+   Deux réglages seulement survivent au rechargement : le dossier
+   d'historiques (rv-path) et la fenêtre de calibration (cal-fen) — des choix
+   d'ENVIRONNEMENT, stables d'une session à l'autre.
+   Les montants du spot (pot, mise, tapis, blinde, tapis de table, gains) ne
+   sont JAMAIS persistés : des chiffres d'une vieille session rejoués en
+   silence seraient un mensonge — exactement le défaut n°2 sous une autre
+   forme. Un test structurel vérifie que lsSet n'est appelé qu'avec ces deux
+   clés. */
+const LS={rv:"pfs.rv-path",cal:"pfs.cal-fen"};
+function lsGet(k){try{return localStorage.getItem(k)||"";}catch(e){return "";}}
+function lsSet(k,v){try{localStorage.setItem(k,v);}catch(e){}}
+
+(async function initPersistance(){
+  const rv=document.getElementById("rv-path");
+  rv.addEventListener("input",()=>lsSet(LS.rv,rv.value.trim()));
+  const cal=document.getElementById("cal-fen");
+  cal.addEventListener("change",()=>lsSet(LS.cal,cal.value));
+  const memo=lsGet(LS.rv);
+  if(memo){rv.value=memo;return;}
+  // Premier lancement : préremplir avec le premier dossier PMU détecté par
+  // le serveur (/api/emplacements — même détection que recuperer_mains.py).
+  // La valeur n'est PAS mémorisée ici : elle le sera quand l'utilisateur
+  // s'en servira (frappe ou analyse) — une détection n'est pas un choix.
+  const r=await api("emplacements",{});
+  if(!r.error&&(r.dossiers||[]).length&&!rv.value.trim())rv.value=r.dossiers[0];
+})();
 
 buildGrid(); refresh();
 document.getElementById("sp-hero").focus();

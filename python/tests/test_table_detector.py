@@ -498,13 +498,19 @@ class TestDecorIsReal(unittest.TestCase):
 
 
 class TestLabelTooCloseToACard(unittest.TestCase):
-    """Pourquoi le banc écrit le tapis du héros 16 px sous ses cartes, et pas 6.
+    """Un libellé collé à 6 px sous les cartes ne coûte plus une seule carte.
 
-    À 6 px les glyphes tombent DANS la bande d'abord basse que le détecteur
-    exige calme. Sur les 18 tables les plus fragiles du banc (deck classique,
-    cartes de 52 px, bruitées), le second libellé fait perdre 11 cartes ; sur
-    le banc entier, déplacer le libellé de 16 px à 6 px fait passer la
-    localisation de 664/672 à 652/672, soit 98,8 % → 97,0 %.
+    HISTORIQUE — ce test verrouillait l'INVERSE, mesuré avant la déduction du
+    décor : à 6 px, les glyphes tombaient dans la bande d'abord basse que le
+    détecteur exige calme, le collage coûtait 11 cartes sur cette tranche et
+    faisait passer le banc entier de 664/672 à 652/672 (98,8 % → 97,0 %) —
+    c'est pourquoi le banc écrit le tapis du héros à 16 px. Depuis la
+    déduction du décor (`_quiet_density`), le même collage est absorbé :
+    78/84 → 78/84 sur la tranche, 664/672 → 664/672 sur le banc entier —
+    les glyphes pontés à l'arête de la carte prolongent ses runs verticaux
+    au-delà de la bande (30 px mesurés, seuil DECOR_PAST = 20) et un cadrage
+    élargi survit sur la carte. Le test verrouille le NOUVEAU comportement,
+    et exige toujours que le collage n'invente aucune carte.
     """
 
     @classmethod
@@ -522,14 +528,18 @@ class TestLabelTooCloseToACard(unittest.TestCase):
             return copy
         return transform
 
-    def test_a_glued_label_costs_cards(self) -> None:
+    def test_a_glued_label_costs_nothing_and_invents_nothing(self) -> None:
         before, total = _counts(self.reads)
         glued = [(spec, st, read_table(self._glue(spec, st.texts)(st.image)))
                  for spec, st, _ in self.reads]
         after, _ = _counts(glued)
-        self.assertGreaterEqual(before - after, 5,
-                                f"{before}/{total} → {after}/{total} : l'effet a "
-                                "disparu, la marge de 16 px est à re-justifier")
+        self.assertLessEqual(before - after, 1,
+                             f"{before}/{total} → {after}/{total} : le collage "
+                             "coûte à nouveau des cartes, la déduction du "
+                             "décor ne l'absorbe plus")
+        ghosts, _ = _phantoms(glued)
+        self.assertEqual(len(ghosts), 0,
+                         f"le libellé collé a inventé {len(ghosts)} carte(s)")
 
 
 class TestRoles(unittest.TestCase):
@@ -656,6 +666,65 @@ class TestRealPmuCaptureWithACoveredHand(unittest.TestCase):
         d'avant — deux arêtes de longueurs différentes ne s'apparient plus —
         et la capture ne rend plus aucune boîte."""
         with patch.object(table_detector, "CUT_MIN_COVER", 0.85):
+            tr = read_table(str(self.CAPTURE))
+        boxes = [b.box for b in tr.all]
+        for g in self.HERO:
+            self.assertLess(_best(g, boxes), 0.5,
+                            f"l'ablation ne défait plus rien : {boxes}")
+
+
+class TestRealKoHeroBesideARail(unittest.TestCase):
+    """Les cartes du héros bordées par le rail lumineux d'un habillage « KO ».
+
+    `donnees/pmu_ko_hero_rail.png` est une découpe (600 × 270, 113 Ko) de la
+    capture `300_7-max_KO/0014` du banc de vérité-terrain — le cas qui
+    coûtait 45 des 60 cartes perdues sur les 57 captures réelles. Les deux
+    cartes du héros y sont parfaitement visibles, mais l'habillage « KO »
+    ceinture le siège d'un halo lumineux qui court LE LONG des cartes, et
+    pose une pastille de prime « 2,25 € » sur la carte de gauche.
+
+    Ce que le diagnostic a mesuré : les arêtes verticales sont trouvées aux
+    bonnes colonnes, le recalage rend le bon rapport (chemin « carte coupée »,
+    le bandeau d'équité recouvre le bas), et c'est la règle des trois abords
+    calmes qui refusait — abords mesurés 0,00 / 0,21 / 0,29 / 0,77 pour la
+    carte de gauche, le halo remplissant les abords latéraux de runs
+    rectilignes de 105 à 127 px qui traversent la bande de bout en bout.
+    C'est le cas que la déduction du décor (`_quiet_density`) guérit :
+    rappel réel 76,7 % → 94,2 % sur les 57 captures annotées.
+    """
+
+    CAPTURE = DONNEES / "pmu_ko_hero_rail.png"
+    # Emplacements de la vérité-terrain (`verite_captures.json`), ramenés au
+    # repère de la découpe (origine pleine image : 700, 850).
+    HERO = ((139, 79, 117, 106), (265, 79, 117, 106))
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.read = read_table(str(cls.CAPTURE))
+
+    def test_both_hero_cards_are_located(self) -> None:
+        boxes = [b.box for b in self.read.all]
+        for g in self.HERO:
+            self.assertGreaterEqual(_best(g, boxes), 0.5,
+                                    f"carte {g} non localisée, boîtes {boxes}")
+
+    def test_they_carry_the_hero_role(self) -> None:
+        hero = [b.box for b in self.read.hero]
+        for g in self.HERO:
+            self.assertGreaterEqual(_best(g, hero), 0.5,
+                                    f"carte {g} localisée mais pas « hero »")
+
+    def test_nothing_else_is_announced(self) -> None:
+        """Le halo, la pastille, la barre d'équité et le chrono sont dans la
+        découpe : aucun ne doit devenir une carte."""
+        self.assertEqual(len(self.read.all), 2,
+                         f"{[b.box for b in self.read.all]}")
+
+    def test_without_the_decor_deduction_both_cards_are_lost(self) -> None:
+        """Ablation : un plancher infranchissable rend au module la règle
+        des abords bruts, et les deux cartes redeviennent invisibles —
+        c'était l'état du dépôt, 24 captures 7-max sur 25 sans main."""
+        with patch.object(table_detector, "DECOR_BAND_MIN", 10 ** 9):
             tr = read_table(str(self.CAPTURE))
         boxes = [b.box for b in tr.all]
         for g in self.HERO:

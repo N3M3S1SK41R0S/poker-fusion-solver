@@ -74,8 +74,12 @@ __all__ = ["create_server", "run", "API"]
 
 UI_PATH = Path(__file__).with_name("ui.html")
 
-# Session d'entraînement en mémoire, une par processus.
-_STATE: dict[str, Any] = {"drill": None, "answers": []}
+# Sessions d'entraînement en mémoire, une par processus. « drill » est la
+# session de ranges (fréquences GTO) ; « fuites » celle des drills ciblés
+# générés depuis les erreurs réelles d'un dossier d'historiques — deux objets
+# distincts, pour qu'ouvrir l'une ne détruise pas l'autre.
+_STATE: dict[str, Any] = {"drill": None, "answers": [],
+                          "fuites": None, "fuites_courant": None}
 
 
 def _jsonable(obj: Any) -> Any:
@@ -109,6 +113,24 @@ def _drawdown_cached(mu: float, sd: float, n: int) -> float:
     perception d'une latence dans une interface.
     """
     return drawdown_quantile(mu, sd, n, quantile=0.95, n_sims=6000)
+
+
+@lru_cache(maxsize=1)
+def _eqr_entraine():
+    """Modèle EQR (L7, ``fusion.eqr``), entraîné UNE fois puis mémoïsé.
+
+    ``train_eqr()`` coûte ~24 solves river (mesuré : ~4 s sur cette machine) :
+    le premier appel de ``/api/postflop`` avec ``leaf_model="eqr"`` paie ce
+    coût, les suivants relisent le cache du processus. Limite ASSUMÉE,
+    republiée dans chaque réponse avec le R² et le n MESURÉS du modèle
+    entraîné (~0,6 sur ~48 échantillons river par défaut) : une valeur
+    DIRECTIONNELLE — elle relève l'EV du joueur en position par rapport au
+    rollout nu, sans garantie d'écart au solve complet (mesuré : elle peut
+    sur-corriger) — et la somme des EV dérive.
+    """
+    from pfs.fusion.eqr import train_eqr
+
+    return train_eqr()
 
 
 @lru_cache(maxsize=64)
@@ -351,6 +373,16 @@ class API:
 
     @staticmethod
     def drill_next(p: dict) -> dict:
+        """Prochaine question de la session de ranges en cours.
+
+        STATUT (audit du 14 août 2026) : la ROUTE ``drill/next`` n'est
+        appelée par aucune UI — ``drill/start`` et ``drill/answer``
+        embarquent déjà ``next`` dans leur réponse (et appellent cette
+        fonction en direct). Conservée : c'est le seul moyen, pour
+        l'outillage/CLI, de relire la question courante SANS répondre ni
+        redémarrer — la retirer laisserait l'état de session accessible
+        uniquement par des appels qui le modifient.
+        """
         s: DrillSession | None = _STATE.get("drill")
         if s is None:
             return {"error": "aucune session — démarrer d'abord"}
@@ -409,6 +441,145 @@ class API:
             "workload": s.srs.workload(21),
             "mastery": s.srs.mastery(),
         }
+
+    # ── drills ciblés : les fuites d'une revue, remises à l'entraînement ─
+    @staticmethod
+    def drill_fuites(p: dict) -> dict:
+        """Génère les drills des fuites RÉELLES d'un dossier et ouvre la session.
+
+        Payload : ``{"dossier": "<dossier d'historiques>"}`` — le même chemin
+        que l'onglet Mes sessions — plus ``max_drills`` optionnel. La
+        génération relit les mains, confronte chaque décision préflop au Nash
+        (``pfs.train.leak_drills``) et ne fabrique un exercice QUE là où la
+        bonne réponse est certaine ; le reste est compté, jamais approximé.
+
+        Renvoie le résumé du corpus (drills, coût ciblé avec sa part non
+        mesurée, fuites par famille, rapport texte) et, s'il y a au moins un
+        drill, ``session: true`` avec la première question dans ``next``.
+        ``session: false`` n'est pas une erreur : un corpus sans fuite
+        chiffrable est une bonne nouvelle, et le rapport le dit.
+        """
+        from pfs.train.leak_drills import (
+            SessionDrillsCibles,
+            generer_drills_dossier,
+        )
+
+        path = str(p.get("dossier", "") or p.get("path", "")).strip()
+        if not path:
+            raise ValueError("champ 'dossier' requis (dossier d'historiques).")
+        if not Path(path).is_dir():
+            raise ValueError(f"dossier introuvable : {path}")
+        max_drills = int(p["max_drills"]) if p.get("max_drills") else None
+
+        rapport = generer_drills_dossier(path, max_drills=max_drills)
+        resume = {
+            "drills": len(rapport),
+            "n_mains": rapport.n_mains,
+            "n_erreurs": rapport.n_erreurs,
+            "n_corrects": rapport.n_spots_corrects,
+            "n_ecartes": rapport.n_ecartes,
+            "bb_ciblees": round(rapport.cout_cible_bb, 2),
+            "bb_mesurees": round(rapport.cout_mesure_bb, 2),
+            "bb_non_mesurees": round(rapport.cout_non_mesure_bb, 2),
+            # (famille, nombre de drills, coût bb, coût mesuré ?) — la part
+            # « limp » est une convention, l'interface doit pouvoir le dire.
+            "fuites": [
+                {"fuite": f, "n": n, "cout_bb": round(c, 2),
+                 "mesure": all(d.cout_mesure for d in rapport
+                               if d.fuite == f)}
+                for f, n, c in rapport.fuites
+            ],
+            "rapport": rapport.explain(),
+        }
+        if not len(rapport):
+            _STATE["fuites"] = None
+            _STATE["fuites_courant"] = None
+            return {**resume, "session": False}
+        _STATE["fuites"] = SessionDrillsCibles(list(rapport))
+        _STATE["fuites_courant"] = None
+        return {**resume, "session": True, "next": API.drill_fuites_next({})}
+
+    @staticmethod
+    def drill_fuites_next(p: dict) -> dict:
+        """La prochaine question : spot dû d'abord, sinon la fuite la plus chère.
+
+        L'énoncé ne contient JAMAIS la bonne réponse ni l'EV — c'est le
+        contrat de ``SpotDrill.question()``, et un test le verrouille côté
+        route. ``{"fini": true}`` quand tous les spots sont vus et qu'aucun
+        n'est dû.
+        """
+        s = _STATE.get("fuites")
+        if s is None:
+            return {"error": "aucune session de fuites — lancer drill/fuites"}
+        d = s.prochain()
+        if d is None:
+            _STATE["fuites_courant"] = None
+            return {"fini": True, "score": _jsonable(s.score())}
+        _STATE["fuites_courant"] = d
+        carte = s.srs.cards.get(d.cle)
+        return {
+            "question": d.question(),
+            "options": list(d.options),
+            "main": d.main,
+            "cartes": d.cartes,
+            "tapis_bb": d.tapis_bb,
+            "pot_bb": d.pot_bb,
+            "mise_bb": d.mise_bb,
+            "fuite": d.fuite,
+            "cout_total_bb": round(d.cout_total_bb, 2),
+            "cout_mesure": d.cout_mesure,
+            "occurrences": d.occurrences,
+            "vu": 0 if carte is None else len(carte.history),
+            "dus": len(s.srs.due()),
+            "n_reponses": len(s.reponses),
+            "n_drills": len(s.drills),
+        }
+
+    @staticmethod
+    def drill_fuites_answer(p: dict) -> dict:
+        """Note une réponse, replanifie le spot (SM-2) et rend le corrigé.
+
+        Payload : ``{"reponse": "JAM"|"FOLD", "seconds": 3.2}``. Une réponse
+        fausse remet l'intervalle à zéro : le spot revient immédiatement.
+        Le corrigé est ``SpotDrill.explication()`` — la réponse, le solve qui
+        l'a tranchée, et le coût avec sa part non mesurée s'il y en a une.
+        """
+        s = _STATE.get("fuites")
+        d = _STATE.get("fuites_courant")
+        if s is None or d is None:
+            return {"error": "aucune question de fuites en cours"}
+        note = s.repondre(d, str(p.get("reponse", "")),
+                          float(p.get("seconds", 0.0)))
+        # Temps logique : même cadence que le drill de ranges (~50 réponses
+        # par jour logique), pour que les intervalles SM-2 soient comparables.
+        s.srs.advance(0.02)
+        return {
+            "correcte": note.correcte,
+            "reponse": note.reponse,
+            "bonne_reponse": d.bonne_reponse,
+            "grade": int(note.grade),
+            "grade_name": note.grade.name,
+            "cout_bb": round(note.cout_bb, 3),
+            "cout_mesure": d.cout_mesure,
+            "explication": d.explication(),
+            "score": _jsonable(s.score()),
+            "next": API.drill_fuites_next({}),
+        }
+
+    # ── emplacements d'historiques détectés sur la machine ───────────────
+    @staticmethod
+    def emplacements(p: dict) -> dict:
+        """Dossiers d'historiques PMU détectés. Payload : ``{}``.
+
+        ``dossiers`` : ceux qui existent réellement (l'interface préremplit
+        avec le premier) ; ``connus`` : tous les endroits où l'on a cherché —
+        pour qu'une détection vide reste diagnosticable (« on a regardé là et
+        là » plutôt qu'un champ muet).
+        """
+        from pfs.data.emplacements import dossiers_connus, dossiers_detectes
+
+        return {"dossiers": list(dossiers_detectes()),
+                "connus": list(dossiers_connus())}
 
     # ── analyse de hand-history ──────────────────────────────────────────
     @staticmethod
@@ -483,6 +654,14 @@ class API:
 
     @staticmethod
     def presets(p: dict) -> dict:
+        """Préréglages GTO et bases de référence, tels que l'app les utilise.
+
+        STATUT (audit du 14 août 2026) : servie pour l'outillage/CLI,
+        AUCUNE UI ne l'appelle (``ui.html`` embarque ses propres listes).
+        Conservée : introspection à coût nul (les deux tables sont déjà
+        importées ici), et la retirer casserait silencieusement tout script
+        qui lit les présets EXACTS du logiciel plutôt que d'en recopier.
+        """
         return {"presets": GTO_PRESETS, "baselines": GTO_BASELINES}
 
     # ── Équité (moteur exact/MC, multiway L3) ────────────────────────────
@@ -604,9 +783,52 @@ class API:
         return out
 
 
-    # ── Solveur postflop réel L1 ─────────────────────────────────────────
+    # ── Solveur postflop réel L1 (+ nodelock P2, rake L8, feuille P3) ────
+    @staticmethod
+    def _noeud_frequences(s, chemin: list[str]) -> dict:
+        """Fréquences moyennes d'un nœud, pondérées par la range de l'acteur.
+
+        Même convention que ``root_report`` : moyenne inconditionnelle sur la
+        range entière de l'acteur (pas pondérée par le reach du chemin). Lève
+        ``PostflopError`` si le chemin est inconnu — le message nomme l'action
+        absente et les actions disponibles.
+        """
+        idx = s.node_at(tuple(chemin))
+        node = s._nodes[idx]        # lecture seule, comme root_report
+        sigma = s.average_strategy(idx)
+        w = s.players[node.player].weights
+        tot = float(w.sum()) or 1.0
+        return {
+            "path": list(chemin),
+            "player": "OOP" if node.player == 0 else "IP",
+            "frequencies": {lab: float((sigma[a] * w).sum() / tot)
+                            for a, lab in enumerate(node.labels)},
+        }
+
     @staticmethod
     def postflop(p: dict) -> dict:
+        """Solve postflop range-contre-range. Ajouts au payload (optionnels) :
+
+        ``rake``: ``{"pct": 0.05, "cap": 1.0}`` — modèle « % + cap »
+        (``pfs.core.rake``, convention won-pot) ; ``cap`` absent = sans
+        plafond. Défaut : AUCUN rake (identité bit à bit avec l'appel nu).
+
+        ``locks``: ``[{"path": ["check","bet 1p"], "strategy":
+        {"fold": 0.9, "call": 0.1}, "combos": "QQ"?}]`` — nodelock appliqué
+        AVANT le solve (P2, signature Pio) ; le non-verrouillé re-solve
+        librement autour (nodelock 2.0). Chemin inconnu → 400 avec le nom de
+        l'action absente.
+
+        ``leaf_model``: ``"rollout"`` ou ``"eqr"`` (board turn uniquement) —
+        P3, profondeur limitée. ``"eqr"`` entraîne le modèle L7 UNE fois par
+        processus puis le mémoïse ; sa limite mesurée est republiée dans la
+        réponse (``leaf``), pour que l'interface ne l'affiche jamais comme
+        exact.
+
+        ``nodes``: ``[["check"], ["bet 1p"]]`` — fréquences moyennes rendues
+        pour ces nœuds (``nodes`` en réponse), en plus de la racine.
+        """
+        from pfs.core.rake import NO_RAKE, RakeModel
         from pfs.core.range_model import RANKS, SUITS, parse_range
         from pfs.solver.postflop import PostflopSolver
 
@@ -619,6 +841,30 @@ class API:
         board = [card(t) for t in str(p["board"]).replace(",", " ").split()]
         fracs = [float(x) for x in (p.get("bet_fracs") or [0.75])]
         iters = min(int(p.get("iterations", 400)), 2000)
+
+        # Rake optionnel — défaut NO_RAKE, le comportement historique.
+        rake = NO_RAKE
+        rk = p.get("rake")
+        if rk:
+            if not isinstance(rk, dict) or "pct" not in rk:
+                raise ValueError(
+                    'rake : objet {"pct": 0.05, "cap": 1.0} requis '
+                    "(cap absent = pas de plafond).")
+            rake = RakeModel(
+                pct=float(rk["pct"]),
+                cap=float(rk["cap"]) if rk.get("cap") is not None else math.inf)
+
+        # Feuille P3 optionnelle — "eqr" branche fusion.eqr (L7), entraîné
+        # une fois puis mémoïsé au niveau du processus.
+        leaf = str(p.get("leaf_model", "") or "full")
+        if leaf not in ("full", "rollout", "eqr"):
+            raise ValueError("leaf_model ∈ {'full', 'rollout', 'eqr'}.")
+        kw: dict[str, Any] = {}
+        if leaf == "rollout":
+            kw = {"leaf_model": "rollout"}
+        elif leaf == "eqr":
+            kw = {"leaf_model": "eqr", "eqr_model": _eqr_entraine()}
+
         s = PostflopSolver(
             board,
             parse_range(str(p["oop_range"])),
@@ -627,10 +873,30 @@ class API:
             stack=float(p["stack"]),
             bet_fracs=tuple(fracs),
             max_bets=int(p.get("max_bets", 2)),
+            rake=rake,
+            **kw,
         )
+
+        # Nodelock P2 : appliqué AVANT le solve, validé lock par lock.
+        locks = p.get("locks") or []
+        if not isinstance(locks, list):
+            raise ValueError("locks : liste de {path, strategy[, combos]}.")
+        for i, lk in enumerate(locks):
+            if not isinstance(lk, dict) or "path" not in lk or "strategy" not in lk:
+                raise ValueError(
+                    f"locks[{i}] : objet {{path, strategy[, combos]}} requis.")
+            strat = lk["strategy"]
+            if not isinstance(strat, dict) or not strat:
+                raise ValueError(
+                    f"locks[{i}].strategy : {{action: fréquence}} non vide.")
+            s.lock_node(
+                tuple(str(x) for x in lk["path"]),
+                {str(k): float(v) for k, v in strat.items()},
+                combos=str(lk["combos"]) if lk.get("combos") else None)
+
         s.solve(iters)
         r = s.result()
-        return {
+        out = {
             "ev_oop": r.ev_oop, "ev_ip": r.ev_ip, "pot": r.pot,
             "exploitability": r.exploitability,
             "iterations": r.iterations, "n_nodes": r.n_nodes,
@@ -642,6 +908,44 @@ class API:
                 for a in r.root_actions
             ],
         }
+        if locks:
+            # La stratégie RENDUE aux nœuds verrouillés — la preuve, côté
+            # réponse, que le lock a bien pris (average_strategy rapporte la
+            # stratégie verrouillée sur les combos du masque).
+            out["locks"] = [
+                API._noeud_frequences(s, [str(x) for x in lk["path"]])
+                for lk in locks
+            ]
+        if p.get("nodes"):
+            out["nodes"] = [
+                API._noeud_frequences(s, [str(x) for x in chemin])
+                for chemin in p["nodes"]
+            ]
+        if rake is not NO_RAKE:
+            out["rake"] = {
+                "pct": rake.pct, "cap": rake.cap,
+                # E[rake] = pot − (EV_OOP + EV_IP), identité comptable exacte.
+                "expected_rake": s.expected_rake(),
+            }
+        if leaf == "rollout":
+            out["leaf"] = {
+                "model": "rollout",
+                "limite": ("la feuille ignore la mise river : somme des EV "
+                           "exacte, l'écart au solve complet est le levier "
+                           "de mise river."),
+            }
+        elif leaf == "eqr":
+            m = _eqr_entraine()
+            out["leaf"] = {
+                "model": "eqr", "r2": m.r2, "n": m.n,
+                "limite": (f"valeur DIRECTIONNELLE : ridge R² {m.r2:.2f} sur "
+                           f"{m.n} échantillons river. Elle relève l'EV du "
+                           "joueur en position par rapport au rollout, SANS "
+                           "garantie d'écart au solve complet (elle peut "
+                           "sur-corriger), et la somme des EV dérive — le "
+                           "mode rollout reste somme-exacte."),
+            }
+        return out
 
 
     # ── P4 : re-solve depuis une range inférée/observée ──────────────────
@@ -947,8 +1251,14 @@ class API:
         que l'onglet avait été écrit avant que la détection ne fonctionne.
 
         Payload : ``{"image_b64": "..."}``. Renvoie les cartes lues avec leur
-        confiance, et ce qui a échoué — pour que l'échec reste rattrapable à
-        la main plutôt que silencieux.
+        confiance, les montants lus (pot, mise, tapis, blinde — chacun avec
+        son motif de refus le cas échéant), et ce qui a échoué — pour que
+        l'échec reste rattrapable à la main plutôt que silencieux.
+
+        Les images **JPEG sont refusées** (octets magiques ``FF D8 FF``,
+        détectés avant tout décodage) : la compression destructrice fait
+        affirmer de fausses lectures — recoller en PNG (Win+Shift+S en
+        produit). Les formats sans perte (PNG, BMP…) suivent le chemin normal.
         """
         import base64
         import io
@@ -958,13 +1268,27 @@ class API:
         from pfs.vision.archive import enregistrer_echec
         from pfs.vision.card_recognizer import identify_card_autour
         from pfs.vision.table_detector import read_table
+        from pfs.vision.zones_montants import lire_montants
 
         b64 = str(p.get("image_b64", "")).strip()
         if not b64:
             raise ValueError("champ 'image_b64' requis.")
         if "," in b64:
             b64 = b64.split(",", 1)[1]
-        image = Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGB")
+        octets = base64.b64decode(b64)
+        # Refus AVANT tout décodage-lecture, sur les octets magiques (FF D8
+        # FF), pas sur le préfixe data: — mesuré sur les 57 captures réelles :
+        # dès qualité 75, la compression JPEG produit des lectures FAUSSES
+        # affirmées (un 3h lu « 8h » sûr ; un tapis 3,79 lu 11,50 BB à
+        # confiance 0,79). Le contrat du projet est zéro valeur inventée,
+        # donc zéro JPEG. Le PNG et les autres formats sans perte (BMP…)
+        # passent tels quels.
+        if octets[:3] == b"\xff\xd8\xff":
+            raise ValueError(
+                "capture JPEG refusée : la compression JPEG est destructrice "
+                "et fait affirmer de fausses lectures (cartes et montants). "
+                "Recolle la capture en PNG — Win+Shift+S produit du PNG.")
+        image = Image.open(io.BytesIO(octets)).convert("RGB")
 
         table = read_table(image)
         sortie: dict[str, list] = {"hero": [], "board": [], "autres": []}
@@ -999,6 +1323,10 @@ class API:
             "sures": len(sures), "total": total,
             "main": [c["carte"] for c in sortie["hero"] if c["carte"]],
             "tableau": [c["carte"] for c in sortie["board"] if c["carte"]],
+            # Les montants viennent APRÈS les cartes : leurs cadres de visée
+            # dérivent des boîtes détectées. Chaque zone refusée porte son
+            # motif — c'est lui que l'UI montre à côté du champ à saisir.
+            "montants": lire_montants(image, table),
         }
 
     # ── Calibration en direct : LIRE l'écran, jamais conseiller ──────────
@@ -1166,11 +1494,19 @@ ROUTES: dict[str, Callable[[dict], dict]] = {
     "hmm": API.hmm,
     "solve": API.solve,
     "drill/start": API.drill_start,
+    # drill/next : aucune UI ne l'appelle (start/answer embarquent « next »
+    # dans leur réponse) — servie pour l'outillage/CLI, voir sa docstring.
     "drill/next": API.drill_next,
     "drill/answer": API.drill_answer,
     "drill/report": API.drill_report,
+    "drill/fuites": API.drill_fuites,
+    "drill/fuites/next": API.drill_fuites_next,
+    "drill/fuites/answer": API.drill_fuites_answer,
+    "emplacements": API.emplacements,
     "analyse": API.analyse_hh,
     "skill": API.skill,
+    # presets : aucune UI ne l'appelle — introspection pour l'outillage/CLI
+    # (les présets EXACTS du logiciel), voir sa docstring.
     "presets": API.presets,
     "icm": API.icm,
     "equity": API.equity,
@@ -1239,6 +1575,11 @@ def _make_handler(token: str) -> type[BaseHTTPRequestHandler]:
                 self._send(200, svg, "image/svg+xml")
                 return
             if u.path == "/api/health":
+                # Sonde MANUELLE : le seul GET d'API, sans jeton — pour
+                # vérifier depuis un navigateur ou `curl 127.0.0.1:8731/api/health`
+                # que le serveur qui répond est bien le processus attendu
+                # (voir _ServeurExclusif : un vieux listener peut capter tout
+                # le port). Ne rend que {ok, version} : rien de sensible.
                 self._json(200, {"ok": True, "version": "2.3"})
                 return
             self._json(404, {"error": "route inconnue"})

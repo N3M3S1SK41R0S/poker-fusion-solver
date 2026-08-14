@@ -11,6 +11,12 @@
                                                    cellules exactes 169×169,
                                                    bascules de seuil à 10 bb)
 
+Résultat du mode --long au 14 août 2026 (icm.py corrigé du seuil PKO et du
+partage des morts) : **68 vérifications conformes, 0 écart, 831 s.** Le
+premier passage de ce mode avait planté à mi-course sur un format de
+ndarray dans la borne exact-vs-Monte-Carlo — corrigé dans la section 2, la
+borne prend désormais la pire erreur-type et non le tableau entier.
+
 Pourquoi ce fichier existe
 --------------------------
 Les tests unitaires vérifient que les noyaux **tournent** et respectent des
@@ -235,8 +241,11 @@ def section_icm(long: bool) -> None:
                                        len(pay), 400_000, 12345)
         mc = probs @ np.asarray(pay, dtype=float)
         d = float(np.abs(ex - mc).max())
-        # borne : 3 erreurs-types du MC, mise à l'échelle du plus gros gain
-        seuil = 3.0 * se * max(pay)
+        # borne : 3 erreurs-types du MC, mise à l'échelle du plus gros gain.
+        # se est un tableau (une erreur-type par case) : on prend la pire,
+        # sinon la comparaison et le format sont ceux d'un ndarray — c'est le
+        # plantage qui a interrompu le premier passage du mode --long.
+        seuil = 3.0 * float(np.max(se)) * max(pay)
         verdict(str(st), d < seuil,
                 f"écart max {d:.4f} $ (3·erreur-type = {seuil:.4f})")
 

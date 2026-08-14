@@ -1,6 +1,20 @@
 """
 F7 — Détection topologique de patterns, avec test de significativité.
 
+Statut (audit du 14 août 2026) — bibliothèque, NON branchée
+-----------------------------------------------------------
+Importée par aucun code applicatif ni script livré : seul
+``tests/test_app_and_data.py`` l'exerce. Pourquoi : ``detect_patterns``
+attend des nuages de points (vecteurs d'action par adversaire) que personne
+ne construit encore — la revue de session produit des stats agrégées, pas
+des trajectoires par joueur, et aucune UI n'affiche de « pattern ».
+Ce qui existe déjà : H₀ exact (Kruskal + union-find), test de permutation
+avec Bonferroni, H₁ optionnel via ripser — testés. Accroche naturelle si on
+branche : ``pfs/analysis/session_review.py:review_hands`` (construire les
+nuages par adversaire depuis les mains parsées), exposé par la route
+``review`` de ``pfs/app/server.py``. Règle du projet : aucun module
+fusionné sans route + UI + test de bout en bout.
+
 Sources
 -------
 - Edelsbrunner, Letscher & Zomorodian (2002), *Topological Persistence and

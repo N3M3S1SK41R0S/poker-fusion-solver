@@ -1,6 +1,17 @@
 """
 Registre des paramètres solveur — la taxonomie complète, vivante dans le code.
 
+Statut (audit du 14 août 2026) — banc/registre, NON branché (assumé)
+--------------------------------------------------------------------
+Ce module est de la documentation exécutable : seul
+``tests/test_solver_registry.py`` l'importe, et c'est sa place — il n'a pas
+vocation à être appelé par l'application. En revanche, l'audit a montré
+qu'il MENTAIT par omission : « couvert » signifiait « le code existe et il
+est testé », sans dire si ce code est branché dans l'application. D'où le
+champ ``wired`` : ``coverage`` mesure l'implémentation, ``wired`` mesure le
+branchement (route/UI/moteur). ``library_only()`` liste les paramètres
+implémentés et testés mais que rien n'exécute pour le joueur.
+
 Ce module encode **tous les paramètres** que prennent en compte les solveurs
 réputés (PioSOLVER, GTO+, Simple, TexasSolver, GTO Wizard AI, MonkerSolver,
 HRC, ICMIZER…), organisés selon la taxonomie A→I, et — pour chacun — l'état de
@@ -30,6 +41,7 @@ __all__ = [
     "coverage_report",
     "gaps",
     "differentiators",
+    "library_only",
 ]
 
 
@@ -64,6 +76,15 @@ class Parameter:
     module: str = ""
     """Module/fusion qui le couvre chez nous (vide si absent)."""
     note: str = ""
+    wired: bool = True
+    """Branché dans l'application (route/UI/moteur ou script livré).
+
+    ``False`` = implémenté et TESTÉ, mais aucun chemin d'exécution
+    utilisateur n'y passe : bibliothèque en attente de branchement (audit du
+    14 août 2026). ``coverage`` dit « le code existe », ``wired`` dit « le
+    joueur en profite ». Les deux axes sont orthogonaux et le score de
+    couverture ne mélange pas les deux — c'est ``library_only()`` qui rend
+    l'écart visible."""
 
     @property
     def is_industry_standard(self) -> bool:
@@ -148,7 +169,7 @@ PARAMETERS: tuple[Parameter, ...] = (
        "range_model.Range.remove_blockers", "effet blocker à la résolution 1326"),
     _P("Bunching (retrait des folds)", _C.RANGES, (GTOW,), _COV,
        "core.bunching", "MC jointe + approximation pairwise (corr. 0.995) — "
-       "seul GTO Wizard AI le fait aussi"),
+       "seul GTO Wizard AI le fait aussi", wired=False),
     _P("Range vs range + normalisation", _C.RANGES, ALL_POSTFLOP, _COV, "range_model"),
     _P("Import/export de ranges", _C.RANGES, ALL_POSTFLOP, _COV,
        "range_model.parse_range", "format solveur standard"),
@@ -160,11 +181,12 @@ PARAMETERS: tuple[Parameter, ...] = (
     _P("Texture (connectivité, paires…)", _C.BOARD, ALL_POSTFLOP, _COV, "range_model"),
     _P("Isomorphisme de couleurs", _C.BOARD, (PIO, TEXAS, GTOP), _COV,
        "solver.isomorphism",
-       "L8 : 22 100 → 1 755 flops (Burnside vérifié) ; turn 16 432, river 134 459"),
+       "L8 : 22 100 → 1 755 flops (Burnside vérifié) ; turn 16 432, river "
+       "134 459 — brique du blueprint flop Phase 2", wired=False),
     _P("Runouts (énumération turn/river)", _C.BOARD, (PIO, GTOW), _COV, "core.equity",
        "hotness grid + Monte-Carlo"),
     _P("Board clustering (familles de flops)", _C.BOARD, (GTOW, SIMPLE), _PAR,
-       "topology", "TDA sur familles — angle différent"),
+       "topology", "TDA sur familles — angle différent", wired=False),
 
     # ── E. Solving ───────────────────────────────────────────────────────
     _P("Algorithme CFR+/DCFR", _C.SOLVING, ALL_POSTFLOP, _COV, "solver.dcfr",
@@ -175,10 +197,13 @@ PARAMETERS: tuple[Parameter, ...] = (
        "solver.dcfr"),
     _P("Abstraction / bucketing", _C.SOLVING, (SIMPLE, MONKER, GTOW), _COV,
        "solver.abstraction", "EHS exact mémoïsé par classe isomorphe + "
-       "distribution-aware (Johanson 2013) — validé contre oracle au turn"),
+       "distribution-aware (Johanson 2013) — validé contre oracle au turn ; "
+       "consommateur (blueprint flop) = Phase 2", wired=False),
     _P("Search à profondeur limitée + value net", _C.SOLVING, (GTOW, DEEPS), _COV,
        "solver.postflop", "P3 : leaf_model rollout (somme-exacte) / eqr "
-       "(valeur apprise L7, directionnelle — pas un réseau profond, assumé)"),
+       "(valeur apprise L7, directionnelle — pas un réseau profond, assumé). "
+       "Les deux variantes sont atteignables par /api/postflop "
+       "(leaf_model=) ; eqr entraîne fusion.eqr une fois puis mémoïse"),
     _P("Nested / subgame re-solving", _C.SOLVING, (GTOW,), _COV, "engine",
        "★ resolve_spot : re-solve du sous-jeu depuis la range INFÉRÉE (F3) — "
        "personne ne re-solve depuis une range apprise en direct"),
@@ -228,7 +253,10 @@ PARAMETERS: tuple[Parameter, ...] = (
     _P("EV (par action/combo/range)", _C.OUTPUT, ALL_POSTFLOP, _COV, "bet_sizing"),
     _P("Equity", _C.OUTPUT, ALL_POSTFLOP, _COV, "core.equity"),
     _P("Equity realization (EQR)", _C.OUTPUT, (PIO, GTOW), _COV, "fusion.eqr",
-       "L7 : ridge apprise de NOS solves river — la boucle est fermée en interne"),
+       "L7 : ridge apprise de NOS solves river — branchée le 14 août 2026 : "
+       "/api/postflop leaf_model='eqr' entraîne train_eqr() une fois "
+       "(mémoïsé) et republie le R² mesuré (~0,6) avec sa limite : valeur "
+       "directionnelle, la somme des EV dérive"),
     _P("Fréquences d'action", _C.OUTPUT, ALL_POSTFLOP, _COV, "arbiter"),
     _P("Range advantage", _C.OUTPUT, (PIO, GTOW), _COV, "range_model.Range.range_advantage"),
     _P("Nut advantage", _C.OUTPUT, (PIO, GTOW), _COV, "range_model.Range.nut_advantage"),
@@ -257,7 +285,7 @@ PARAMETERS: tuple[Parameter, ...] = (
     _P("Non-stationnarité (dérive adverse)", _C.OPPONENT, (), _COV, "dynamic_beta",
        "★ facteur d'oubli δ — suit l'adaptation"),
     _P("Patterns exploitables (TDA)", _C.OPPONENT, (), _COV, "topology",
-       "★ homologie persistante + test de permutation"),
+       "★ homologie persistante + test de permutation", wired=False),
     _P("Incertitude → n'exploiter que si sûr", _C.OPPONENT, (), _COV, "arbiter",
        "★ λ dérivé de σ_θ — le cœur du système"),
     _P("Tells temporels (latence de décision)", _C.OPPONENT, (), _COV,
@@ -265,12 +293,12 @@ PARAMETERS: tuple[Parameter, ...] = (
        "L2 : log-normal + Welford + CUSUM + tells validés par IC de Wilson. "
        "Volontairement NON compté comme différenciateur absolu : Hand2Note "
        "stocke des moyennes de temps statiques (la surprise séquentielle en "
-       "direct, elle, n'existe nulle part)"),
+       "direct, elle, n'existe nulle part)", wired=False),
     _P("Tendances de population (privées)", _C.OPPONENT, (GTOW,), _COV,
        "data.population",
        "L6 : empirical Bayes sur SES PROPRES HH, par tranche d'enjeux — "
        "GTO Wizard vend l'agrégat mondial, Hand2Note l'analyse cloud ; "
-       "ici : local, privé, plafonné par l'information réelle"),
+       "ici : local, privé, plafonné par l'information réelle", wired=False),
     _P("Aversion aux pertes personnelle (λ)", _C.OPPONENT, (), _COV, "drill",
        "★ λ de Kahneman mesuré sur tes décisions"),
 )
@@ -338,7 +366,15 @@ SOLVERS: tuple[SolverProfile, ...] = (
          "Zéro réseau, zéro coût"),
         ("Flop complet en un solve = Phase 2 (classes isomorphes prêtes)",
          "PLO/Short Deck hors périmètre (choix)", "GPU = Phase 2",
-         "Perception non encore livrée")),
+         # Audit du 14 août 2026 : la force et la faiblesse ensemble, sinon
+         # le tableau ment — voir library_only(). (EQR retiré de la liste le
+         # 14 août 2026 : branché via /api/postflop leaf_model='eqr'.)
+         "Bunching, abstraction EHS, isomorphisme, tells temporels, "
+         "TDA, population : bibliothèques testées NON branchées dans l'app",
+         # v4.4 lit une vraie table (calibration live, lecture seule) et
+         # v4.5 lit les montants d'une capture collée : la faiblesse
+         # restante est le rappel de la détection, pas son absence.
+         "Perception : rappel 76,7 % sur captures réelles (7-max en défaut)")),
 )
 
 
@@ -383,6 +419,19 @@ def gaps() -> list[Parameter]:
         (p for p in PARAMETERS if p.coverage is Coverage.ABSENT and p.exposed_by),
         key=lambda p: (-len(p.exposed_by), p.category.value),
     )
+
+
+def library_only() -> list[Parameter]:
+    """Paramètres implémentés et testés mais que RIEN n'exécute pour le joueur.
+
+    L'écart honnête entre « le code existe » (``coverage``) et « le joueur en
+    profite » (``wired``) — recensé par l'audit du 14 août 2026. Chaque module
+    pointé ici porte une section « Statut » en tête de docstring qui dit
+    pourquoi il n'est pas branché et où l'accrocher si on le branche.
+    """
+    return [p for p in PARAMETERS
+            if p.coverage in (Coverage.COVERED, Coverage.PARTIAL)
+            and not p.wired]
 
 
 def differentiators() -> list[Parameter]:

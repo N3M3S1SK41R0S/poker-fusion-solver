@@ -1,6 +1,6 @@
 [project]
 name = "pfs"
-version = "4.2.0"
+version = "4.5.0"
 description = "Poker Fusion Solver — 14 fusions, solveur NLHE, analyse post-partie iPoker/PMU, reconnaissance de cartes, 731 tests"
 requires-python = ">=3.12"
 dependencies = [

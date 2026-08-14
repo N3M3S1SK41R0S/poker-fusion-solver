@@ -1,6 +1,19 @@
 r"""
 L7 — Equity realization (EQR) apprise depuis NOS PROPRES solves.
 
+Statut (14 août 2026) — BRANCHÉE dans l'application
+---------------------------------------------------
+Branchée le 14 août 2026 (recommandation « S » de l'audit des orphelins) :
+``/api/postflop`` accepte ``leaf_model="eqr"`` ; le serveur
+(``pfs/app/server.py:_eqr_entraine``) entraîne ``train_eqr()`` UNE fois par
+processus puis mémoïse (``lru_cache``), et republie dans chaque réponse le
+R² et le n MESURÉS du modèle avec sa limite : valeur DIRECTIONNELLE — elle
+relève l'EV du joueur en position par rapport au rollout, sans garantie
+d'écart au solve complet (mesuré : elle peut sur-corriger) — et la somme
+des EV dérive. Le registre (``pfs/bench/solver_registry.py``) porte
+``wired=True`` sur l'entrée EQR ; test de bout en bout :
+``tests/test_app_and_data.py::test_api_postflop_leaf_model_eqr_est_atteignable_et_honnete``.
+
 EQR := EV réalisée / (équité brute × pot). C'est le facteur qui sépare
 « avoir 55 % d'équité » de « gagner 55 % du pot » : position, initiative,
 polarité de la range et SPR font qu'on réalise plus ou moins que sa part.

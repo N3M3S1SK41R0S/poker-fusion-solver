@@ -2,6 +2,22 @@ r"""
 Abstraction de l'espace des mains par buckets de force — brique « cartes » du
 blueprint flop (Phase 2).
 
+Statut (audit du 14 août 2026) — brique Phase 2, NON branchée
+-------------------------------------------------------------
+Importée par aucun code applicatif ni script livré : seul
+``tests/test_abstraction.py`` l'exerce (et ce module est l'unique
+consommateur de ``pfs.solver.isomorphism``). Pourquoi : le blueprint flop
+qui doit la consommer n'existe pas encore — ``PostflopSolver`` résout river
+et turn sans abstraction, et c'est exact à ces rues-là ; bucketer n'a de
+sens qu'au flop complet (Phase 2). Ce qui existe déjà : EHS exact mémoïsé
+par classe canonique, buckets quantiles et k-means 1-D déterministe,
+caractéristiques distribution-aware (Johanson 2013), validation contre
+l'oracle ``equity_vs_range`` au turn — testés. Accroche naturelle si on
+branche : l'extension flop de ``pfs/solver/postflop.py`` (CFR sur
+``bucket_assignments`` par classe canonique de ``canonical_board``).
+Règle du projet : aucun module fusionné sans route + UI + test de bout en
+bout.
+
 Un solveur blueprint ne peut pas traiter les 1 326 combos comme des états
 distincts sur chacun des 1 755 flops canoniques : l'abstraction regroupe les
 mains en K buckets stratégiquement similaires, et CFR (Zinkevich et al., 2007)

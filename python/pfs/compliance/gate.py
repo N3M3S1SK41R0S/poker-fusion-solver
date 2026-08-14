@@ -2,6 +2,22 @@
 Poker Fusion Solver — ComplianceGate : autorise le mode LIVE uniquement sur
 des tables sans enjeu monétaire réel.
 
+Statut (audit du 14 août 2026) — garde-fou NON branché
+------------------------------------------------------
+Importé par aucun code applicatif : seul ``tests/test_compliance_gate.py``
+l'exerce. Pourquoi : il n'y a aujourd'hui RIEN à garder — la ligne éthique
+du projet est tenue en amont, par l'absence totale de conseil pendant la
+main (la calibration live v4.4 lit l'écran et n'affiche rien ; les routes
+``live/*`` sont en lecture seule). Le gate devient OBLIGATOIRE avant toute
+fonctionnalité qui afficherait quoi que ce soit en cours de main, même sur
+argent fictif : c'est la condition de son branchement, pas une option.
+Ce qui existe déjà : signaux fail-closed (fenêtre armée, titre, badge play
+money, glyphe devise, indicateur tournoi), ``ComplianceGate.evaluate``,
+verrouillage — testés. Accroche naturelle si on branche :
+``pfs/app/server.py`` en tête des routes ``live/*`` (aucun rendu sans
+``GateDecision.mode == Mode.LIVE``). Règle du projet : aucun module
+fusionné sans route + UI + test de bout en bout.
+
 ═══════════════════════════════════════════════════════════════════════════
 LE PIÈGE QUE CE MODULE EXISTE POUR ÉVITER
 ═══════════════════════════════════════════════════════════════════════════

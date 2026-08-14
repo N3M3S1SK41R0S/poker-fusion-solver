@@ -40,8 +40,8 @@ survit** à ce fichier —
 from __future__ import annotations
 
 import unittest
-from pathlib import Path
 
+from pfs.analysis.reperes import racine_corpus
 from pfs.data.hand_history import (
     ActionType,
     Room,
@@ -60,7 +60,12 @@ from pfs.data.phh import (
     positions_par_siege,
 )
 
-CORPUS = Path(r"C:\Users\pierr\Documents\POKERFUSIONSOLVER\corpus\phh-dataset\data")
+#: Le corpus vit hors du dépôt ; sa résolution (``PFS_CORPUS``, sinon
+#: ``<parent du dépôt>/corpus``) est celle de ``pfs.analysis.reperes`` — une
+#: seule définition dans le projet, jamais un chemin personnel en dur. Les
+#: seuls tests qui le lisent (``TestCorpusReel``) se mettent en SKIP quand il
+#: manque : le golden recopié ci-dessous garde la preuve, corpus ou pas.
+CORPUS = racine_corpus() / "phh-dataset" / "data"
 DWAN = CORPUS / "dwan-ivey-2009.phh"
 
 #: Le golden est recopié ici plutôt que lu sur le disque : le corpus est un

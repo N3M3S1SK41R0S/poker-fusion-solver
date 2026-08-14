@@ -45,9 +45,10 @@ Ce qui a fait la différence, dans l'ordre où ça a été mesuré :
      28,0 % parmi les fantômes (IoU < 0,3) — sélectivité nulle, et même
      légèrement à l'envers. Ce que ce test change, c'est ce qui SURVIT au
      dédoublonnage. L'ablation le montre — QUIET_SIDES
-     → localisation / fantômes, sur les 144 tables du fichier de tests :
-     0 → 98,4 % / 5,0 % ; 2 → 98,2 % / 1,9 % ; 3 → 98,8 % / 0,0 % ;
-     4 → 76,6 % / 0,0 % (à 4, le simple voisinage de la carte d'à côté
+     → localisation / fantômes, sur les 144 tables du fichier de tests,
+     rejouée après la déduction du décor du point 7 :
+     0 → 98,2 % / 5,0 % ; 2 → 98,2 % / 1,9 % ; 3 → 98,8 % / 0,0 % ;
+     4 → 77,8 % / 0,0 % (à 4, le simple voisinage de la carte d'à côté
      disqualifie une vraie carte, et la localisation s'effondre) ;
   4. sous bruit, l'arête ondule d'un pixel : mesurer la couverture sur une
      bande de trois lignes plutôt que sur une seule récupère les dernières
@@ -73,7 +74,18 @@ Ce qui a fait la différence, dans l'ordre où ça a été mesuré :
      bords se prolonge le long du bandeau (126 px contre 100). L'appariement
      était donc rejeté AVANT même le test de rapport, par la règle « les deux
      côtés couvrent la même hauteur ». Ce qu'on rend alors n'est pas la
-     carte : c'est sa partie VISIBLE.
+     carte : c'est sa partie VISIBLE ;
+  7. un habillage peut border les cartes d'un DÉCOR LUMINEUX (halo de siège,
+     rail) qui rend leurs abords bruyants — c'est ce qui perdait les deux
+     cartes du héros sur 24 des 25 captures 7-max « KO » du banc de
+     vérité-terrain, soit 45 des 60 cartes manquées. La densité d'un abord
+     se mesure donc DÉCOR DÉDUIT (`_quiet_density`) : un run d'arêtes
+     rectiligne qui traverse la bande de bout en bout et porte une signature
+     de rail (ruban large, ou dépassement lointain) ne compte pas. Rappel
+     sur les 57 captures réelles : 76,7 % → 94,2 %, à banc synthétique
+     rigoureusement inchangé (664/672 localisées, 0 fantôme, 986 boîtes —
+     la déduction n'y trouve aucun rail, et les garde-fous qui l'y rendent
+     muette sont mesurés dans `_quiet_density`).
 
 Le prix des deux bornes, mesuré sur les 144 tables du fichier de tests
 (672 cartes) :
@@ -194,9 +206,14 @@ Limites assumées, chiffrées :
     (habillage plein, cartes de 52 px, sans bruit) la chute est bien plus
     brutale : 100 % en PNG, 95,2 % à q = 90, 63,1 % à q = 75. C'est le
     premier chantier de la validation sur vraies captures ;
-  · un libellé collé sous une carte la fait perdre — le banc écrit le tapis du
-    héros 16 px sous ses cartes ; à 6 px, ses glyphes tombent dans la bande
-    d'abord basse et la localisation passe de 98,8 % à 97,0 % ;
+  · un libellé collé sous une carte ne la fait PLUS perdre — avant la
+    déduction du décor, coller le tapis du héros à 6 px au lieu de 16 faisait
+    passer la localisation de 98,8 % à 97,0 % ; rejoué après, le même
+    collage ne coûte rien (664/672 → 664/672, et aucune carte inventée) :
+    les glyphes pontés à l'arête prolongent ses runs au-delà de la bande et
+    un cadrage élargi survit. Le banc garde son libellé à 16 px, et
+    `test_a_glued_label_costs_nothing_and_invents_nothing` verrouille les
+    deux mesures ;
   · deux cartes qui se chevauchent au point de masquer une arête verticale
     entière ne donnent qu'une seule boîte — c'est signalé par le nombre de
     cartes trouvées, jamais deviné ;
@@ -226,42 +243,28 @@ Limites assumées, chiffrées :
   · un rectangle uni au rapport ET à la taille d'une carte reste indiscernable
     d'une carte à ce stade ; c'est la reconnaissance (`card_recognizer`) qui
     tranche ensuite ;
-  · **SUR DE VRAIES CAPTURES, LA LOCALISATION TOMBE À 76,7 %.** Tous les taux
-    ci-dessus sont mesurés sur des tables SYNTHÉTIQUES : pas de dégradé de
-    feutre, pas d'ombre portée, pas de décor lumineux, un seul jeu de
-    gabarits. Mesuré le 11 août 2026 contre la vérité-terrain de 57 captures
-    PMU (`banc_verite_captures.py`, `tests/donnees/verite_captures.json`) :
-    **198 cartes localisées sur 258 réellement présentes**, et 30 cartes du
-    board promues « hero » faute d'avoir trouvé le siège. Les 60 cartes
-    perdues se répartissent ainsi :
+  · **SUR DE VRAIES CAPTURES, LA LOCALISATION VAUT 94,2 %** (243/258,
+    banc `banc_verite_captures.py` du 14 août 2026, précision 100 %, 0 carte
+    inventée, 0 lecture fausse affirmée). Elle valait **76,7 %** avant la
+    déduction du décor : l'habillage « KO » de la table 7-max borde le siège
+    d'un halo lumineux et pose une pastille de prime sur la carte de gauche,
+    et la règle des trois abords calmes rejetait les deux cartes du héros
+    sur 24 captures sur 25 (45 des 60 cartes perdues ; abords mesurés sur
+    `300_7-max_KO/0014` : haut 0,00 / bas 0,21 / gauche 0,29 / droite 0,77).
+    La découpe de cette capture est dans le dépôt
+    (`tests/donnees/pmu_ko_hero_rail.png`) et son test rejoue le cas guéri
+    ET son ablation. Restent les 15 cartes non corrigées :
 
-      - **45 cartes du HÉROS**, dont les 42 de la table 7-max (24 captures
-        sur 25). La carte est parfaitement visible, ses deux arêtes
-        verticales sont trouvées aux bonnes colonnes, `_snap_to_edges` rend
-        (839, 924, 117, 115) soit un rapport de 1,017 — dans la plage
-        « carte coupée » — et `_covered_from_below` répond True. C'est
-        `_looks_like_a_card` qui refuse, et précisément **QUIET_SIDES** :
-        seuls 2 abords sur 4 sont calmes (haut 0,00 / bas 0,22 / gauche 0,52
-        / droite 0,77). L'habillage « KO » de cette table pose un rail
-        lumineux horizontal juste à côté du siège, et une pastille de prime
-        « 2,25 € » à cheval sur la carte de gauche. Instrumenté sur la
-        capture `300_7-max_KO/0014` : 8 candidates bien cadrées meurent sur
-        ce seul test, contre 19 GARDÉES pour la même carte sur la table
-        6-max ;
       - **15 cartes du BOARD** (5♠ ×11, 9♣ ×4) : la pile de jetons du pot est
         posée sur leur bas ; le recalage horizontal part sur l'arête des
         jetons, la boîte passe de 160 à 197 px de haut et son rapport (0,594)
-        tombe juste sous MIN_RATIO.
+        tombe juste sous MIN_RATIO. Sur 3 captures, ce 9♣ manquant réduit le
+        board visible à 2 cartes, et les 6♠/A♥ trouvés restent alors sans
+        rôle — les 6 « rôles faux » résiduels du banc viennent de là ;
 
-    Ablation mesurée sur ces mêmes captures
-    (`banc_verite_captures.py --quiet-sides 2`) : localisation 76,7 → 96,9 %,
-    rôles justes 65,1 → 96,9 %, **0 carte inventée**, 8 cartes encore perdues
-    (celles sous les jetons). Sur les 144 tables synthétiques, la même
-    ablation coûtait 1,9 % de boîtes fantômes — d'où QUIET_SIDES = 3. Les
-    deux mesures ne pointent pas dans le même sens, et c'est **la mesure sur
-    le réel qui n'existait pas** quand la constante a été posée. Le
-    desserrement n'est pas appliqué ici : il demande un chantier qui
-    re-mesure les deux bancs ensemble ;
+    et 30 cartes du board étaient de surcroît promues « hero » faute d'avoir
+    trouvé le siège — retrouver la main du héros en a guéri 24 par simple
+    mécanique de rangées (rôles justes 65,1 % → 91,9 %) ;
   · rien n'appelle encore ce module hors de son banc et de ses tests : la
     fonctionnalité n'est PAS disponible dans l'application.
 """
@@ -332,7 +335,33 @@ QUIET_MAX = 0.25         # densité d'arêtes tolérée dans un abord « calme �
 # 76,7 % reste un vrai défaut ; sa correction passe par une règle qui
 # distingue un décor lumineux d'un vrai bord de carte, pas par un
 # assouplissement global de celle-ci.
+#
+# CETTE RÈGLE EXISTE DÉSORMAIS (14 août 2026) : la densité des abords se
+# mesure DÉCOR DÉDUIT — voir `_quiet_density`, qui excuse les runs
+# rectilignes traversant la bande quand ils portent une signature de rail,
+# et nulle part ailleurs. La constante, elle, ne bouge pas de 3. Les deux
+# bancs, rejoués ensemble cette fois :
+#
+#     QUIET_SIDES = 3            abords bruts   décor déduit
+#     RÉEL (57 captures annotées, 258 cartes)
+#       rappel de lecture           76,7 %        94,2 %
+#       dont bon rôle               65,1 %        91,9 %
+#       précision                  100,0 %       100,0 %
+#       cartes inventées                 0             0
+#     SYNTHÉTIQUE (144 tables, 672 cartes)
+#       localisation                98,8 %        98,8 %
+#       boîtes fantômes            0 / 986       0 / 986
+#
+# Les 15 cartes réelles encore perdues sont celles du board sous la pile de
+# jetons du pot — un défaut distinct, sans rapport avec les abords.
 QUIET_SIDES = 3
+# Déduction du décor dans les abords — quatre constantes, toutes mesurées
+# dans _quiet_density :
+DECOR_BAND_MIN = 40      # longueur minimale de bande pour en juger
+DECOR_THIN_MIN = 4       # épaisseur minimale (une ligne remplit une bande de 2)
+DECOR_THICK_BROAD = 8    # épaisseur pour juger un RUBAN (≥ 3 largeurs de ligne)
+DECOR_BROAD = 0.45       # part traversante d'un ruban (mesuré 0,500 et 0,750)
+DECOR_PAST = 20          # dépassement d'un rail au-delà de la bande (12 ↔ 34)
 INNER_MAX = 0.72         # densité d'arêtes tolérée dans le carton (jetons : 0,83)
 NMS_COVER = 0.55         # recouvrement relatif au-delà duquel on ne garde qu'une
 
@@ -496,6 +525,137 @@ def _side_windows(box: tuple[int, int, int, int]
     return inside, outside
 
 
+# Bornes de runs de la DERNIÈRE image vue, recalculées quand `edges` change.
+# `_looks_like_a_card` garde sa signature (rgb, edges, box) — les tests la
+# patchent — donc le pré-calcul par image passe par ce cache à une entrée,
+# keyé sur l'IDENTITÉ du tableau (une référence forte est gardée : pas de
+# réemploi d'id possible tant que l'entrée vit).
+_RUNS_CACHE: list = []
+
+
+def _run_bounds(mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Pour chaque pixel, début et fin du run VERTICAL qui le contient.
+
+    Même mécanique d'accumulation que `_run_lengths` ; les valeurs ne sont
+    significatives que là où `mask` est vrai.
+    """
+    n, w = mask.shape
+    idx = np.arange(n, dtype=np.int32)[:, None]
+    prev = np.vstack([np.zeros((1, w), bool), mask[:-1]])
+    nxt = np.vstack([mask[1:], np.zeros((1, w), bool)])
+    start = np.maximum.accumulate(np.where(mask & ~prev, idx, 0), axis=0)
+    end = np.minimum.accumulate(
+        np.where(mask & ~nxt, idx, n - 1)[::-1], axis=0)[::-1]
+    return start.astype(np.int32), end.astype(np.int32)
+
+
+def _decor_runs(edges: np.ndarray) -> tuple[np.ndarray, ...]:
+    """(v_début, v_fin, h_début, h_fin) des runs d'arêtes, par pixel."""
+    if _RUNS_CACHE and _RUNS_CACHE[0] is edges:
+        return _RUNS_CACHE[1]
+    vs, ve = _run_bounds(edges)
+    hs, he = (a.T for a in _run_bounds(edges.T))
+    _RUNS_CACHE[:] = [edges, (vs, ve, hs, he)]
+    return _RUNS_CACHE[1]
+
+
+def _quiet_density(edges: np.ndarray,
+                   outs: tuple[int, int, int, int]) -> float:
+    """Densité d'arêtes d'un abord, décor déduit.
+
+    Un habillage peut border une carte d'un élément lumineux (halo de siège,
+    rail) qui rend l'abord bruyant sans qu'aucune carte n'y soit — c'est ce
+    qui coûtait les 42 cartes du héros de la table 7-max réelle. Ce qui
+    distingue ce décor du bruit qui doit disqualifier (les glyphes et l'arête
+    d'une carte voisine, sous une boîte à cheval) est LOCAL et mesuré sur
+    cette table : le décor est fait de runs RECTILIGNES qui traversent
+    l'abord de bout en bout (105-127 px pour des bandes de 93-94), quand les
+    glyphes font des runs hachés (p50 = 4 px, p90 ≤ 18). Mais l'arête d'une
+    carte voisine traverse elle aussi — la traversée seule ne suffit pas, et
+    c'est mesuré : elle laissait entrer 16 boîtes à cheval sur les tables
+    bruitées du banc synthétique (contre 8 attendues) et 3 dos de cartes
+    adverses. Un run traversant n'est donc du décor que s'il porte l'une des
+    deux signatures d'un rail, jamais celles d'un bord de carte :
+
+    · le RUBAN : les runs traversants couvrent DECOR_BROAD = 0,45 de la
+      bande au moins (halo mesuré : 0,500 et 0,750). Une arête de carte est
+      une ligne, pas un ruban — mais dans une bande de moins de
+      DECOR_THICK_BROAD = 8 px d'épaisseur, une seule ligne pontée passe ce
+      seuil (mesuré : 4 colonnes sur 5 pour un bord de carte sous bruit), et
+      cette voie ne s'y juge donc pas. Trois largeurs de ligne au minimum ;
+    · le DÉPASSEMENT : le run continue DECOR_PAST = 20 px au-delà du bout de
+      la bande (rail droit mesuré : 34 px ; une arête de carte voisine,
+      alignée sur la même rangée, dépasse d'au plus q + recalage ≈ 12 px).
+
+    Deux planchers, mesurés eux aussi :
+
+    · DECOR_BAND_MIN = 40 : sous cette longueur de bande, tout ressemble à un
+      rail. Sans lui, l'arête du jeton « 1K » du crop PMU (38 px)
+      « traversait » la bande de 13 px d'une boîte parasite 16 × 21, et du
+      bruit pur fabriquait une carte 25 × 23. Le plancher se place entre ces
+      bandes parasites (13-15 px) et la plus courte bande d'une vraie carte
+      des bancs (56 px pour une carte 52 × 70) ;
+    · DECOR_THIN_MIN = 4 : dans une bande de 2 px d'épaisseur (boîtes de
+      moins de 42 px), la moindre ligne remplit tout — c'est par là que les
+      3 dos adverses entraient.
+
+    Ce qui a été essayé et ANNULÉ, pour ne pas y revenir :
+    · neutraliser par composante connexe — le pontage (BRIDGE) fusionne le
+      décor en une composante à l'échelle de l'écran, cartes comprises :
+      73 % des candidates fantômes passaient (13 566/18 501) ;
+    · « le run continue au-delà de la BOÎTE » — le halo réel épouse la carte
+      à sa hauteur exacte (runs 930-1036 pour une boîte 926-1038) : densité
+      0,766 inchangée, cartes toujours perdues ;
+    · un veto « arête verticale traversant le tiers central de la boîte »
+      pour tuer les boîtes à cheval — sur le deck classique, la colonne
+      centrale de pips pontée traverse une VRAIE carte de part en part
+      (mesuré : colonnes 415 et 428-429 d'une carte 396-448).
+    """
+    band = _rect(edges, *outs)
+    if not band.size:
+        return 1.0
+    bh, bw = band.shape
+    if max(bh, bw) < DECOR_BAND_MIN or min(bh, bw) < DECOR_THIN_MIN:
+        return float(band.mean())
+    H, W = edges.shape
+    ox, oy, ow, oh = outs
+    x0, y0 = max(0, ox), max(0, oy)
+    x1, y1 = min(W, ox + ow), min(H, oy + oh)
+    vs, ve, hs, he = _decor_runs(edges)
+    # La traversée se juge au jeu des coins près : le bout d'un rail qui
+    # épouse la carte s'arrête au rayon des coins arrondis, comme l'arête de
+    # la carte elle-même — même tolérance de 12 % que `_snap_to_edges`
+    # (mesuré : le rail droit de la table 7-max manque le bout de bande d'UN
+    # pixel, 936 pour une bande qui commence à 935).
+    if bh >= bw:     # bande verticale (gauche/droite) : axe long vertical
+        tol = max(2, int(round(0.12 * bh)))
+        start, end = _rect(vs, *outs), _rect(ve, *outs)
+        lo, hi, thick = y0, y1, bw
+        verticale = True
+    else:            # bande horizontale (haut/bas) : axe long horizontal
+        tol = max(2, int(round(0.12 * bw)))
+        start, end = _rect(hs, *outs), _rect(he, *outs)
+        lo, hi, thick = x0, x1, bh
+        verticale = False
+    trav = (start <= lo + tol) & (end >= hi - 1 - tol) & band
+    if thick >= DECOR_THICK_BROAD and float(trav.mean()) >= DECOR_BROAD:
+        decor = trav
+    elif verticale:
+        decor = trav & ((start <= lo - DECOR_PAST)
+                        | (end >= hi - 1 + DECOR_PAST))
+    else:
+        # Pas de voie « dépassement » sur les bandes HORIZONTALES : un
+        # libellé de tapis ponté par la fermeture y fait un long run
+        # rectiligne qui dépasse comme un rail (mesuré : 43 px), et
+        # l'excuser faisait passer des boîtes à cheval sur les cartes du
+        # héros (12 boîtes trapues au lieu de 8) et annulait le coût mesuré
+        # d'un libellé collé à 6 px. Le gain réel n'a jamais eu besoin de
+        # cette voie : sur la table 7-max, les abords haut/bas des cartes
+        # du héros sont calmes ou disqualifiés à bon droit.
+        decor = np.zeros_like(band)
+    return float((band & ~decor).mean())
+
+
 def _looks_like_a_card(rgb: np.ndarray, edges: np.ndarray,
                        box: tuple[int, int, int, int]) -> bool:
     """Trois vérifications sur ce qui entoure et remplit la boîte.
@@ -527,8 +687,7 @@ def _looks_like_a_card(rgb: np.ndarray, edges: np.ndarray,
 
     quiet = 0
     for outs in outside:
-        band = _rect(edges, *outs)
-        if band.size and float(band.mean()) < QUIET_MAX:
+        if _quiet_density(edges, outs) < QUIET_MAX:
             quiet += 1
     if quiet < QUIET_SIDES:
         return False

@@ -373,6 +373,36 @@ def test_une_capture_sans_carte_lisible_ne_rend_aucune_carte(base: str) -> None:
             assert carte["carte"] is None and carte["statut"] != "sure"
 
 
+def test_une_capture_jpeg_est_refusee_pas_lue(base: str) -> None:
+    """Un vrai JPEG collé → refus nommé, jamais une lecture.
+
+    Mesuré sur les 57 captures réelles : dès qualité 75, la compression JPEG
+    produit des lectures FAUSSES affirmées (un 3h lu « 8h » sûr ; un tapis
+    3,79 lu 11,50 BB à confiance 0,79). Le contrat est zéro valeur inventée :
+    le serveur détecte les octets magiques ``FF D8 FF`` AVANT tout décodage
+    et refuse en expliquant quoi faire. La MÊME image en PNG passe — la
+    preuve que c'est bien l'encodage qui est refusé, pas l'image.
+    """
+    rendu = render_table(TableSpec(
+        hero=("Ah", "Ad"), board=(), size=(1200, 760), theme="pmu_solid",
+        decor=True, villains=2, seed=11)).image
+
+    tampon = io.BytesIO()
+    rendu.convert("RGB").save(tampon, format="JPEG", quality=75)
+    jpeg_b64 = ("data:image/jpeg;base64,"
+                + base64.b64encode(tampon.getvalue()).decode("ascii"))
+    code, rep = _poster(base, "lire_capture", {"image_b64": jpeg_b64})
+    assert code == 400, rep
+    assert "JPEG" in rep.get("error", ""), rep
+    assert "PNG" in rep.get("error", ""), rep
+    # refus, pas lecture dégradée : aucune carte ni montant dans la réponse
+    assert not {"main", "tableau", "montants"} & set(rep)
+
+    code_png, rep_png = _poster(base, "lire_capture", {"image_b64": _b64(rendu)})
+    assert code_png == 200, rep_png
+    assert rep_png["main"] == ["Ah", "Ad"]
+
+
 def test_une_capture_ne_fournit_aucun_montant(capture_postflop: dict) -> None:
     """Défaut n°2, moitié serveur : la capture ne donne QUE des cartes.
 
@@ -709,22 +739,48 @@ def test_apres_un_collage_les_montants_non_saisis_ne_declenchent_rien(
         "« adviseRun() » n'est pas dans la branche « else » du garde")
 
 
-def test_la_marque_de_saisie_ne_vient_que_d_une_frappe(base: str) -> None:
+def test_la_marque_de_saisie_ne_vient_que_d_une_frappe_ou_d_une_lecture(
+        base: str) -> None:
     """Le garde ne vaut que si RIEN d'autre ne marque un montant comme saisi.
 
-    Un préremplissage, une lecture d'image ou un ``value=`` posé par le code
-    qui poserait aussi ``dataset.saisi`` rouvrirait exactement le défaut n°2 :
-    le garde resterait présent et laisserait passer.
+    Deux sources sont légitimes, et deux seulement :
+
+    * ``dataset.saisi="1"`` — une frappe de l'utilisateur (écouteur input) ;
+    * ``dataset.saisi="image"`` — un montant LU sur la capture par
+      ``zones_montants`` (v4.5). Ce n'est pas un défaut n°2 : la valeur vient
+      d'une mesure sur l'image, pas d'un défaut de formulaire, et elle ne
+      s'écrit que si l'utilisateur n'a rien saisi (``!=="1"``).
+
+    Un préremplissage ou un ``value=`` posé par le code qui poserait aussi
+    ``dataset.saisi`` sans être l'une de ces deux sources rouvrirait le
+    défaut n°2 : le garde resterait présent et laisserait passer.
     """
     _, html = _obtenir(base, "/")
     poses = [i for i in range(len(html))
              if html.startswith("dataset.saisi=", i)]
-    assert len(poses) == 1, (
-        f"{len(poses)} endroits marquent un montant comme saisi ; un seul est "
-        "légitime (l'écouteur de frappe)")
-    contexte = html[max(0, poses[0] - 200):poses[0]]
-    assert 'addEventListener("input"' in contexte, (
-        "la marque de saisie n'est pas posée par une frappe de l'utilisateur")
+    assert len(poses) == 2, (
+        f"{len(poses)} endroits marquent un montant comme saisi ; deux sont "
+        "légitimes (frappe, lecture d'image)")
+
+    frappe = [i for i in poses
+              if html.startswith('dataset.saisi="1"', i)]
+    image = [i for i in poses
+             if html.startswith('dataset.saisi="image"', i)]
+    assert len(frappe) == 1 and len(image) == 1, (
+        "les marques présentes ne sont pas exactement « 1 » (frappe) et "
+        "« image » (lecture)")
+
+    ctx_frappe = html[max(0, frappe[0] - 200):frappe[0]]
+    assert 'addEventListener("input"' in ctx_frappe, (
+        "la marque de frappe n'est pas posée par une frappe de l'utilisateur")
+
+    # La marque « image » n'est posée QUE sur une valeur effectivement lue,
+    # et jamais par-dessus une saisie manuelle.
+    ctx_image = html[max(0, image[0] - 300):image[0]]
+    assert "z.valeur!=null" in ctx_image, (
+        "la marque « image » n'est pas conditionnée à une valeur LUE")
+    assert 'dataset.saisi!=="1"' in ctx_image, (
+        "la marque « image » peut écraser une saisie manuelle")
 
 
 def test_les_montants_gardes_sont_ceux_qui_changent_le_verdict(base: str) -> None:

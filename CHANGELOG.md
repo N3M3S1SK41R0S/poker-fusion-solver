@@ -1,6 +1,234 @@
 # Journal des versions — Poker Fusion Solver
 
-## Non publié — 11 août 2026
+## v4.5.0 — 14 août 2026
+
+Session « faire marcher le logiciel » : sept agents en parallèle sur les
+calculs, la vision, le serveur et l'interface. L'état de référence a été
+vérifié avant (suite verte + 19/19 goldens) et après (voir chaque section).
+
+### La capture collée se lit en entier : cartes ET montants
+
+`pfs/vision/zones_montants.py` (nouveau) vise les montants pour `digit_ocr`,
+qui lit mais ne localise pas : cadres géométriques relatifs aux cartes
+détectées, détection des lignes de texte par énergie de gradient, lecture de
+lignes ENTIÈRES uniquement — mesuré ici même, une ligne coupée à mi-hauteur
+se lit de travers avec une confiance parfois maximale (« 24,87 BB » tronqué
+→ 87 à 0,66) ; les lignes qui touchent un bord de cadre ne sont jamais lues.
+Pot contre-vérifié par l'étiquette du tas de jetons (désaccord = refus),
+mise lue sur les boutons (« PAYER X » → X ; « CHECK » → 0 : un zéro LU, pas
+supposé), tapis exigeant le suffixe « BB », blinde = 1 quand l'affichage est
+en blindes. Sur les 57 captures réelles : pot 29, mise 22, tapis 50,
+blinde 54, **zéro valeur inventée, zéro désaccord**, 71 ms médian. La route
+`lire_capture` rend ces montants, l'onglet ♠ Ma main les préremplit
+(marqués « image », jamais par-dessus une frappe) et déclenche le verdict
+quand les quatre champs sont couverts : le flux « coller → verdict sans
+saisie » existe. 16 tests dédiés + parcours réel au navigateur.
+
+### Le verdict se lit d'un coup d'œil
+
+L'onglet ♠ Ma main rend désormais la table en images : vignettes de cartes
+(héros, board groupé et étiqueté Flop · Turn · River, dos de cartes pour
+l'adversaire avec son profil), position rappelée (pastille BTN/SB/BB/UTG/
+MP/CO + jeton « D » du donneur), verdict en tuiles (EV, équité, équité
+requise, marge, cote du pot, MDF) et **frise d'évolution par street** —
+l'équité recalculée par la même route `advise` sur les boards tronqués,
+jamais recopiée en JavaScript. Chaque chiffre et chaque position porte une
+infobulle en français simple tirée du lexique (une seule source). Le
+simulateur réutilise les mêmes vignettes, y compris pour les cartes
+adverses révélées. 0 erreur JS (audit navigateur).
+
+### Le JPEG casse les garanties « zéro faux » — mesuré, puis refusé
+
+Le chiffre de la passation (98,8 % → 88,1 % à q=75) venait du banc
+synthétique. Rejoué sur les 57 captures réelles avec vérité-terrain
+(recompression PIL) ::
+
+    qualité   rappel lecture   précision   lectures fausses   rôles faux
+    PNG           76,7 %        100,0 %           0                30
+    q90           67,1 %        100,0 %           0                70
+    q75           64,3 %         99,4 %           1                64
+    q60           50,0 %        100,0 %           0                64
+
+À q75, un 3h en retournement sort « 8h » affirmé, et les montants font
+pire : deux tapis faux (3,79 BB lu 11,50 à confiance 0,79). L'écart
+introduit (0,31–0,51 px de flou gaussien équivalent) reste SOUS la
+frontière de 0,7 px de digit_ocr, qui ne se transpose donc pas au JPEG —
+le ringing frappe les glyphes, pas le feutre. Conséquence câblée :
+`lire_capture` REFUSE les JPEG (octets magiques FF D8 FF, avant tout
+décodage) avec une erreur qui explique le recollage en PNG. Ces mesures
+étaient le point 4 de la passation, resté sans commit jusqu'ici.
+
+### Serveur : nodelock, rake et EQR atteignables ; routes documentées
+
+- `/api/postflop` accepte `locks: [{path, strategy, combos?}]` (signature
+  Pio, appliqué avant le solve — le non-verrouillé re-solve autour,
+  vérifié à travers la route), `rake: {pct, cap}` (défaut aucun ;
+  `expected_rake` publié ; bluffs ↑ et calls ↓ conformes aux formes
+  closes), `leaf_model: "rollout"|"eqr"` et `nodes: [[path]]` (fréquences
+  moyennes de n'importe quel nœud).
+- `fusion/eqr` est BRANCHÉ (recommandation « S » de l'audit) :
+  `train_eqr()` une fois, mémoïsé ; la réponse republie le R² et le n
+  MESURÉS du modèle entraîné avec sa limite (valeur directionnelle, sans
+  garantie d'écart au solve complet, somme des EV dérivante). Registre :
+  `wired=True`, `library_only` 8 → 7.
+- `/api/presets` et `/api/drill/next` : conservées avec statut documenté
+  (outillage/CLI, aucune UI) ; `GET /api/health` documentée comme sonde
+  manuelle sans jeton.
+
+### Drills depuis les fuites, et l'interface qui se souvient
+
+- **S'entraîner sur ses propres fuites.** L'onglet Mes sessions propose,
+  après chaque revue, « M'entraîner sur mes fuites » : les erreurs préflop
+  chiffrées par le solveur deviennent des exercices JAM/FOLD rejoués tels
+  qu'ils ont été joués (cartes réelles, pot, ante), planifiés par la
+  répétition espacée SM-2 — un spot raté revient immédiatement. Trois
+  routes : `drill/fuites` (génération depuis un dossier d'historiques +
+  résumé honnête du corpus, part non mesurée des limps comprise),
+  `drill/fuites/next`, `drill/fuites/answer` (corrigé complet après la
+  réponse ; l'énoncé, lui, ne souffle jamais rien).
+  `pfs/train/leak_drills.py`, jusqu'ici orphelin, est branché sans
+  modification. Vérifié sur le dossier PMU réel : 641 mains, 7 drills.
+- **Détection des historiques PMU partagée.** `pfs/data/emplacements.py`
+  (nouveau), importé par `recuperer_mains.py` ET la route `emplacements` —
+  le champ « dossier d'historiques » se préremplit au premier lancement.
+- **Persistance locale minimale.** Le dossier d'historiques et la fenêtre
+  de calibration survivent au rechargement (localStorage). Les montants du
+  spot ne sont JAMAIS persistés : des chiffres d'une vieille session
+  rejoués en silence seraient un mensonge — un test structurel verrouille
+  que rien d'autre ne s'écrit.
+- Tests : `tests/test_parcours_fuites.py` (16 tests par les routes
+  réelles) ; le garde « marque de saisie » reconnaît la lecture d'image
+  comme deuxième source légitime à côté de la frappe.
+
+### Détecteur de badge « PMU PLAY » (préparation du mode Live)
+
+`pfs/vision/badge_pmu.py` : `detecter_badge(image)` lit deux marqueurs sur
+une capture 1920×1361 — filigrane central ZNCC à position fixe par thème
+(seuil 0,25 : positifs 0,417–1,000, occulté ≤ 0,086, négatifs ≤ 0,050) et
+dos de carte orange ZNCC plein cadre sur le canal R−B, plancher de
+variance σ ≥ 5 (seuil 0,80 : positifs ≥ 0,975, négatifs ≤ 0,569). Sur les
+57 captures réelles : 50/57 frames portent une preuve immédiate, les 7
+restantes sont des fins de main, 0 faux positif. Toute autre taille de
+fenêtre est REFUSÉE (fail-closed). Le module ne décide rien d'éthique : il
+rend une lecture ; le branchement au gate de conformité (mode Live sur
+argent fictif uniquement) est le chantier suivant, conçu et documenté.
+Sprites + métadonnées versionnés (`pfs/vision/templates/pmu_play/`),
+`banc_badge_pmu.py` rejouable, 12 tests.
+
+### Lexique : clés stables et vocabulaire du verdict (39 → 49 termes)
+
+Chaque terme porte une clé stable et des alias (`PAR_CLE`,
+`definir_par_cle()`, rétrocompatible — route et onglet inchangés). Dix
+termes ajoutés : les six positions une par une (bouton/BTN, petite et
+grosse blinde, UTG, MP/lojack/hijack, cutoff) dans une catégorie
+« positions », plus mise à payer, cote du pot, marge et outs, chacun avec
+un exemple chiffré en français simple. Termes clarifiés : équité, cote du
+pot / équité requise scindées, prime de risque, street, range. 21 tests.
+
+### Audit des orphelins : le registre ne ment plus par omission
+
+- Docstrings « Statut » en tête de 10 modules testés mais jamais branchés
+  (pourquoi, ce qui existe déjà, point d'accroche précis) : fusion/timing,
+  topology, meanfield, eqr (branché depuis), core/bunching,
+  solver/abstraction, isomorphism, analysis/inference_check,
+  data/population, compliance/gate.
+- `bench/solver_registry` : nouvel axe `wired` — `coverage` dit « le code
+  existe et il est testé », `wired` dit « le joueur en profite ».
+  `library_only()` liste les paramètres implémentés non branchés ; liste
+  figée par test (TestWiring) : tout branchement futur doit mettre le
+  registre à jour. La faiblesse périmée « Perception non encore livrée »
+  du profil PFS est remplacée par le rappel mesuré.
+- Suppression du paquet vide `pfs/perception/`.
+
+### Plus aucun chemin personnel dans le code versionné
+
+- `recuperer_mains.py` : dossiers PMU dérivés de `%LOCALAPPDATA%` (repli
+  `~/AppData/Local`) ; iso-fonctionnalité mesurée : 789 mains / 65
+  tournois avant ET après.
+- `pfs/analysis/reperes.py` : `racine_corpus()` — variable `PFS_CORPUS`,
+  sinon `<parent du dépôt>/corpus` ; `CORPUS_PLURIBUS` et
+  `CORPUS_WSOP_2023` en dérivent. Table gelée et route `/api/reperes`
+  inchangées (`--verifier` passe chiffre par chiffre).
+- `banc_corpus_pluribus.py` et `tests/test_phh.py` : même résolution ;
+  les tests sur corpus réel deviennent des SKIP documentés s'il est absent.
+
+### Les bancs longs sont rejoués et leurs chiffres consignés
+
+- `banc_calculs_exacts.py --long` : **68 vérifications conformes, 0 écart,
+  831 s** (le premier passage a révélé et corrigé un plantage de format
+  ndarray dans la borne exact-vs-Monte-Carlo du banc lui-même).
+- `banc_corpus_pluribus.py`, rejeu complet des 10 000 mains : **accord
+  78,0 % tous régimes (15 169 spots)**, 86,3 % préflop profond, 63–64 %
+  postflop — chiffres désormais dans la docstring du banc avec leur
+  lecture honnête (la famille dominante du désaccord postflop est la
+  défense face à une ouverture, à laquelle la chart d'ouverture répond
+  hors de son domaine ; cash 6-max 100 bb, rien ne valide le tournoi).
+- Le selftest survit aux consoles Windows cp1252 (reconfiguration UTF-8
+  avec remplacement) : il plantait AVANT de vérifier quoi que ce soit, ce
+  qui ressemblait à un échec des calculs.
+
+
+### Les deux défauts mathématiques du conseil des modèles (tour 4) sont clos
+
+**1. Le seuil d'élimination PKO comparait le résidu du vilain aux tapis des
+autres joueurs.** Le repli d'inférence de `_vilain_elimine`
+(`python/pfs/core/icm.py`) jugeait « éliminé » un tapis résiduel sous
+``1e-12 · Σ tapis`` — or la somme des tapis n'entre jamais dans le
+``stack − bet`` qui produit ce résidu. Conséquence mesurée (exemple du
+tour 4) : un jeton de saisie résiduel devant un all-in de 288 000, sur un
+tournoi à 16,7 M de jetons, restait « vivant », la prime tombait à zéro en
+silence et l'équité exigée montait de 36,6 % à 42,2 % — un chiffre faux et
+plausible, du côté du fold. Le repli compare désormais le résidu à la
+transaction qui l'a produit : ``SEUIL_RESIDU_TRANSACTION (1e-5) ·
+max(pot, bet)``, un rapport sans dimension donc invariant d'échelle. Le
+seuil est encadré par deux bornes mesurées — au-dessous, le bruit flottant
+(~1e-12 de la transaction) et les artefacts d'un jeton de départ
+(≤ 3,3e-6) ; au-dessus, le plus petit vrai jeton en circulation
+(≥ 1/(100 bb⁻¹ · 300 bb) = 3,3e-5) — et 1e-5 en est la moyenne géométrique
+(1,04e-5). Goldens à la main : winner-take-all 3-way à tapis égaux,
+r* = 4/13 exactement quand la prime est en jeu, 1/2 exactement quand le
+vilain garde un vrai jeton (`test_icm_ordre_et_elimination.py`). Sur la
+table MTT réelle : résidu de 1e-3 ou 1 jeton → 49,95 % (comme le spot
+propre) ; vrai tapis de 1 000 jetons → 53,57 %, sans prime, comme il se
+doit. `villain_all_in` et `unite_jeton` priment toujours sur ce repli, et
+la borne grise entre 3,3e-6 et 3,3e-5 reste indécidable sans eux — c'est
+documenté dans la constante, pas caché.
+
+**2. Les quatre goldens « avant » de l'ordre d'élimination étaient faux, pas
+le code.** Les tests interrompus du chantier (écarts de 1,3e-5 à 3,9e-5 hors
+tolérance) opposaient des valeurs enregistrées à mi-chantier au témoin
+actuel du partage égal. Conformément à l'avertissement du chantier — ne
+jamais élargir une tolérance — les deux candidats ont été départagés par un
+recalcul INDÉPENDANT : Malmuth-Harville par énumération complète des
+8! = 40 320 ordres d'arrivée, sans aucun import de `pfs.core.icm`.
+L'énumération reproduit le code actuel à mieux que 1e-9 en relatif sur les
+quatre cas (p. ex. héros 3 contre vilain 0 : 1,7140596405 des deux côtés,
+contre 1,714123 enregistré à mi-chantier). Les goldens ont été corrigés
+(1,9002683 ; 2,2613563 ; 1,9392982 ; 1,7140596 — et côté production
+1,6118303 ; 2,0334389 ; 1,7084969 ; 1,4538859), et la convention est
+ancrée par un calcul à la main vérifiable sans machine : sur
+``[100, 100, 0, 0]`` avec 50/30/20/10, BF = (40−30)/(50−40) = 1 exactement
+avec l'ordre déclaré, 2 exactement sous le partage égal.
+
+### Déplacé
+
+- **`chantiers_interrompus/test_icm_ordre_et_elimination.py` →
+  `python/tests/`** — 51 tests, tous verts, protocole de mutation re-mesuré
+  (A : 11 échecs ; B : 9 ; B′ : 12 ; C : 3 ; D : 3). Batterie ICM +
+  conseiller + serveur : 700 tests, 0 échec, 2 sautés (préexistants).
+  Selftest : 19/19 goldens conformes.
+
+### Ce qui reste ouvert (et n'a pas été touché)
+
+- La **marche aléatoire absorbante** — seul juge externe du biais de
+  Harville ; le banc d'invariants ne vérifie que l'appartenance à la
+  famille de modèles.
+- La **dégénérescence DCFR** (`α = β = γ = 1` n'est pas CFR standard mais
+  Linear CFR).
+- Le **banc WSOP** et ses deux tests de tolérance préflop
+  (`chantiers_interrompus/`).
+
+## v4.5.0 · travaux du 11 août 2026
 
 ### Les « zones saines » de la revue de session étaient de la littérature
 
@@ -123,17 +351,46 @@ la chaîne de production rend :
   c'est une carte de ce jeu, partiellement recouverte), et la main n'est plus
   passée. Un garde-fou contournable en changeant de chemin n'en est pas un.
 
+### Le rappel réel passe de 76,7 % à 94,2 % — le décor se déduit des abords (14 août)
+
+Les 45 cartes du héros rejetées par la règle « 3 abords calmes sur 4 » sont
+récupérées, **sans toucher à `QUIET_SIDES = 3`** : la densité d'un abord se
+mesure désormais **décor déduit** (`table_detector._quiet_density`). La règle
+est locale, et chacune de ses constantes est posée sur une mesure des deux
+populations qu'elle sépare :
+
+- un pixel d'abord est du **décor** si son run d'arêtes rectiligne traverse
+  la bande de bout en bout (halo « KO » mesuré : runs de 105-127 px pour des
+  bandes de 93-94 ; glyphes : p50 = 4 px) **et** porte une signature de
+  rail : ruban couvrant ≥ 0,45 de la bande (mesuré 0,50 et 0,75, jugeable
+  seulement à ≥ 8 px d'épaisseur) **ou** dépassement d'au moins 20 px
+  au-delà de la bande (rail : 34 px ; arête d'une carte voisine : ≤ 12 px) ;
+- planchers mesurés : bande d'au moins 40 px de long (l'arête du jeton
+  « 1K », 38 px, fabriquait sinon une carte 16 × 21) et 4 px d'épaisseur
+  (à 2 px, une seule ligne « remplit » la bande — 3 dos adverses entraient).
+
+Mesures avant → après, les **deux bancs rejoués ensemble** cette fois :
+rappel réel 76,7 % → **94,2 %** (243/258), bon rôle 65,1 % → **91,9 %**,
+précision **100 %** inchangée, **0** carte inventée, **0** lecture fausse,
+rôles faux 30 → 6 ; banc synthétique **rigoureusement identique** (664/672,
+0 fantôme, 986 boîtes — aucun rail à y déduire). Effet de bord mesuré : un
+libellé collé à 6 px sous les cartes ne coûte plus une seule carte
+(664 → 652 avant, 664 → 664 après), le test du banc verrouille le nouveau
+comportement. Le cas guéri est dans le dépôt
+(`tests/donnees/pmu_ko_hero_rail.png`, découpe de `300_7-max_KO/0014`) avec
+son test et son ablation. Trois pistes essayées et **annulées** sont
+documentées dans `_quiet_density` (composantes connexes : 73 % des fantômes
+candidats passaient ; « continue au-delà de la boîte » : le halo épouse la
+carte ; veto du tiers central : la colonne de pips pontée traverse une vraie
+carte).
+
 ### Diagnostiqué, non corrigé
 
-- **45 des 60 cartes perdues sont rejetées par `QUIET_SIDES = 3`** — la règle
-  « 3 abords calmes sur 4 », calibrée sur des tables synthétiques au feutre
-  uni. L'habillage « KO » de la table 7-max borde le siège d'un rail lumineux
-  et pose une pastille de prime sur la carte de gauche. À 2, le rappel réel
-  passe à 96,9 % sans une seule carte inventée, mais fait entrer 1,9 % de
-  fantômes sur le banc synthétique. Chantier suivant.
 - **15 cartes du board** disparaissent sous la pile de jetons du pot : le
-  recalage horizontal accroche l'arête des jetons et le rapport sort des
-  bornes.
+  recalage horizontal accroche l'arête des jetons et le rapport (0,594) sort
+  des bornes. Sur 3 captures, ce 9♣ manquant réduit le board visible à
+  2 cartes : les 6♠/A♥ trouvés restent sans rôle — les **6 rôles faux
+  résiduels** du banc vérité-terrain viennent de là.
 
 ## v4.4.0 — 10 août 2026
 
@@ -263,6 +520,13 @@ La précision de reconnaissance sur une **vraie table de room**. La chaîne a
 ne sont pas celles du deck PMU — le taux de lecture observé (0/8) ne dit rien
 de la performance réelle. C'est la première chose à faire à la prochaine
 session.
+
+## v4.3 — 9-10 août 2026
+
+Version intermédiaire restée sans entrée de journal : l'état complet, les
+pièges et les priorités de l'époque sont consignés dans `PASSATION_v43.md`
+et `PLAN_v43.md` à la racine du dépôt. (Entrée ajoutée le 14 août 2026 pour
+que le journal soit continu.)
 
 ## v4.2.0 — 8 août 2026
 
