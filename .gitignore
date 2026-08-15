@@ -6,3 +6,11 @@ __pycache__/
 target/
 pfs/solver/_pushfold_equity169_*.npy
 mains_analysees.jsonl
+
+# Blueprint calculé (données générées, ~0,1 Go) — recalculable par
+# python/calculer_blueprint.py, donc hors dépôt.
+python/blueprints/
+
+# Espaces de travail des agents (worktrees git imbriqués)
+.claude/
+python/.claude/

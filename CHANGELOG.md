@@ -1,5 +1,54 @@
 # Journal des versions — Poker Fusion Solver
 
+## Non publié — 15 août 2026
+
+### Phase 2 — le blueprint flop : l'infrastructure et le chiffrage
+
+Décision de Pierre : « je veux qu'on soit à armes égales avec les plus
+grands » sur la résolution brute. Un solveur GTO n'apprend rien des mains
+jouées — il CALCULE l'équilibre. L'écart avec Pio/GTO Wizard se comble donc
+en calcul, pas en ingestion de données. Deux étages livrés, le troisième
+(le calcul lui-même) attend la décision de palier.
+
+**Le solveur résout depuis le flop** (`pfs/solver/postflop.py`) : arbre
+flop → chance turn → turn → chance river → river, avec les mêmes options
+qu'avant (sizings OOP/IP, relances, nodelock, rake, profondeur limitée). Le
+dénombrement des confrontations turn+river suit le piège n°1 de la
+passation (45×44/2, cartes mortes déduites), et la comptabilité « somme des
+EV = pot » est testée à chaque profondeur. `banc_flop.py` mesure le coût et
+la courbe d'exploitabilité par ensemble d'information, avec ses limites
+assumées (arbre max_bets=2 compté et projeté, pas mesuré ; ranges pleines
+hors banc — c'est précisément la raison d'être du blueprint).
+
+**L'usine à blueprint** (`pfs/solver/blueprint.py`, nouveau) : énumération
+des 1 755 classes canoniques avec leurs poids (Σ = 22 100 = C(52,3),
+testé ; et côté mains fixées, les 19 600 flops compatibles tombent chacun
+dans exactement une classe — c'est pourquoi 1 755 solves desservent toutes
+les mains), magasin de solutions par classe (npz compressé, écriture
+atomique), manifeste de **reprise sur interruption** (un calcul de plusieurs
+jours survit à un redémarrage ; un réglage différent n'hérite de rien et ne
+détruit rien), requête flop réel → classe → stratégie re-projetée par
+permutation des couleurs (vérifiée bit à bit contre un calcul direct), et
+pipeline classe → buckets EHS → solveur. `isomorphism.py` et
+`abstraction.py` ne sont plus orphelins (registre `wired=True`,
+`library_only` 7 → 5).
+
+**Le chiffrage, mesuré et non promis** (`banc_blueprint.py`,
+`banc_parallele.py`) :
+
+- Le **flop complet au combo exact est hors budget** : ≈ 125 000 h au palier
+  le plus économique. Le premier modèle de coût a été FALSIFIÉ ×49 par une
+  contre-épreuve sur une vraie itération (1 022 s) — le chiffre publié est
+  celui de la contre-épreuve.
+- La voie tenable est le **flop à profondeur limitée** : 334 h (éco,
+  250 itér. × 8 buckets), 666 h (standard, 500 × 12), 1 331 h (fin,
+  1 000 × 16), pour ~0,10 Go de stockage total.
+- Les 1 755 classes étant indépendantes, `banc_parallele.py` mesure le débit
+  réel : ×2,99 à 4 processus, ×4,54 à 8, **×6,53 à 16** — et non ×16 : le
+  BLAS de numpy occupe déjà plusieurs cœurs par solve. En temps d'horloge
+  sur cette machine (32 threads) : **éco ≈ 51 h, standard ≈ 102 h, fin
+  ≈ 205 h**.
+
 ## Non publié — 14 août 2026 (suite)
 
 ### Conseiller : la défense préflop face à une ouverture existe

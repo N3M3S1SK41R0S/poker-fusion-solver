@@ -131,9 +131,11 @@ class TestWiring(unittest.TestCase):
     #: (vérifié par grep des imports hors tests, audit du 14 août 2026).
     #: ``fusion.eqr`` retiré le 14 août 2026 : branché dans /api/postflop
     #: (``leaf_model="eqr"``, entraînement mémoïsé dans pfs/app/server.py).
+    #: ``solver.isomorphism`` et ``solver.abstraction`` retirés le même
+    #: jour : branchés dans le blueprint flop (``pfs.solver.blueprint`` +
+    #: ``banc_blueprint.py``, script livré de dimensionnement Phase 2).
     ORPHANS = {
-        "core.bunching", "solver.abstraction", "solver.isomorphism",
-        "topology", "fusion.timing", "data.population",
+        "core.bunching", "topology", "fusion.timing", "data.population",
     }
 
     def test_wired_false_iff_module_orphelin(self) -> None:
@@ -142,10 +144,11 @@ class TestWiring(unittest.TestCase):
                 not p.wired, p.module in self.ORPHANS,
                 f"{p.name} : wired={p.wired} mais module={p.module!r}")
 
-    def test_library_only_liste_les_sept_entrees(self) -> None:
-        # huit à l'audit du 14 août 2026 ; EQR branché le même jour → sept.
+    def test_library_only_liste_les_cinq_entrees(self) -> None:
+        # huit à l'audit du 14 août 2026 ; EQR branché le même jour → sept ;
+        # isomorphisme + abstraction branchés (blueprint flop) → cinq.
         lib = library_only()
-        self.assertEqual(len(lib), 7)
+        self.assertEqual(len(lib), 5)
         for p in lib:
             self.assertTrue(p.module, f"{p.name} en bibliothèque sans module")
             self.assertIn(p.coverage, (Coverage.COVERED, Coverage.PARTIAL))

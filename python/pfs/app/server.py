@@ -807,7 +807,14 @@ class API:
 
     @staticmethod
     def postflop(p: dict) -> dict:
-        """Solve postflop range-contre-range. Ajouts au payload (optionnels) :
+        """Solve postflop range-contre-range.
+
+        ``board`` : 5 cartes (river) ou 4 (turn) en profondeur au choix ;
+        3 cartes (flop, Phase 2 étage 1) UNIQUEMENT en profondeur limitée
+        (``leaf_model`` 'rollout'/'eqr') — le flop complet est réservé à
+        l'API Python jusqu'au blueprint (coût mesuré dans ``banc_flop.py``).
+
+        Ajouts au payload (optionnels) :
 
         ``rake``: ``{"pct": 0.05, "cap": 1.0}`` — modèle « % + cap »
         (``pfs.core.rake``, convention won-pot) ; ``cap`` absent = sans
@@ -859,6 +866,21 @@ class API:
         leaf = str(p.get("leaf_model", "") or "full")
         if leaf not in ("full", "rollout", "eqr"):
             raise ValueError("leaf_model ∈ {'full', 'rollout', 'eqr'}.")
+        # Phase 2, étage 1 : un board de 3 cartes (flop) est accepté en
+        # profondeur LIMITÉE (flop + turn joués, feuille rollout/eqr à la
+        # place du round river). La profondeur complète existe côté Python
+        # (PostflopSolver) mais reste hors budget d'une route synchrone :
+        # mesuré sur cette machine à ranges réalistes (banc_flop.py),
+        # ~13 s PAR itération et ~330 MB de tableaux CFR sur 85 264 nœuds
+        # pour UNE taille de mise — l'exposition UI du flop complet viendra
+        # avec le blueprint Phase 2 (abstraction + LMDB).
+        if len(board) == 3 and leaf == "full":
+            raise ValueError(
+                "flop en profondeur complète : hors budget de la route "
+                "synchrone (~13 s par itération à ranges réalistes, "
+                "mesuré — banc_flop.py). Utiliser leaf_model 'rollout' "
+                "(somme-exacte) ou 'eqr', ou attendre le blueprint Phase 2 "
+                "pour l'exposition UI.")
         kw: dict[str, Any] = {}
         if leaf == "rollout":
             kw = {"leaf_model": "rollout"}
@@ -900,7 +922,7 @@ class API:
             "ev_oop": r.ev_oop, "ev_ip": r.ev_ip, "pot": r.pot,
             "exploitability": r.exploitability,
             "iterations": r.iterations, "n_nodes": r.n_nodes,
-            "street": "river" if len(board) == 5 else "turn",
+            "street": {3: "flop", 4: "turn", 5: "river"}[len(board)],
             "root_player": "OOP",
             "root_actions": [
                 {"label": a.label, "frequency": a.frequency,

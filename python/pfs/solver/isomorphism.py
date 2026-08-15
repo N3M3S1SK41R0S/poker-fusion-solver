@@ -1,17 +1,17 @@
 """
 L8 — Isomorphisme de couleurs des boards : 22 100 flops → 1 755 classes.
 
-Statut (audit du 14 août 2026) — brique Phase 2, NON branchée
--------------------------------------------------------------
-Atteint uniquement par ``pfs.solver.abstraction`` (lui-même non branché) et
-par ``tests/test_isomorphism.py``. Pourquoi : c'est le levier du pré-calcul
-des flops de la Phase 2, et ce pré-calcul n'a pas commencé — river et turn
-se résolvent aujourd'hui sans canonisation. Ce qui existe déjà : forme
-canonique à la Waugh, comptes vérifiés par Burnside ET par énumération
-(1 755 / 16 432 / 134 459), ``suit_mapping`` — testés. Accroche naturelle
-si on branche : le futur blueprint flop de ``pfs/solver/postflop.py``
-(mémoïser chaque solve par ``canonical_board``). Règle du projet : aucun
-module fusionné sans route + UI + test de bout en bout.
+Statut (mis à jour le 14 août 2026) — brique Phase 2, BRANCHÉE
+--------------------------------------------------------------
+N'est plus orphelin : consommé par ``pfs.solver.blueprint`` — énumération
+pondérée des 1 755 classes (``enumerate_classes``), clés du magasin de
+solutions (``class_key``), requête flop réel → stratégie re-projetée
+(``query_flop`` via ``canonical_board`` + ``suit_mapping``) — et par
+``banc_blueprint.py`` (script livré : dimensionnement du calcul complet),
+en plus de ``pfs.solver.abstraction`` (mémoïsation des tables EHS par
+classe canonique). Le registre ``pfs.bench.solver_registry`` le compte
+``wired=True`` depuis cette date. Prochaine étape : le calcul par lots des
+1 755 classes — sur décision, chiffré par le banc.
 
 Sources
 -------

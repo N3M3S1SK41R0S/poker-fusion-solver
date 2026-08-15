@@ -209,8 +209,9 @@ class TestTurnSolving(unittest.TestCase):
 class TestValidation(unittest.TestCase):
     def test_bad_inputs(self) -> None:
         r = parse_range("AA")
+        # 3 cartes = flop, ACCEPTÉ depuis Phase 2 ; 2 cartes restent refusées
         with self.assertRaises(PostflopError):
-            PostflopSolver(cs("2s", "2d", "7h"), r, r, pot=10, stack=10)
+            PostflopSolver(cs("2s", "2d"), r, r, pot=10, stack=10)
         with self.assertRaises(PostflopError):
             PostflopSolver(RIVER_DRY, r, r, pot=0, stack=10)
         with self.assertRaises(PostflopError):

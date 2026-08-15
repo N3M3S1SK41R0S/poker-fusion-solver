@@ -3,8 +3,9 @@ L1 — Solveur postflop NLHE **réel** : CFR range-contre-range sur vraies carte
 
 C'est le levier qui ferme l'écart principal du benchmark (« solving à
 l'échelle Kuhn/Leduc »). Ici : river résolue EXACTEMENT (1326 combos, zéro
-abstraction de cartes), turn résolu par nœud de chance sur les rivières —
-la même architecture que PioSOLVER/GTO+, en NumPy pur.
+abstraction de cartes), turn résolu par nœud de chance sur les rivières,
+flop résolu par nœuds de chance EMBOÎTÉS (turn puis river) — la même
+architecture que PioSOLVER/GTO+, en NumPy pur.
 
 Théorie
 -------
@@ -32,13 +33,22 @@ Avec rake (``pfs.core.rake``, convention won-pot), le gagnant encaisse
 net(pot) = pot − min(cap, pct·pot) : la somme des utilités devient
 pot − rake(pot terminal), branche par branche — voir la docstring de classe.
 
-Le nœud de chance (turn → river) pondère chaque rivière r par
-P(r | combo du traverseur) = 1/(cartes inconnues du traverseur), et masque
-les reach adverses contenant r — l'actualisation bayésienne exacte du deck.
+Le nœud de chance (turn → river, ou flop → turn) pondère chaque tirage c par
+P(c | combo du traverseur) = 1/(cartes inconnues du traverseur), et masque
+les reach adverses contenant c — l'actualisation bayésienne exacte du deck.
+Le dénombrement (piège n°1 de la passation) : au turn, 44 rivières valides
+par confrontation (52 − 4 board − 2×2 mains) ; au flop, 45 turns valides
+(52 − 3 − 4) PUIS 44 rivières chacun, soit 45×44 runouts ordonnés et
+45×44/2 = 990 confrontations turn+river par feuille flop. Le diviseur est
+figé dans chaque nœud de chance à la construction — tout autre dénominateur
+casse « somme des EV = pot », qui vaut pour TOUT profil de stratégies.
 
 Limites assumées : arbre de mise configurable mais raisonnable (tailles en
-fraction du pot, plafond de relances) ; flop complet = Phase 2 (46×45
-runouts) ; le rake « % + cap » est branché aux terminaux via ``rake=``.
+fraction du pot, plafond de relances) ; le rake « % + cap » est branché aux
+terminaux via ``rake=``. Le flop en profondeur complète est EXACT mais cher
+(l'arbre porte 49×48 rounds river : compter ~10⁴–10⁵ nœuds selon les
+tailles ; mesures dans ``banc_flop.py``) — l'échelle « toutes textures »
+reste le blueprint Phase 2 (abstraction/isomorphisme, autre chantier).
 """
 
 from __future__ import annotations
@@ -62,6 +72,11 @@ I64 = npt.NDArray[np.int64]
 
 OOP, IP = 0, 1
 _ALPHA, _GAMMA = 1.5, 2.0            # DCFR (Brown & Sandholm 2019)
+# Feuilles rollout d'un solve FLOP tronqué : la part d'abattage est linéaire
+# en q → matrice (n_OOP × n_IP) précalculée par turn, si elle tient sous ce
+# seuil d'éléments (au-delà : boucle de CFV triés, exacte mais ~50× plus
+# lente par itération — mesuré dans banc_flop.py).
+_LEAF_W_MAX = 250_000
 
 
 class PostflopError(ValueError):
@@ -108,14 +123,21 @@ class _Fold:
 class _Showdown:
     pot: float
     invested: tuple[float, float]
-    river: int                         # -1 si le board est déjà complet
+    key: object                        # clé _sd_ctx : -1 (board complet),
+                                       # carte river (turn), paire triée (flop)
 
 
 @dataclass(slots=True)
 class _Chance:
-    """Distribution de la river : children[k] = sous-arbre pour rivers[k]."""
-    rivers: I64
+    """Distribution de la prochaine carte : subroots[k] = sous-arbre de deals[k].
+
+    ``n_unknown`` = cartes inconnues PAR CONFRONTATION (52 − board effectif −
+    2×2 mains) : 45 au tirage du turn depuis un flop, 44 au tirage de la
+    river — le diviseur exact du piège n°1, figé à la construction.
+    """
+    deals: I64
     subroots: list[int]
+    n_unknown: int
 
 
 @dataclass(slots=True)
@@ -125,10 +147,13 @@ class _LeafRollout:
     Valeur = part d'abattage « checked-down » moyennée sur les rivières,
     multipliée par le facteur de réalisation τ du joueur (EQR, L7) — le rôle
     du « value net » des solveurs à recherche limitée (DeepStack/ReBeL), tenu
-    ici par une régression apprise de nos propres solves.
+    ici par une régression apprise de nos propres solves. ``dealt`` = cartes
+    de chance déjà tirées au-dessus de la feuille : ``()`` pour un solve
+    turn, ``(turn,)`` pour un solve FLOP tronqué au turn.
     """
     pot: float
     invested: tuple[float, float]
+    dealt: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,13 +197,13 @@ class _ShowdownCtx:
                  "exact_idx", "card_a", "card_b", "valid_self", "valid_opp")
 
     def __init__(self, p_cards: I64, p_str: I64, o_cards: I64, o_str: I64,
-                 river: int) -> None:
+                 dead: Sequence[int]) -> None:
         n_o = o_cards.shape[0]
         self.valid_opp = np.ones(n_o, dtype=bool)
         self.valid_self = np.ones(p_cards.shape[0], dtype=bool)
-        if river >= 0:
-            self.valid_opp = ~(o_cards == river).any(axis=1)
-            self.valid_self = ~(p_cards == river).any(axis=1)
+        for c in dead:                 # cartes de chance tirées (turn/river)
+            self.valid_opp &= ~(o_cards == c).any(axis=1)
+            self.valid_self &= ~(p_cards == c).any(axis=1)
         self.order = np.argsort(o_str, kind="stable")
         ss = o_str[self.order]
         # appartenance par carte, en ordre trié : (52, n_o) bool
@@ -191,11 +216,14 @@ class _ShowdownCtx:
         self.posR = np.searchsorted(ss, p_str, side="right")
         self.card_a = p_cards[:, 0]
         self.card_b = p_cards[:, 1]
-        # combo adverse strictement identique (mêmes 2 cartes) → index trié
+        # combo adverse strictement identique (mêmes 2 cartes) → index trié.
+        # inv_order[j] = position de j dans l'ordre trié, en O(n) — le flop
+        # construit 2×1176 contextes, l'ancienne recherche O(n²) y est rédhibitoire
+        inv_order = np.empty(n_o, dtype=np.int64)
+        inv_order[self.order] = np.arange(n_o)
         key_o = o_cards[:, 0] * N_CARDS + o_cards[:, 1]
         key_p = p_cards[:, 0] * N_CARDS + p_cards[:, 1]
-        pos_of = {int(k): int(np.nonzero(self.order == j)[0][0])
-                  for j, k in enumerate(key_o)}
+        pos_of = {int(k): int(inv_order[j]) for j, k in enumerate(key_o)}
         self.exact_idx = np.array([pos_of.get(int(k), -1) for k in key_p],
                                   dtype=np.int64)
 
@@ -232,12 +260,15 @@ class _ShowdownCtx:
 
 
 class PostflopSolver:
-    """CFR range-vs-range sur un board turn (4 cartes) ou river (5 cartes).
+    """CFR range-vs-range sur un board flop (3), turn (4) ou river (5 cartes).
 
     Parameters
     ----------
     board
-        4 cartes (turn : les rivières sont énumérées) ou 5 (river exacte).
+        3 cartes (flop : turns PUIS rivières énumérés par nœuds de chance
+        emboîtés — 45×44/2 = 990 confrontations turn+river par feuille),
+        4 cartes (turn : les 44 rivières valides sont énumérées) ou
+        5 (river exacte).
     oop_range, ip_range
         Ranges pondérées (fréquences mixtes respectées).
     pot, stack
@@ -276,8 +307,9 @@ class PostflopSolver:
                  leaf_model: str = "full",
                  eqr_model: object | None = None) -> None:
         board = [int(c) for c in board]
-        if len(board) not in (4, 5):
-            raise PostflopError("board de 4 (turn) ou 5 (river) cartes.")
+        if len(board) not in (3, 4, 5):
+            raise PostflopError(
+                "board de 3 (flop), 4 (turn) ou 5 (river) cartes.")
         if len(set(board)) != len(board):
             raise PostflopError("cartes de board dupliquées.")
         if any(not 0 <= c < N_CARDS for c in board):
@@ -323,8 +355,10 @@ class PostflopSolver:
             raise PostflopError("leaf_model ∈ {'full','rollout','eqr'}.")
         if leaf_model == "eqr" and eqr_model is None:
             raise PostflopError("leaf_model='eqr' exige un eqr_model (L7).")
-        if leaf_model != "full" and len(board) != 4:
-            raise PostflopError("profondeur limitée : board turn (4 cartes).")
+        if leaf_model != "full" and len(board) not in (3, 4):
+            raise PostflopError(
+                "profondeur limitée : board flop (3 cartes) ou turn (4) — "
+                "la feuille remplace le round river.")
         self.leaf_model = leaf_model
         self.eqr_model = eqr_model
         self._tau: list[float] = [1.0, 1.0]
@@ -334,19 +368,30 @@ class PostflopSolver:
         if min(p.n for p in self.players) == 0:
             raise PostflopError("une range est vide après blocage du board.")
 
-        self.rivers = (np.array([c for c in range(N_CARDS)
-                                 if c not in set(board)
-                                 ], dtype=np.int64)
-                       if len(board) == 4 else np.array([-1], dtype=np.int64))
-        self._strengths = {int(r): self._strengths_for(int(r))
-                           for r in self.rivers}
-        self._sd_ctx: dict[tuple[int, int], _ShowdownCtx] = {}
-        for r in self.rivers:
-            s0, s1 = self._strengths[int(r)]
-            self._sd_ctx[(OOP, int(r))] = _ShowdownCtx(
-                self.players[OOP].cards, s0, self.players[IP].cards, s1, int(r))
-            self._sd_ctx[(IP, int(r))] = _ShowdownCtx(
-                self.players[IP].cards, s1, self.players[OOP].cards, s0, int(r))
+        # ``rivers`` (nom historique) = cartes distribuables au PROCHAIN
+        # tirage : [-1] si le board est complet, les 48 rivières (turn) ou
+        # les 49 turns (flop). ``_deal_keys`` = complétions du board jusqu'à
+        # 5 cartes : (), (r,) ou les 1176 paires (t, r) triées du flop.
+        restantes = [c for c in range(N_CARDS) if c not in set(board)]
+        self.rivers = (np.array(restantes, dtype=np.int64)
+                       if len(board) < 5 else np.array([-1], dtype=np.int64))
+        if len(board) == 5:
+            self._deal_keys: list[tuple[int, ...]] = [()]
+        elif len(board) == 4:
+            self._deal_keys = [(r,) for r in restantes]
+        else:
+            self._deal_keys = [(t, r) for i, t in enumerate(restantes)
+                               for r in restantes[i + 1:]]
+        self._strengths = {self._sd_key(d): self._strengths_for(d)
+                           for d in self._deal_keys}
+        self._sd_ctx: dict[tuple[int, object], _ShowdownCtx] = {}
+        for d in self._deal_keys:
+            k = self._sd_key(d)
+            s0, s1 = self._strengths[k]
+            self._sd_ctx[(OOP, k)] = _ShowdownCtx(
+                self.players[OOP].cards, s0, self.players[IP].cards, s1, d)
+            self._sd_ctx[(IP, k)] = _ShowdownCtx(
+                self.players[IP].cards, s1, self.players[OOP].cards, s0, d)
 
         # appartenance par carte + combo identique croisé (folds, μ) —
         # indépendants de la rivière
@@ -356,6 +401,16 @@ class PostflopSolver:
             m[p.cards[:, 0], np.arange(p.n)] = True
             m[p.cards[:, 1], np.arange(p.n)] = True
             self._member.append(m)
+        # masques « ne contient pas la carte c » précalculés : les nœuds de
+        # chance du flop les consultent 49×48 fois par traversée
+        self._not_member = [~m for m in self._member]
+        # cache des matrices de feuille rollout (solve flop tronqué) :
+        # t → (W_oop, C) avec W_oop[i,j] = part de gain moyenne d'OOP i
+        # contre IP j sur les 44 rivières valides après le turn t, et
+        # C[i,j] = fraction de rivières valides (compatibilité moyenne).
+        # Côté IP par complémentarité : W_ip = (C − W_oop)ᵀ.
+        self._leaf_W: dict[int, tuple[F64, F64]] = {}
+        self._compat_pair: np.ndarray | None = None
         self._exact: list[I64] = []
         for trav in (OOP, IP):
             opp = self.players[1 - trav]
@@ -366,10 +421,8 @@ class PostflopSolver:
                  for a, b in self.players[trav].cards], dtype=np.int64))
 
         self._nodes: list[_Node] = []
-        street = "river" if len(board) == 5 else "turn"
         self._root = self._build_decision(OOP, self.pot0, 0.0, (0.0, 0.0),
-                                          bets_used=0, street=street,
-                                          river=-1 if street == "river" else None)
+                                          bets_used=0, dealt=())
         for nd in self._nodes:
             n_act = self.players[nd.player].n
             nd.regrets = np.zeros((len(nd.labels), n_act))
@@ -394,8 +447,22 @@ class PostflopSolver:
             weights = weights / weights.sum()
         return _Player(cards, weights, cards.shape[0])
 
-    def _strengths_for(self, river: int) -> tuple[I64, I64]:
-        b = list(self.board) + ([river] if river >= 0 else [])
+    @staticmethod
+    def _sd_key(dealt: Sequence[int]) -> object:
+        """Clé d'abattage d'une complétion du board.
+
+        ``()`` → ``-1`` (board déjà complet), ``(r,)`` → ``r`` (les clés
+        historiques des solves river/turn, que les tests consultent), paire
+        → tuple trié (l'abattage est symétrique en turn/river).
+        """
+        if len(dealt) == 0:
+            return -1
+        if len(dealt) == 1:
+            return int(dealt[0])
+        return tuple(sorted(int(c) for c in dealt))
+
+    def _strengths_for(self, dealt: Sequence[int]) -> tuple[I64, I64]:
+        b = list(self.board) + [int(c) for c in dealt]
         barr = np.array(b, dtype=np.int64)
         out = []
         for p in self.players:
@@ -448,29 +515,42 @@ class PostflopSolver:
 
     def _build_decision(self, player: int, pot: float, to_call: float,
                         invested: tuple[float, float], bets_used: int,
-                        street: str, river: int | None) -> int:
-        """Construit récursivement ; retourne l'indice du nœud."""
+                        dealt: tuple[int, ...]) -> int:
+        """Construit récursivement ; retourne l'indice du nœud.
+
+        ``dealt`` = cartes de chance déjà tirées au-dessus de ce nœud : le
+        board effectif est ``board + dealt`` (3+0 = round flop, 3+1 ou 4+0
+        = round turn, 3+2, 4+1 ou 5+0 = round river).
+        """
         labels: list[str] = []
         amounts: list[float] = []
         children: list[int] = []
         terminal: list[object] = []
         me, opp = player, 1 - player
+        total = len(self.board) + len(dealt)      # cartes de board effectives
 
         def _after_call() -> object:
             new_inv = list(invested)
             new_inv[me] += to_call
             new_pot = pot + to_call
-            if street == "river":
-                return _Showdown(new_pot, tuple(new_inv),
-                                 river if river is not None else -1)
-            if self.leaf_model != "full":   # P3 : profondeur limitée
-                return _LeafRollout(new_pot, tuple(new_inv))
-            # turn → chance sur les rivières, puis round river complet
-            subroots = []
-            for r in self.rivers:
-                subroots.append(self._build_decision(
-                    OOP, new_pot, 0.0, tuple(new_inv), 0, "river", int(r)))
-            return _Chance(self.rivers.copy(), subroots)
+            if total == 5:                  # board complet → abattage
+                return _Showdown(new_pot, tuple(new_inv), self._sd_key(dealt))
+            if self.leaf_model != "full" and total == 4:
+                # P3 : la feuille remplace le round river (solve turn OU
+                # solve flop tronqué au turn — dealt = () ou (turn,))
+                return _LeafRollout(new_pot, tuple(new_inv), dealt)
+            # chance : distribuer la carte suivante, puis round complet.
+            # Diviseur du piège n°1 : 52 − board effectif − 2×2 mains
+            # (45 pour flop→turn, 44 pour turn→river).
+            bset = set(self.board)
+            cards = [c for c in range(N_CARDS)
+                     if c not in bset and c not in dealt]
+            subroots = [self._build_decision(OOP, new_pot, 0.0,
+                                             tuple(new_inv), 0,
+                                             dealt + (int(c),))
+                        for c in cards]
+            return _Chance(np.array(cards, dtype=np.int64), subroots,
+                           N_CARDS - total - 4)
 
         if to_call > 0:
             labels.append("fold")
@@ -507,47 +587,122 @@ class PostflopSolver:
                 continue
             if lab == "check":              # OOP check → IP parle
                 child = self._build_decision(IP, pot, 0.0, invested,
-                                             bets_used, street, river)
+                                             bets_used, dealt)
             else:                           # bet/raise → l'adversaire répond
                 amt = amounts[a]
                 new_inv = list(invested)
                 new_inv[me] += amt
                 child = self._build_decision(opp, pot + amt, amt - to_call,
                                              tuple(new_inv), bets_used + 1,
-                                             street, river)
+                                             dealt)
             node.children[a] = child
         return my_idx
 
     # ── valeurs terminales ────────────────────────────────────────────────
 
-    def _compat_mass(self, trav: int, q: F64, river: int) -> F64:
+    def _compat_mass(self, trav: int, q: F64,
+                     dealt: "int | tuple[int, ...]") -> F64:
         """Reach adverse compatible avec chaque combo de trav (blockers).
 
-        ``q`` doit déjà être masqué des combos adverses contenant la rivière ;
-        ici on masque seulement les combos du traverseur qui la contiennent.
+        ``q`` doit déjà être masqué des combos adverses contenant les cartes
+        de chance tirées ; ici on masque seulement les combos du traverseur
+        qui les contiennent. ``dealt`` : tuple des cartes tirées — l'ancien
+        scalaire (-1 = aucune, c = une rivière) reste accepté pour les
+        appelants historiques (``spot_advisor``).
         """
+        if isinstance(dealt, (int, np.integer)):
+            dealt = () if int(dealt) < 0 else (int(dealt),)
         T = self._member[1 - trav] @ q
         ex = self._exact[trav]
         q_exact = np.where(ex >= 0, q[np.maximum(ex, 0)], 0.0)
         cards = self.players[trav].cards
         out = q.sum() - T[cards[:, 0]] - T[cards[:, 1]] + q_exact
-        if river >= 0:
-            out = np.where((cards == river).any(axis=1), 0.0, out)
+        for c in dealt:
+            out = np.where(self._member[trav][c], 0.0, out)
         return out
 
-    def _leaf_share(self, trav: int, q: F64) -> F64:
-        """Part d'abattage « checked-down » par combo, moyenne des rivières.
+    def _leaf_share(self, trav: int, q: F64,
+                    dealt: tuple[int, ...] = ()) -> F64:
+        """Part d'abattage « checked-down » par combo, moyenne des runouts.
 
-        Mesure = reach adverse compatible (comme les autres CFV). 44 rivières
-        valides par confrontation compatible — même normalisation que _Chance.
+        Mesure = reach adverse compatible (comme les autres CFV) — même
+        normalisation que ``_Chance`` (piège n°1) : s'il manque UNE carte au
+        board (feuille turn, ou feuille flop tronquée sous le turn ``dealt``),
+        44 rivières valides par confrontation ; s'il en manque DEUX (features
+        τ à la racine d'un solve flop), 45×44/2 = 990 paires turn+river
+        valides par confrontation — chaque paire comptée une fois, l'abattage
+        étant symétrique en (turn, river).
         """
         n_trav = self.players[trav].n
         acc = np.zeros(n_trav)
-        o_cards = self.players[1 - trav].cards
-        for r in self.rivers:
-            mask_opp = ~(o_cards == int(r)).any(axis=1)
-            acc += self._sd_ctx[(trav, int(r))].cfv(q * mask_opp, 1.0, 0.0)
-        return acc / (N_CARDS - len(self.board) - 4)
+        not_opp = self._not_member[1 - trav]
+        bset = set(self.board)
+        restantes = [c for c in range(N_CARDS)
+                     if c not in bset and c not in dealt]
+        manquantes = 5 - len(self.board) - len(dealt)
+        if manquantes == 1:
+            if (len(self.board) == 3
+                    and self.players[OOP].n * self.players[IP].n
+                    <= _LEAF_W_MAX):
+                # solve flop tronqué : share = W @ q (linéaire en q), matrice
+                # par turn précalculée — algébriquement identique à la boucle
+                # de CFV triés, ~50× plus rapide par itération. Les solves
+                # TURN gardent la boucle (identité bit à bit des goldens).
+                W_oop, C = self._leaf_w(int(dealt[0]))
+                if trav == OOP:
+                    return W_oop @ q
+                return (C - W_oop).T @ q
+            for r in restantes:
+                acc += self._sd_ctx[(trav, self._sd_key(dealt + (r,)))].cfv(
+                    q * not_opp[r], 1.0, 0.0)
+            return acc / (N_CARDS - len(self.board) - len(dealt) - 4)
+        # deux cartes manquantes : double somme sur les paires triées
+        for i, t in enumerate(restantes):
+            for r in restantes[i + 1:]:
+                acc += self._sd_ctx[(trav, self._sd_key((t, r)))].cfv(
+                    q * not_opp[t] * not_opp[r], 1.0, 0.0)
+        n = N_CARDS - len(self.board) - 4          # 45
+        return acc / (n * (n - 1) / 2)             # 45×44/2 = 990
+
+    def _leaf_w(self, t: int) -> tuple[F64, F64]:
+        """Matrice de feuille rollout du turn ``t`` (solve flop tronqué).
+
+        ``W_oop[i, j]`` = moyenne, sur les 44 rivières valides pour la
+        confrontation (i, j), de [gain strict + ½ égalité] d'OOP i contre
+        IP j — zéro si les combos sont incompatibles (carte partagée, turn
+        compris). ``C[i, j]`` = fraction de rivières valides (44/44 pour une
+        confrontation compatible, 0 sinon). Par symétrie de l'abattage :
+        ``W_ip = (C − W_oop)ᵀ`` — gain IP = compatibilité − gain OOP, la
+        demi-égalité se conservant d'elle-même.
+        """
+        cached = self._leaf_W.get(t)
+        if cached is not None:
+            return cached
+        p0, p1 = self.players[OOP], self.players[IP]
+        if self._compat_pair is None:
+            partage = (p0.cards[:, None, :, None]
+                       == p1.cards[None, :, None, :]).any(axis=(2, 3))
+            self._compat_pair = ~partage
+        base = (self._compat_pair
+                & self._not_member[OOP][t][:, None]
+                & self._not_member[IP][t][None, :])
+        acc = np.zeros((p0.n, p1.n))
+        cnt = np.zeros((p0.n, p1.n))
+        bset = set(self.board)
+        for r in range(N_CARDS):
+            if r in bset or r == t:
+                continue
+            s0, s1 = self._strengths[self._sd_key((t, r))]
+            valid = (base & self._not_member[OOP][r][:, None]
+                     & self._not_member[IP][r][None, :])
+            gt = np.where(s0[:, None] > s1[None, :], 1.0,
+                          np.where(s0[:, None] == s1[None, :], 0.5, 0.0))
+            acc += gt * valid
+            cnt += valid
+        n_riv = float(N_CARDS - len(self.board) - 1 - 4)   # 44
+        out = (acc / n_riv, cnt / n_riv)
+        self._leaf_W[t] = out
+        return out
 
     def _ensure_tau(self) -> None:
         """τ (facteurs de réalisation EQR) — calculé une fois par solve.
@@ -561,7 +716,7 @@ class PostflopSolver:
         for p in (OOP, IP):
             q = self.players[1 - p].weights
             share = self._leaf_share(p, q)
-            compat = self._compat_mass(p, q, -1)
+            compat = self._compat_mass(p, q, ())
             with np.errstate(invalid="ignore", divide="ignore"):
                 eq_c = np.where(compat > 0, share / np.where(compat > 0, compat, 1), 0.0)
             w = self.players[p].weights * (compat > 0)
@@ -581,21 +736,21 @@ class PostflopSolver:
         self._tau_ready = True
 
     def _terminal_cfv(self, term: object, trav: int, q: F64,
-                      river_ctx: int) -> F64:
+                      dealt: tuple[int, ...]) -> F64:
         """CFV terminal — seul point où le rake agit : toute PART GAGNÉE du
         pot est remplacée par sa valeur nette ``rake.net(pot)`` (convention
         won-pot) ; l'investi, lui, n'est jamais raké."""
         if isinstance(term, _Fold):
-            compat = self._compat_mass(trav, q, river_ctx)
+            compat = self._compat_mass(trav, q, dealt)
             share = self.rake.net(term.pot) if term.winner == trav else 0.0
             return (share - term.invested[trav]) * compat
         if isinstance(term, _Showdown):
-            ctx = self._sd_ctx[(trav, term.river)]
+            ctx = self._sd_ctx[(trav, term.key)]
             return ctx.cfv(q, self.rake.net(term.pot), term.invested[trav])
         if isinstance(term, _LeafRollout):
             self._ensure_tau()
-            share = self._leaf_share(trav, q)
-            compat = self._compat_mass(trav, q, -1)
+            share = self._leaf_share(trav, q, term.dealt)
+            compat = self._compat_mass(trav, q, term.dealt)
             pot_net = self.rake.net(term.pot)
             return (self._tau[trav] * pot_net * share
                     - term.invested[trav] * compat)
@@ -697,8 +852,32 @@ class PostflopSolver:
             nd.locked_sigma = None
         return self
 
+    def _chance_value(self, term: _Chance, trav: int, q: F64,
+                      dealt: tuple[int, ...], weight: float,
+                      fixed: bool, best_response: bool) -> F64:
+        """Valeur d'un nœud de chance : moyenne des tirages valides.
+
+        Chaque tirage c masque les reach adverses contenant c et annule la
+        valeur des combos du traverseur qui le contiennent ; la division par
+        ``term.n_unknown`` (45 pour flop→turn, 44 pour →river — piège n°1)
+        rend la moyenne exacte PAR CONFRONTATION compatible.
+        """
+        acc = np.zeros(self.players[trav].n)
+        not_opp = self._not_member[1 - trav]
+        holds = self._member[trav]
+        for c, sub in zip(term.deals, term.subroots):
+            c = int(c)
+            if fixed:
+                v = self._traverse_fixed(sub, trav, q * not_opp[c],
+                                         dealt + (c,), best_response)
+            else:
+                v = self._traverse(sub, trav, q * not_opp[c],
+                                   dealt + (c,), weight)
+            acc += np.where(holds[c], 0.0, v)
+        return acc / term.n_unknown
+
     def _traverse(self, idx: int, trav: int, reach_opp: F64,
-                  river_ctx: int, weight: float) -> F64:
+                  dealt: tuple[int, ...], weight: float) -> F64:
         node = self._nodes[idx]
         me = node.player
         sigma = self._current_strategy(node)
@@ -707,22 +886,12 @@ class PostflopSolver:
         def child_value(a: int) -> F64:
             term = node.terminal[a]
             if isinstance(term, (_Fold, _Showdown, _LeafRollout)):
-                return self._terminal_cfv(term, trav, reach_opp, river_ctx)
+                return self._terminal_cfv(term, trav, reach_opp, dealt)
             if isinstance(term, _Chance):
-                p_cards = self.players[trav].cards
-                out = np.zeros(n_trav)
-                for r, sub in zip(term.rivers, term.subroots):
-                    mask_opp = ~(self.players[1 - trav].cards == int(r)).any(axis=1)
-                    v = self._traverse(sub, trav, reach_opp * mask_opp,
-                                       int(r), weight)
-                    mask_self = ~(p_cards == int(r)).any(axis=1)
-                    out += np.where(mask_self, v, 0.0)
-                # 44 rivières valides par confrontation compatible
-                # (52 − 4 board − 2 cartes de chaque joueur)
-                n_unknown = N_CARDS - len(self.board) - 4
-                return out / n_unknown
+                return self._chance_value(term, trav, reach_opp, dealt,
+                                          weight, False, False)
             return self._traverse(node.children[a], trav, reach_opp,
-                                  river_ctx, weight)
+                                  dealt, weight)
 
         if me == trav:
             vals = [child_value(a) for a in range(len(node.labels))]
@@ -742,32 +911,25 @@ class PostflopSolver:
             term = node.terminal[a]
             q_a = reach_opp * sigma[a]
             if isinstance(term, (_Fold, _Showdown, _LeafRollout)):
-                V += self._terminal_cfv(term, trav, q_a, river_ctx)
+                V += self._terminal_cfv(term, trav, q_a, dealt)
             elif isinstance(term, _Chance):
-                p_cards = self.players[trav].cards
-                acc = np.zeros(n_trav)
-                for r, sub in zip(term.rivers, term.subroots):
-                    mask_opp = ~(self.players[1 - trav].cards == int(r)).any(axis=1)
-                    v = self._traverse(sub, trav, q_a * mask_opp, int(r), weight)
-                    mask_self = ~(p_cards == int(r)).any(axis=1)
-                    acc += np.where(mask_self, v, 0.0)
-                V += acc / (N_CARDS - len(self.board) - 4)
+                V += self._chance_value(term, trav, q_a, dealt,
+                                        weight, False, False)
             else:
                 V += self._traverse(node.children[a], trav, q_a,
-                                    river_ctx, weight)
+                                    dealt, weight)
         return V
 
     def solve(self, iterations: int = 400) -> "PostflopSolver":
         if iterations < 1:
             raise PostflopError("iterations >= 1.")
-        root_river = -1 if len(self.board) == 5 else None
         for _ in range(iterations):
             t = self._iters_done + 1
             w_strat = (t / (t + 1.0)) ** _GAMMA
             for trav in (OOP, IP):
                 self._traverse(self._root, trav,
                                self.players[1 - trav].weights.copy(),
-                               -1, w_strat)
+                               (), w_strat)
             pos_w = (t ** _ALPHA) / (t ** _ALPHA + 1.0)
             for nd in self._nodes:
                 nd.regrets = np.where(nd.regrets > 0,
@@ -790,9 +952,16 @@ class PostflopSolver:
         return sigma
 
     def _traverse_fixed(self, idx: int, trav: int, reach_opp: F64,
-                        river_ctx: int, best_response: bool) -> F64:
+                        dealt: "int | tuple[int, ...]",
+                        best_response: bool) -> F64:
         """Valeur pour `trav` : adversaire = stratégie moyenne ; trav = moyenne
-        (best_response=False) ou meilleure réponse (True)."""
+        (best_response=False) ou meilleure réponse (True). La meilleure
+        réponse maximise PAR ENSEMBLE D'INFORMATION — (nœud public, combo
+        privé) — jamais par état de chance (piège n°3). ``dealt`` : tuple
+        des cartes de chance tirées ; le scalaire historique (-1) reste
+        accepté (``spot_advisor``)."""
+        if isinstance(dealt, (int, np.integer)):
+            dealt = () if int(dealt) < 0 else (int(dealt),)
         node = self._nodes[idx]
         me = node.player
         sigma = self.average_strategy(idx)
@@ -801,19 +970,12 @@ class PostflopSolver:
         def child_value(a: int, q: F64) -> F64:
             term = node.terminal[a]
             if isinstance(term, (_Fold, _Showdown, _LeafRollout)):
-                return self._terminal_cfv(term, trav, q, river_ctx)
+                return self._terminal_cfv(term, trav, q, dealt)
             if isinstance(term, _Chance):
-                p_cards = self.players[trav].cards
-                acc = np.zeros(n_trav)
-                for r, sub in zip(term.rivers, term.subroots):
-                    mask_opp = ~(self.players[1 - trav].cards == int(r)).any(axis=1)
-                    v = self._traverse_fixed(sub, trav, q * mask_opp, int(r),
-                                             best_response)
-                    mask_self = ~(p_cards == int(r)).any(axis=1)
-                    acc += np.where(mask_self, v, 0.0)
-                return acc / (N_CARDS - len(self.board) - 4)
+                return self._chance_value(term, trav, q, dealt,
+                                          0.0, True, best_response)
             return self._traverse_fixed(node.children[a], trav, q,
-                                        river_ctx, best_response)
+                                        dealt, best_response)
 
         if me == trav:
             vals = np.stack([child_value(a, reach_opp)
@@ -829,10 +991,10 @@ class PostflopSolver:
     def _mu(self) -> float:
         """Masse totale des confrontations compatibles (normalisation).
 
-        Ne dépend PAS de la rivière : la masse (combo OOP, combo IP)
-        compatible est la même quel que soit le tirage à venir.
+        Ne dépend PAS des tirages : la masse (combo OOP, combo IP)
+        compatible est la même quels que soient les turns/rivières à venir.
         """
-        compat = self._compat_mass(OOP, self.players[IP].weights, -1)
+        compat = self._compat_mass(OOP, self.players[IP].weights, ())
         return float((self.players[OOP].weights * compat).sum())
 
     def values(self) -> tuple[float, float]:
@@ -842,7 +1004,7 @@ class PostflopSolver:
         for p in (OOP, IP):
             v = self._traverse_fixed(self._root, p,
                                      self.players[1 - p].weights.copy(),
-                                     -1, best_response=False)
+                                     (), best_response=False)
             out.append(float((self.players[p].weights * v).sum()) / mu)
         return out[0], out[1]
 
@@ -866,7 +1028,7 @@ class PostflopSolver:
         for p in (OOP, IP):
             v = self._traverse_fixed(self._root, p,
                                      self.players[1 - p].weights.copy(),
-                                     -1, best_response=True)
+                                     (), best_response=True)
             br.append(float((self.players[p].weights * v).sum()) / mu)
         return (br[0] + br[1] - self.pot0) / (2.0 * self.pot0)
 
@@ -920,13 +1082,13 @@ class PostflopSolver:
         for a, lab in enumerate(node.labels):
             term = node.terminal[a]
             if isinstance(term, (_Fold, _Showdown, _LeafRollout)):
-                v = self._terminal_cfv(term, p, self.players[1 - p].weights, -1)
+                v = self._terminal_cfv(term, p, self.players[1 - p].weights, ())
             elif isinstance(term, _Chance):
                 continue
             else:
                 v = self._traverse_fixed(node.children[a], p,
                                          self.players[1 - p].weights.copy(),
-                                         -1, best_response=False)
+                                         (), best_response=False)
             evs[lab] = float((w * v).sum()) / mu
         bets = [(lab, ev) for lab, ev in evs.items()
                 if lab not in ("check", "fold", "call")]

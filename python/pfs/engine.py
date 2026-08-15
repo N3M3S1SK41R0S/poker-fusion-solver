@@ -418,6 +418,17 @@ def resolve_spot(
         raise ValueError("hero_position ∈ {'oop','ip'}.")
     if game_format not in ("cash", "mtt"):
         raise ValueError("game_format ∈ {'cash','mtt'}.")
+    if len(board) == 3:
+        # Depuis Phase 2, PostflopSolver ACCEPTE un flop — mais un re-solve
+        # live en construirait DEUX en profondeur complète (~13 s/itération
+        # à ranges réalistes, banc_flop.py) : hors budget du temps réel.
+        # Le live re-solve turn/river ; le flop attend le blueprint.
+        raise ValueError(
+            "resolve_spot : board de 3 cartes — le re-solve flop en "
+            "profondeur complète est hors budget live (mesures "
+            "banc_flop.py) ; turn/river uniquement jusqu'au blueprint "
+            "Phase 2. Le flop reste accessible via PostflopSolver (API "
+            "Python).")
     if stack is None:
         if hero_stack is None or villain_stack is None:
             raise ValueError("stack OU (hero_stack ET villain_stack) requis.")

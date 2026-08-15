@@ -182,7 +182,9 @@ PARAMETERS: tuple[Parameter, ...] = (
     _P("Isomorphisme de couleurs", _C.BOARD, (PIO, TEXAS, GTOP), _COV,
        "solver.isomorphism",
        "L8 : 22 100 → 1 755 flops (Burnside vérifié) ; turn 16 432, river "
-       "134 459 — brique du blueprint flop Phase 2", wired=False),
+       "134 459 — branché le 14 août 2026 : blueprint flop "
+       "(solver.blueprint : classes pondérées, magasin, requête "
+       "re-projetée) + banc_blueprint.py (dimensionnement)"),
     _P("Runouts (énumération turn/river)", _C.BOARD, (PIO, GTOW), _COV, "core.equity",
        "hotness grid + Monte-Carlo"),
     _P("Board clustering (familles de flops)", _C.BOARD, (GTOW, SIMPLE), _PAR,
@@ -198,7 +200,8 @@ PARAMETERS: tuple[Parameter, ...] = (
     _P("Abstraction / bucketing", _C.SOLVING, (SIMPLE, MONKER, GTOW), _COV,
        "solver.abstraction", "EHS exact mémoïsé par classe isomorphe + "
        "distribution-aware (Johanson 2013) — validé contre oracle au turn ; "
-       "consommateur (blueprint flop) = Phase 2", wired=False),
+       "branché le 14 août 2026 : pipeline classe → buckets → entrée du "
+       "solveur (solver.blueprint.bucketed_inputs) + banc_blueprint.py"),
     _P("Search à profondeur limitée + value net", _C.SOLVING, (GTOW, DEEPS), _COV,
        "solver.postflop", "P3 : leaf_model rollout (somme-exacte) / eqr "
        "(valeur apprise L7, directionnelle — pas un réseau profond, assumé). "
@@ -368,9 +371,11 @@ SOLVERS: tuple[SolverProfile, ...] = (
          "PLO/Short Deck hors périmètre (choix)", "GPU = Phase 2",
          # Audit du 14 août 2026 : la force et la faiblesse ensemble, sinon
          # le tableau ment — voir library_only(). (EQR retiré de la liste le
-         # 14 août 2026 : branché via /api/postflop leaf_model='eqr'.)
-         "Bunching, abstraction EHS, isomorphisme, tells temporels, "
-         "TDA, population : bibliothèques testées NON branchées dans l'app",
+         # 14 août 2026 : branché via /api/postflop leaf_model='eqr'.
+         # Isomorphisme + abstraction EHS retirés le même jour : branchés
+         # dans le blueprint flop, solver.blueprint + banc_blueprint.py.)
+         "Bunching, tells temporels, TDA, population : "
+         "bibliothèques testées NON branchées dans l'app",
          # v4.4 lit une vraie table (calibration live, lecture seule) et
          # v4.5 lit les montants d'une capture collée : la faiblesse
          # restante est le rappel de la détection, pas son absence.
