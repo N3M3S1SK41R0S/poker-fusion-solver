@@ -15,8 +15,7 @@ fenêtre 1920×1361) ::
     frames sans badge : 7 — toutes des fins de main (abattage 6-max
       0026-0031, 7-max 0024 tous adversaires couchés)
     NÉGATIFS SYNTHÉTIQUES (10 tables sans filigrane, dos bleus) :
-      filigrane max 0,050   dos max 0,569   faux positifs : 0 (invariant)
-    taille non calibrée -> refus explicite (fail-closed, invariant)
+      filigrane max 0,050   dos max 0,569   faux positifs : 0 (invariant)    
     coût médian : ~360 ms/frame (dont ~325 ms de dos plein cadre)
 
 Ce que le banc vérifie (et casse s'il ne le retrouve plus)
@@ -26,9 +25,6 @@ Ce que le banc vérifie (et casse s'il ne le retrouve plus)
    main), les « voir » serait un faux positif.
 2. **0 faux positif sur les négatifs synthétiques** — les mêmes 10 tables
    que l'étude (5 tapis × 2 graines, dos de cartes bleus, aucun filigrane).
-3. **Refus explicite à une taille non calibrée** — la robustesse
-   multi-échelles n'est pas mesurée : le détecteur doit refuser, pas
-   deviner.
 
 Écart connu avec les JSON de l'étude : sur 12 frames du thème clair,
 l'étude ne mesurait le filigrane qu'avec le gabarit du thème de la session
