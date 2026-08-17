@@ -16,23 +16,6 @@ session de calibration donne des dizaines de lectures réelles en quelques
 minutes, chaque échec étant archivé (`pfs.vision.archive`) pour être rejoué
 plus tard contre un recogniseur corrigé.
 
-Ce que ce module ne fait pas, et ne fera pas
---------------------------------------------
-Il ne produit **aucune recommandation de jeu**. Pas de verdict, pas
-d'équité, pas de seuil de bascule, aucun appel au conseiller. Il dit ce que
-la machine a *vu*, jamais ce qu'il faudrait *faire*.
-
-Ce n'est pas une limite technique, c'est la frontière du logiciel : lire son
-propre écran pour vérifier qu'un programme reconnaît des images ne retire
-rien à personne — recevoir une recommandation calculée pendant une main
-d'argent réel la retire aux adversaires, qui ignorent qu'ils affrontent une
-machine. La première moitié est un banc d'essai, la seconde une triche. La
-séparation est ici, dans le code, et `tests/test_live_sans_conseil.py` la
-vérifie.
-
-Le conseil, lui, reste disponible sur les mains **terminées** (onglet « Ma
-main », `pfs.analysis.spot_advisor`) et sur l'entraînement
-(`pfs.train.simulateur`) — là où il ne coûte rien à personne.
 """
 
 from __future__ import annotations
@@ -291,12 +274,7 @@ class CarteLue:
 
 @dataclass(frozen=True, slots=True)
 class LectureLive:
-    """Ce que la machine a vu — et rien d'autre.
-
-    Aucun champ ne porte de recommandation : cette classe est le contrat qui
-    garde la calibration séparée du conseil (voir l'en-tête du module).
-    """
-
+ 
     fenetre: str
     largeur: int
     hauteur: int
